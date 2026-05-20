@@ -879,6 +879,10 @@ class Builder {
       cwd: this.options.cwd,
     })
 
+    if (exports.length === 0 && dts.length === 0) {
+      return []
+    }
+
     const dest = join(this.outputDir, this.options.dts ?? 'index.d.ts')
 
     try {

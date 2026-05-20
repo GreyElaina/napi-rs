@@ -15,6 +15,7 @@ enum TypeDefKind {
   Type = 'type',
   Fn = 'fn',
   Struct = 'struct',
+  NonConstructibleClass = 'non_constructible_class',
   Extends = 'extends',
   Impl = 'impl',
 }
@@ -25,8 +26,15 @@ interface TypeDefLine {
   original_name?: string
   def: string
   extends?: string
+  extends_kind?: TypeDefKind
+  native_parent?: NativeParentLine
   js_doc?: string
   js_mod?: string
+}
+
+interface NativeParentLine {
+  rust_path: string[]
+  js_name?: string
 }
 
 /**
@@ -80,24 +88,48 @@ function prettyPrint(
     }
 
     case TypeDefKind.Struct:
-      const extendsDef = line.extends ? ` extends ${line.extends}` : ''
+      let extendsDef = ''
+      let instanceExtendsDef = ''
       if (line.extends) {
-        // Extract generic params from extends type like Iterator<T, TResult, TNext>
-        const genericMatch = line.extends.match(/Iterator<(.+)>$/)
-        if (genericMatch) {
-          const [T, TResult, TNext] = genericMatch[1]
-            .split(',')
-            .map((p) => p.trim())
-          line.def =
-            line.def +
-            `\nnext(value?: ${TNext}): IteratorResult<${T}, ${TResult}>`
+        const nextSignature = iteratorNextSignature(line.extends)
+        if (nextSignature) {
+          extendsDef = ` extends ${line.extends}`
+          line.def = line.def + `\n${nextSignature}`
+        } else {
+          if (line.extends_kind === TypeDefKind.Struct) {
+            extendsDef = ` extends ${line.extends}`
+          } else if (line.extends_kind === TypeDefKind.NonConstructibleClass) {
+            instanceExtendsDef = `${exportDeclare(ambient)} interface ${line.name} extends ${line.extends} {}`
+          } else {
+            throw new Error(
+              `Native class ${line.name} cannot resolve TypeScript parent kind for ${line.extends}`,
+            )
+          }
         }
       }
       s += `${exportDeclare(ambient)} class ${line.name}${extendsDef} {\n${line.def}\n}`
+      if (instanceExtendsDef) {
+        s += `\n${instanceExtendsDef}`
+      }
       if (line.original_name && line.original_name !== line.name) {
         s += `\nexport type ${line.original_name} = ${line.name}`
       }
       break
+
+    case TypeDefKind.NonConstructibleClass: {
+      const { instanceDef, staticDef } = splitNonConstructibleClassDef(line.def)
+      const extendsDef = line.extends ? ` extends ${line.extends}` : ''
+      s += `export interface ${line.name}${extendsDef} {\n${instanceDef}\n}`
+      s += `\n${exportDeclare(ambient)} const ${line.name}: {\n${staticDef}`
+      if (staticDef) {
+        s += '\n'
+      }
+      s += `[Symbol.hasInstance](value: unknown): boolean\n}`
+      if (line.original_name && line.original_name !== line.name) {
+        s += `\nexport type ${line.original_name} = ${line.name}`
+      }
+      break
+    }
 
     case TypeDefKind.Fn:
       s += `${exportDeclare(ambient)} ${line.def}`
@@ -108,6 +140,37 @@ function prettyPrint(
   }
 
   return correctStringIdent(s, ident)
+}
+
+function splitNonConstructibleClassDef(def: string) {
+  const instanceLines: string[] = []
+  const staticLines: string[] = []
+
+  for (const line of def.split('\n')) {
+    const trimmed = line.trim()
+    if (trimmed.startsWith('constructor(')) {
+      continue
+    }
+    if (trimmed.startsWith('static ')) {
+      staticLines.push(trimmed.slice('static '.length))
+    } else {
+      instanceLines.push(line)
+    }
+  }
+
+  return {
+    instanceDef: instanceLines.join('\n'),
+    staticDef: staticLines.join('\n'),
+  }
+}
+
+function iteratorNextSignature(iterator: string): string | null {
+  const genericMatch = iterator.match(/Iterator<(.+)>$/)
+  if (!genericMatch) {
+    return null
+  }
+  const [T, TResult, TNext] = genericMatch[1].split(',').map((p) => p.trim())
+  return `next(value?: ${TNext}): IteratorResult<${T}, ${TResult}>`
 }
 
 function exportDeclare(ambient: boolean): string {
@@ -148,11 +211,9 @@ export async function processTypeDef(
                 case TypeDefKind.Enum:
                 case TypeDefKind.StringEnum:
                 case TypeDefKind.Fn:
-                case TypeDefKind.Struct: {
+                case TypeDefKind.Struct:
+                case TypeDefKind.NonConstructibleClass: {
                   exports.push(def.name)
-                  if (def.original_name && def.original_name !== def.name) {
-                    exports.push(def.original_name)
-                  }
                   break
                 }
                 default:
@@ -205,12 +266,12 @@ async function readIntermediateTypeFile(file: string) {
   // move all `struct` def to the very top
   // and order the rest alphabetically.
   return defs.sort((a, b) => {
-    if (a.kind === TypeDefKind.Struct) {
-      if (b.kind === TypeDefKind.Struct) {
+    if (a.kind === TypeDefKind.Struct || a.kind === TypeDefKind.NonConstructibleClass) {
+      if (b.kind === TypeDefKind.Struct || b.kind === TypeDefKind.NonConstructibleClass) {
         return a.name.localeCompare(b.name)
       }
       return -1
-    } else if (b.kind === TypeDefKind.Struct) {
+    } else if (b.kind === TypeDefKind.Struct || b.kind === TypeDefKind.NonConstructibleClass) {
       return 1
     } else {
       return a.name.localeCompare(b.name)
@@ -220,33 +281,124 @@ async function readIntermediateTypeFile(file: string) {
 
 function preprocessTypeDef(defs: TypeDefLine[]): Map<string, TypeDefLine[]> {
   const namespaceGrouped = new Map<string, TypeDefLine[]>()
-  const classDefs = new Map<string, TypeDefLine>()
+  const classDefs = new Map<string, TypeDefLine[]>()
+
+  const namespaceOf = (def: TypeDefLine) => def.js_mod ?? TOP_LEVEL_NAMESPACE
+  const classKey = (namespace: string, name: string) => `${namespace}\0${name}`
+
+  const addClassDef = (namespace: string, name: string, def: TypeDefLine) => {
+    const key = classKey(namespace, name)
+    const defs = classDefs.get(key)
+    if (defs) {
+      if (!defs.includes(def)) {
+        defs.push(def)
+      }
+    } else {
+      classDefs.set(key, [def])
+    }
+  }
+
+  const classDefFor = (namespace: string, name: string, requester: string) => {
+    const defs = classDefs.get(classKey(namespace, name)) ?? []
+    if (defs.length === 1) {
+      return defs[0]
+    }
+    if (defs.length > 1) {
+      throw new Error(
+        `Native class parent ${name} for ${requester} is ambiguous in the TypeScript generation unit`,
+      )
+    }
+    return undefined
+  }
+
+  const resolveNativeParent = (def: TypeDefLine) => {
+    const nativeParent = def.native_parent
+    if (!nativeParent) {
+      return
+    }
+    const namespace = namespaceOf(def)
+    const parentName =
+      nativeParent.js_name ??
+      nativeParent.rust_path[nativeParent.rust_path.length - 1]
+    if (!parentName) {
+      throw new Error(`Native class parent for ${def.name} has no Rust path`)
+    }
+    const parent = classDefFor(namespace, parentName, def.name)
+    if (!parent) {
+      throw new Error(
+        `Native class parent ${nativeParent.rust_path.join('::')} for ${def.name} is not present in the same TypeScript generation unit`,
+      )
+    }
+    def.extends = parent.name
+    def.extends_kind = parent.kind
+  }
+
+  const resolveExtends = (def: TypeDefLine) => {
+    if (!def.extends || iteratorNextSignature(def.extends)) {
+      return
+    }
+    const parent = classDefFor(namespaceOf(def), def.extends, def.name)
+    if (!parent) {
+      throw new Error(
+        `Native class parent ${def.extends} for ${def.name} is not present in the same TypeScript generation unit`,
+      )
+    }
+    def.extends = parent.name
+    def.extends_kind = parent.kind
+  }
 
   for (const def of defs) {
-    const namespace = def.js_mod ?? TOP_LEVEL_NAMESPACE
+    if (def.kind === TypeDefKind.Struct || def.kind === TypeDefKind.NonConstructibleClass) {
+      addClassDef(namespaceOf(def), def.name, def)
+      if (def.original_name && def.original_name !== def.name) {
+        addClassDef(namespaceOf(def), def.original_name, def)
+      }
+    }
+  }
+
+  for (const def of defs) {
+    const namespace = namespaceOf(def)
     if (!namespaceGrouped.has(namespace)) {
       namespaceGrouped.set(namespace, [])
     }
 
     const group = namespaceGrouped.get(namespace)!
 
-    if (def.kind === TypeDefKind.Struct) {
+    if (def.kind === TypeDefKind.Struct || def.kind === TypeDefKind.NonConstructibleClass) {
+      resolveNativeParent(def)
+      resolveExtends(def)
       group.push(def)
-      classDefs.set(def.name, def)
     } else if (def.kind === TypeDefKind.Extends) {
-      const classDef = classDefs.get(def.name)
+      const classDef = classDefFor(namespace, def.name, def.name)
       if (classDef) {
-        classDef.extends = def.def
+        if (classDef.extends) {
+          const nextSignature = iteratorNextSignature(def.def)
+          if (nextSignature) {
+            if (classDef.def) {
+              classDef.def += '\n'
+            }
+            classDef.def += nextSignature
+          }
+        } else {
+          classDef.extends = def.def
+          resolveExtends(classDef)
+        }
       }
     } else if (def.kind === TypeDefKind.Impl) {
       // merge `impl` into class definition
-      const classDef = classDefs.get(def.name)
+      const classDef = classDefFor(namespace, def.name, def.name)
       if (classDef) {
         if (classDef.def) {
           classDef.def += '\n'
         }
 
         classDef.def += def.def
+        if (
+          classDef.kind === TypeDefKind.NonConstructibleClass &&
+          hasConstructorSignature(def.def)
+        ) {
+          classDef.kind = TypeDefKind.Struct
+        }
         // Convert any remaining \n sequences in the merged def to actual newlines
         if (classDef.def) {
           classDef.def = classDef.def.replace(/\\n/g, '\n')
@@ -257,7 +409,24 @@ function preprocessTypeDef(defs: TypeDefLine[]): Map<string, TypeDefLine[]> {
     }
   }
 
+  for (const defs of classDefs.values()) {
+    for (const def of defs) {
+      if (
+        def.kind === TypeDefKind.Struct &&
+        !hasConstructorSignature(def.def)
+      ) {
+        def.kind = TypeDefKind.NonConstructibleClass
+      }
+      resolveNativeParent(def)
+      resolveExtends(def)
+    }
+  }
+
   return namespaceGrouped
+}
+
+function hasConstructorSignature(def: string) {
+  return /\bconstructor\s*\(/.test(def)
 }
 
 export function correctStringIdent(src: string, ident: number): string {

@@ -1,0 +1,2 @@
+{"kind":"struct","name":"Child","js_doc":"","def":"constructor()","native_parent":{"rust_path":["RustBase"],"js_name":"PublicBase"},"js_mod":"beta"}
+{"kind":"struct","name":"PublicBase","original_name":"RustBase","js_doc":"","def":"constructor()","js_mod":"beta"}

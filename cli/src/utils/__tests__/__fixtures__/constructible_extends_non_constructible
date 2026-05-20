@@ -1,0 +1,2 @@
+{"kind":"non_constructible_class","name":"Base","js_doc":"","def":"base(): number","js_mod":"beta"}
+{"kind":"struct","name":"Child","js_doc":"","def":"constructor()\nchild(): number","native_parent":{"rust_path":["Base"]},"js_mod":"beta"}

@@ -1,7 +1,10 @@
 import ava, { type ExecutionContext } from 'ava'
 import { parseSync } from 'oxc-parser'
 
-import { createWasiBrowserBinding } from '../templates/load-wasi-template.js'
+import {
+  createWasiBinding,
+  createWasiBrowserBinding,
+} from '../templates/load-wasi-template.js'
 import { createWasiBrowserWorkerBinding } from '../templates/wasi-worker-template.js'
 
 const test = ava
@@ -38,6 +41,30 @@ test('createWasiBrowserBinding with errorEvent and fs', (t) => {
       true,
     ),
   )
+})
+
+test('createWasiBinding wires native class metadata', (t) => {
+  const binding = createWasiBinding('test-wasi', '@scope/test')
+
+  t.true(binding.includes('function wireNativeClassPrototypes(binding)'))
+  t.true(
+    binding.includes(
+      'Object.setPrototypeOf(item.constructor.prototype, parent.constructor.prototype)',
+    ),
+  )
+  t.true(binding.includes('function hideNativeClassMetadata(binding)'))
+})
+
+test('createWasiBrowserBinding wires native class metadata', (t) => {
+  const binding = createWasiBrowserBinding('test-wasi')
+
+  t.true(binding.includes('function wireNativeClassPrototypes(binding)'))
+  t.true(
+    binding.includes(
+      'Object.setPrototypeOf(item.constructor.prototype, parent.constructor.prototype)',
+    ),
+  )
+  t.true(binding.includes('function hideNativeClassMetadata(binding)'))
 })
 
 test('createWasiBrowserWorkerBinding default', (t) => {

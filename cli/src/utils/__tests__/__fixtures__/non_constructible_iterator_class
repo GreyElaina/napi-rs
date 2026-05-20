@@ -1,0 +1,2 @@
+{"kind":"non_constructible_class","name":"IteratorBase","js_doc":"","def":"tick(): number"}
+{"kind":"extends","name":"IteratorBase","js_doc":"","def":"Iterator<number, void, undefined>"}
