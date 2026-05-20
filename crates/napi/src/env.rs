@@ -15,8 +15,8 @@ use serde::Serialize;
 #[cfg(feature = "napi5")]
 use crate::bindgen_runtime::IntoJs;
 #[cfg(feature = "napi5")]
-use crate::bindgen_runtime::{CallbackDecoder, FromJs, Local};
-use crate::bindgen_runtime::{Function, Object, Unknown};
+use crate::bindgen_runtime::{CallbackDecoder, FromJs};
+use crate::bindgen_runtime::{Function, Local, Object, Unknown};
 #[cfg(feature = "napi5")]
 use crate::bindgen_runtime::{FunctionCallContext, JsArgSlice};
 #[cfg(feature = "serde-json")]
@@ -290,16 +290,14 @@ impl<'env> Env<'env> {
   /// `process.versions.napi`
   pub fn get_napi_version(&self) -> Result<u32> {
     unsafe {
-      crate::bindgen_runtime::with_env(self.0, |mut env| {
-        env.with_scope(|scope| {
-          let global = scope.env().get_global()?;
-          let process: Object = scope.get_named_property(&global, "process")?;
-          let versions: Object = scope.get_named_property(&process, "versions")?;
-          let napi_version: String = scope.get_named_property(&versions, "napi")?;
-          napi_version
-            .parse()
-            .map_err(|e| Error::new(Status::InvalidArg, format!("{e}")))
-        })
+      crate::bindgen_runtime::EnvRecord::enter_scope(self.0, |scope| {
+        let global = scope.env().get_global()?;
+        let process: Object = scope.get_named_property(&global, "process")?;
+        let versions: Object = scope.get_named_property(&process, "versions")?;
+        let napi_version: String = scope.get_named_property(&versions, "napi")?;
+        napi_version
+          .parse()
+          .map_err(|e| Error::new(Status::InvalidArg, format!("{e}")))
       })
     }
   }
@@ -497,8 +495,8 @@ where
   for<'scope> Return: IntoJs<'scope>,
 {
   unsafe {
-    crate::bindgen_runtime::with_env(raw_env, |env| {
-      let mut decoder = CallbackDecoder::<0>::dynamic(env, cb_info, 4)?;
+    crate::bindgen_runtime::EnvRecord::enter_scope(raw_env, |scope| {
+      let mut decoder = CallbackDecoder::<0>::dynamic(*scope.env(), cb_info, 4)?;
       decoder.with_frame(|frame| {
         let closure_data_ptr = frame.raw_data();
         let closure: &F = Box::leak(Box::from_raw(closure_data_ptr.cast()));
@@ -536,8 +534,8 @@ where
 {
   use crate::bindgen_runtime::This;
   unsafe {
-    crate::bindgen_runtime::with_env(raw_env, |env| {
-      let mut decoder = CallbackDecoder::<1>::new(env, cb_info, Some(1))?;
+    crate::bindgen_runtime::EnvRecord::enter_scope(raw_env, |scope| {
+      let mut decoder = CallbackDecoder::<1>::new(*scope.env(), cb_info, Some(1))?;
       decoder.with_frame(|mut frame| {
         let closure_data_ptr = property_closures(frame.raw_data())?.setter_closure;
         let closure: &F = Box::leak(Box::from_raw(closure_data_ptr.cast()));
@@ -566,8 +564,8 @@ where
   for<'scope> R: IntoJs<'scope>,
 {
   unsafe {
-    crate::bindgen_runtime::with_env(raw_env, |env| {
-      let mut decoder = CallbackDecoder::<0>::new(env, cb_info, None)?;
+    crate::bindgen_runtime::EnvRecord::enter_scope(raw_env, |scope| {
+      let mut decoder = CallbackDecoder::<0>::new(*scope.env(), cb_info, None)?;
       decoder.with_frame(|mut frame| {
         let closure_data_ptr = property_closures(frame.raw_data())?.getter_closure;
         let closure: &F = Box::leak(Box::from_raw(closure_data_ptr.cast()));

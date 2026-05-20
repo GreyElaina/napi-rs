@@ -6,7 +6,7 @@ use std::rc::Rc;
 use std::{cell::Cell, panic::UnwindSafe};
 
 use crate::{
-  bindgen_prelude::{with_env, CallbackDecoder, FromJs, IntoJs, Local, Scope, Unknown},
+  bindgen_prelude::{CallbackDecoder, EnvRecord, FromJs, IntoJs, Local, Scope, Unknown},
   blocking_work,
   blocking_work::{BlockingWorkCancelHandle, BlockingWorkStatus},
   check_status, sys, Env, JsError, Result, Value, ValueType,
@@ -156,7 +156,7 @@ unsafe extern "C" fn on_abort(
   env: sys::napi_env,
   callback_info: sys::napi_callback_info,
 ) -> sys::napi_value {
-  match unsafe { with_env(env, |env_wrapper| on_abort_impl(env_wrapper, callback_info)) } {
+  match unsafe { EnvRecord::enter_scope(env, |scope| on_abort_impl(*scope.env(), callback_info)) } {
     Err(err) => {
       let js_err = JsError::from(err);
       unsafe { js_err.throw_into(env) };

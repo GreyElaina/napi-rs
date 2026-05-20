@@ -43,11 +43,12 @@ pub struct EnvData {
 #[doc(hidden)]
 pub struct DeferredRefs {
   refs: Cell<Vec<sys::napi_ref>>,
+  len: Cell<usize>,
 }
 
 pub struct Scope<'env, 'scope> {
   env: &'scope mut Env<'env>,
-  record: Option<&'scope Rc<EnvRecord>>,
+  record: &'scope Rc<EnvRecord>,
   marker: PhantomData<&'scope mut ()>,
 }
 
@@ -59,85 +60,17 @@ pub struct Local<'scope, T> {
 
 thread_local! {
   static ENV_RECORDS: RefCell<HashMap<usize, Rc<EnvRecord>>> = RefCell::new(HashMap::new());
-}
-
-#[doc(hidden)]
-pub fn env_record(raw: sys::napi_env) -> Rc<EnvRecord> {
-  ENV_RECORDS.with(|records| {
-    let mut records = records.borrow_mut();
-    records
-      .entry(raw as usize)
-      .or_insert_with(|| {
-        let record = Rc::new(EnvRecord::new());
-        install_env_record_holder(raw, raw as usize)
-          .expect("Install napi-rs EnvRecord holder failed");
-        record
-      })
-      .clone()
-  })
-}
-
-#[doc(hidden)]
-pub fn defer_ref_for_env(raw: sys::napi_env, reference: sys::napi_ref) -> bool {
-  ENV_RECORDS.with(|records| {
-    let records = records.borrow();
-    let Some(record) = records.get(&(raw as usize)) else {
-      return false;
-    };
-    record.deferred_refs().push(reference);
-    true
-  })
-}
-
-fn install_env_record_holder(raw: sys::napi_env, key: usize) -> Result<()> {
-  let mut global = ptr::null_mut();
-  check_status!(
-    unsafe { sys::napi_get_global(raw, &mut global) },
-    "Get global object for EnvRecord holder failed"
-  )?;
-
-  let mut holder = ptr::null_mut();
-  check_status!(
-    unsafe { sys::napi_create_object(raw, &mut holder) },
-    "Create EnvRecord holder failed"
-  )?;
-
-  let key_data = Box::into_raw(Box::new(key));
-  let wrap_status = unsafe {
-    sys::napi_wrap(
-      raw,
-      holder,
-      key_data.cast(),
-      Some(remove_env_record),
-      ptr::null_mut(),
-      ptr::null_mut(),
-    )
-  };
-  if wrap_status != sys::Status::napi_ok {
-    unsafe { drop(Box::from_raw(key_data)) };
-    check_status!(wrap_status, "Wrap EnvRecord holder failed")?;
-  }
-
-  let property_name = CString::new(format!("__napi_rs_env_record_{key:x}"))?;
-  let descriptor = sys::napi_property_descriptor {
-    utf8name: property_name.as_ptr(),
-    name: ptr::null_mut(),
-    method: None,
-    getter: None,
-    setter: None,
-    value: holder,
-    attributes: sys::PropertyAttributes::default,
-    data: ptr::null_mut(),
-  };
-  check_status!(
-    unsafe { sys::napi_define_properties(raw, global, 1, &descriptor) },
-    "Install EnvRecord holder failed"
-  )
+  static CACHED_RECORD: RefCell<Option<(usize, Rc<EnvRecord>)>> = const { RefCell::new(None) };
 }
 
 unsafe extern "C" fn remove_env_record(env: sys::napi_env, data: *mut c_void, _: *mut c_void) {
   let key = unsafe { Box::from_raw(data.cast::<usize>()) };
   run_unwind_boundary("tearing down env record", || {
+    CACHED_RECORD.with_borrow_mut(|cached| {
+      if cached.as_ref().is_some_and(|(k, _)| *k == *key) {
+        *cached = None;
+      }
+    });
     let record = ENV_RECORDS.with(|records| {
       let mut records = records.borrow_mut();
       records.remove(&*key)
@@ -151,6 +84,148 @@ unsafe extern "C" fn remove_env_record(env: sys::napi_env, data: *mut c_void, _:
 
 impl EnvRecord {
   #[doc(hidden)]
+  pub fn acquire(raw: sys::napi_env) -> Rc<Self> {
+    let key = raw as usize;
+    if let Some(record) = CACHED_RECORD.with_borrow(|cached| {
+      cached
+        .as_ref()
+        .filter(|(k, _)| *k == key)
+        .map(|(_, record)| record.clone())
+    }) {
+      return record;
+    }
+    Self::acquire_slow(raw, key)
+  }
+
+  #[cold]
+  fn acquire_slow(raw: sys::napi_env, key: usize) -> Rc<Self> {
+    let record = ENV_RECORDS.with(|records| {
+      let mut records = records.borrow_mut();
+      records
+        .entry(key)
+        .or_insert_with(|| {
+          let record = Rc::new(Self::new());
+          Self::install_holder(raw, key)
+            .expect("Install napi-rs EnvRecord holder failed");
+          record
+        })
+        .clone()
+    });
+    CACHED_RECORD.with_borrow_mut(|cached| {
+      *cached = Some((key, record.clone()));
+    });
+    record
+  }
+
+  #[doc(hidden)]
+  pub fn defer_ref(raw: sys::napi_env, reference: sys::napi_ref) -> bool {
+    ENV_RECORDS.with(|records| {
+      let records = records.borrow();
+      let Some(record) = records.get(&(raw as usize)) else {
+        return false;
+      };
+      record.deferred_refs().push(reference);
+      true
+    })
+  }
+
+  /// Enter a callback scope with full ceremony:
+  /// acquire record, drain deferred refs, catch unwind, provide Scope.
+  ///
+  /// # Safety
+  ///
+  /// `raw` must be a valid `napi_env` for the current callback invocation.
+  #[doc(hidden)]
+  pub unsafe fn enter_scope<R>(
+    raw: sys::napi_env,
+    f: impl for<'env, 'scope> FnOnce(&'scope mut Scope<'env, 'scope>) -> Result<R>,
+  ) -> Result<R> {
+    let record = Self::acquire(raw);
+    let mut entry_env = unsafe { Env::from_raw(raw) };
+    record.drain_deferred_refs(&mut entry_env)?;
+    let result = catch_unwind_result("running N-API callback", || {
+      let mut env = unsafe { Env::from_raw(raw) };
+      let mut scope = Scope {
+        env: &mut env,
+        record: &record,
+        marker: PhantomData,
+      };
+      f(&mut scope)
+    })
+    .and_then(|r| r);
+    let mut exit_env = unsafe { Env::from_raw(raw) };
+    match (result, record.drain_deferred_refs(&mut exit_env)) {
+      (Ok(v), Ok(())) => Ok(v),
+      (Err(e), _) | (Ok(_), Err(e)) => Err(e),
+    }
+  }
+
+
+  #[doc(hidden)]
+  pub fn delete_refs(env: &mut Env<'_>, refs: Vec<sys::napi_ref>) -> Result<()> {
+    let mut error = None;
+    for raw in refs {
+      if let Err(err) = check_status!(
+        unsafe { sys::napi_delete_reference(env.raw(), raw) },
+        "Delete deferred reference failed"
+      ) {
+        error.get_or_insert(err);
+      }
+    }
+    if let Some(error) = error {
+      Err(error)
+    } else {
+      Ok(())
+    }
+  }
+
+  fn install_holder(raw: sys::napi_env, key: usize) -> Result<()> {
+    let mut global = ptr::null_mut();
+    check_status!(
+      unsafe { sys::napi_get_global(raw, &mut global) },
+      "Get global object for EnvRecord holder failed"
+    )?;
+
+    let mut holder = ptr::null_mut();
+    check_status!(
+      unsafe { sys::napi_create_object(raw, &mut holder) },
+      "Create EnvRecord holder failed"
+    )?;
+
+    let key_data = Box::into_raw(Box::new(key));
+    let wrap_status = unsafe {
+      sys::napi_wrap(
+        raw,
+        holder,
+        key_data.cast(),
+        Some(remove_env_record),
+        ptr::null_mut(),
+        ptr::null_mut(),
+      )
+    };
+    if wrap_status != sys::Status::napi_ok {
+      unsafe { drop(Box::from_raw(key_data)) };
+      check_status!(wrap_status, "Wrap EnvRecord holder failed")?;
+    }
+
+    let property_name = CString::new(format!("__napi_rs_env_record_{key:x}"))?;
+    let descriptor = sys::napi_property_descriptor {
+      utf8name: property_name.as_ptr(),
+      name: ptr::null_mut(),
+      method: None,
+      getter: None,
+      setter: None,
+      value: holder,
+      attributes: sys::PropertyAttributes::default,
+      data: ptr::null_mut(),
+    };
+    check_status!(
+      unsafe { sys::napi_define_properties(raw, global, 1, &descriptor) },
+      "Install EnvRecord holder failed"
+    )
+  }
+
+  #[doc(hidden)]
   pub fn new() -> Self {
     Self {
       data: RefCell::new(EnvData {
@@ -159,6 +234,7 @@ impl EnvRecord {
       }),
       deferred_refs: DeferredRefs {
         refs: Cell::new(Vec::new()),
+        len: Cell::new(0),
       },
     }
   }
@@ -182,7 +258,10 @@ impl EnvRecord {
 
   #[doc(hidden)]
   pub fn drain_deferred_refs(&self, env: &mut Env<'_>) -> Result<()> {
-    delete_refs(env, self.deferred_refs.take())
+    if self.deferred_refs.is_empty() {
+      return Ok(());
+    }
+    Self::delete_refs(env, self.deferred_refs.take())
   }
 
   fn take_constructor_refs(&self) -> Result<Vec<sys::napi_ref>> {
@@ -198,7 +277,7 @@ impl EnvRecord {
   fn drain_constructor_refs(&self, env: &mut Env<'_>) -> Result<()> {
     self
       .take_constructor_refs()
-      .and_then(|refs| delete_refs(env, refs))
+      .and_then(|refs| Self::delete_refs(env, refs))
   }
 
   fn teardown(&self, env: &mut Env<'_>) {
@@ -323,11 +402,18 @@ impl DeferredRefs {
   pub fn push(&self, raw: sys::napi_ref) {
     let mut refs = self.refs.take();
     refs.push(raw);
+    self.len.set(refs.len());
     self.refs.set(refs);
   }
 
   #[doc(hidden)]
+  pub fn is_empty(&self) -> bool {
+    self.len.get() == 0
+  }
+
+  #[doc(hidden)]
   pub fn take(&self) -> Vec<sys::napi_ref> {
+    self.len.set(0);
     self.refs.take()
   }
 }
@@ -603,18 +689,8 @@ impl<'env, 'scope> Scope<'env, 'scope> {
   }
 
   #[doc(hidden)]
-  pub fn record(&self) -> Option<&'scope Rc<EnvRecord>> {
+  pub fn record(&self) -> &'scope Rc<EnvRecord> {
     self.record
-  }
-
-  #[doc(hidden)]
-  pub(crate) fn required_record(&self) -> Result<&'scope Rc<EnvRecord>> {
-    self.record.ok_or_else(|| {
-      Error::new(
-        Status::InvalidArg,
-        "Scope is not attached to an environment record".to_owned(),
-      )
-    })
   }
 
   pub(crate) fn ensure_value_env(&self, value_env: sys::napi_env, value_name: &str) -> Result<()> {
@@ -690,60 +766,21 @@ impl<'scope> Local<'scope, Unknown<'scope>> {
   }
 }
 
-#[doc(hidden)]
-pub unsafe fn with_env<R>(
-  raw: sys::napi_env,
-  f: impl for<'env> FnOnce(Env<'env>) -> Result<R>,
-) -> Result<R> {
-  let record = env_record(raw);
-  let mut entry_env = unsafe { Env::from_raw(raw) };
-  record.drain_deferred_refs(&mut entry_env)?;
-  let result = catch_unwind_result("running N-API callback", || {
-    let callback_env = unsafe { Env::from_raw(raw) };
-    f(callback_env)
-  })
-  .and_then(|result| result);
-  let mut exit_env = unsafe { Env::from_raw(raw) };
-  match (result, record.drain_deferred_refs(&mut exit_env)) {
-    (Ok(value), Ok(())) => Ok(value),
-    (Err(error), _) | (Ok(_), Err(error)) => Err(error),
-  }
-}
-
-#[doc(hidden)]
-pub fn delete_refs(env: &mut Env<'_>, refs: Vec<sys::napi_ref>) -> Result<()> {
-  let mut error = None;
-
-  for raw in refs {
-    if let Err(err) = check_status!(
-      unsafe { sys::napi_delete_reference(env.raw(), raw) },
-      "Delete deferred reference failed"
-    ) {
-      error.get_or_insert(err);
-    }
-  }
-
-  if let Some(error) = error {
-    Err(error)
-  } else {
-    Ok(())
-  }
-}
 
 impl<'env> Env<'env> {
   #[doc(hidden)]
   pub(crate) fn record(&self) -> Rc<EnvRecord> {
-    env_record(self.raw())
+    EnvRecord::acquire(self.raw())
   }
 
   pub fn with_scope<R>(
     &mut self,
     f: impl for<'scope> FnOnce(&'scope mut Scope<'env, 'scope>) -> Result<R>,
   ) -> Result<R> {
-    let record = self.record();
+    let record = EnvRecord::acquire(self.raw());
     let mut scope = Scope {
       env: self,
-      record: Some(&record),
+      record: &record,
       marker: PhantomData,
     };
     f(&mut scope)

@@ -5,7 +5,7 @@ use std::panic::UnwindSafe;
 use std::ptr;
 use std::rc::Rc;
 
-use crate::bindgen_runtime::{with_env, IntoJs, JsObjectValue, Scope};
+use crate::bindgen_runtime::{EnvRecord, IntoJs, JsObjectValue, Scope};
 use crate::{check_status, sys, Env, Error, JsError, Result, Status};
 
 struct NapiBlockingWorkDriver<Execute, Complete, Output, JsValue> {
@@ -293,8 +293,8 @@ unsafe extern "C" fn complete_work<Execute, Complete, Output, JsValue>(
   for<'scope> JsValue: IntoJs<'scope>,
 {
   if let Err(e) = unsafe {
-    with_env(env, |env_wrapper| {
-      complete_impl::<Execute, Complete, Output, JsValue>(env_wrapper, status, data)
+    EnvRecord::enter_scope(env, |scope| {
+      complete_impl::<Execute, Complete, Output, JsValue>(*scope.env(), status, data)
     })
   } {
     let js_err = JsError::from(e);

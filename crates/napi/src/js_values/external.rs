@@ -122,7 +122,7 @@ impl<'scope, T: 'static> crate::bindgen_runtime::JsRefTarget<'scope, ExternalRef
     )?;
     Ok(ExternalRef {
       raw: Cell::new(ref_),
-      record: Rc::downgrade(scope.required_record()?),
+      record: Rc::downgrade(scope.record()),
       marker: PhantomData,
     })
   }
@@ -140,7 +140,7 @@ impl<'scope, T: 'static> crate::bindgen_runtime::JsRefTarget<'scope, ExternalRef
     )?;
     Ok(ExternalRef {
       raw: Cell::new(ref_),
-      record: Rc::downgrade(scope.required_record()?),
+      record: Rc::downgrade(scope.record()),
       marker: PhantomData,
     })
   }

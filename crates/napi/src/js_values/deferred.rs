@@ -11,7 +11,7 @@ use std::{
 #[cfg(feature = "deferred_trace")]
 use crate::{bindgen_runtime::JsObjectValue, JsValue};
 use crate::{
-  bindgen_runtime::{with_env, IntoJs, Object, Scope},
+  bindgen_runtime::{EnvRecord, IntoJs, Object, Scope},
   check_status, sys, Env, Error, Result,
 };
 
@@ -319,8 +319,8 @@ unsafe extern "C" fn napi_resolve_deferred<Data, Resolver>(
 
   let deferred = context.cast();
   if let Err(error) = unsafe {
-    with_env(env, |env_wrapper| {
-      resolve_deferred_with_env(env_wrapper, deferred, *deferred_data)
+    EnvRecord::enter_scope(env, |scope| {
+      resolve_deferred_with_env(*scope.env(), deferred, *deferred_data)
     })
   } {
     eprintln!("napi-rs: failed to resolve deferred callback: {error:?}");

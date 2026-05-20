@@ -20,7 +20,7 @@ impl<'env, 'scope, T: NapiClass> ConstructorReceiver<'env, 'scope, 'scope, T> {
     Ok(Self {
       raw: unsafe { frame.values().as_ref().this() },
       env: scope.env().raw(),
-      record: Rc::downgrade(scope.required_record()?),
+      record: Rc::downgrade(scope.record()),
       class: T::CLASS.info(),
       marker: PhantomData,
     })
@@ -286,6 +286,16 @@ impl<'env, const N: usize> CallbackDecoder<'env, N> {
       let context = FrameScope::new(scope, values);
       f(CallbackFrame { context })
     })
+  }
+
+  pub fn with_frame_in_scope<'scope, R>(
+    &mut self,
+    scope: &'scope mut Scope<'env, 'scope>,
+    f: impl FnOnce(CallbackFrame<'env, 'scope>) -> Result<R>,
+  ) -> Result<R> {
+    let values = NonNull::from(&mut self.values);
+    let context = FrameScope::new(scope, values);
+    f(CallbackFrame { context })
   }
 }
 
@@ -607,9 +617,7 @@ where
   ensure_class_name(js_name)?;
   let init = init.into_class_initializer();
   let instance = unsafe {
-    with_env(env, |mut env_wrapper| {
-      env_wrapper.with_scope(|scope| T::CLASS.new_object_from_scope(scope, init))
-    })
+    EnvRecord::enter_scope(env, |scope| T::CLASS.new_object_from_scope(scope, init))
   }?;
   unsafe { crate::__private::create_iterator::<T>(env, instance) };
   Ok(instance)
@@ -644,9 +652,7 @@ where
   ensure_class_name(js_name)?;
   let init = init.into_class_initializer();
   let instance = unsafe {
-    with_env(env, |mut env_wrapper| {
-      env_wrapper.with_scope(|scope| T::CLASS.new_object_from_scope(scope, init))
-    })
+    EnvRecord::enter_scope(env, |scope| T::CLASS.new_object_from_scope(scope, init))
   }?;
   unsafe { crate::__private::create_async_iterator::<T>(env, instance) };
   Ok(instance)
@@ -676,9 +682,10 @@ pub unsafe fn __napi_binding_entry<const N: usize>(
   invoke: impl for<'env, 'scope> FnOnce(CallbackFrame<'env, 'scope>) -> Result<sys::napi_value>,
 ) -> sys::napi_value {
   unsafe {
-    with_env(raw_env, |env| {
+    EnvRecord::enter_scope(raw_env, |scope| {
+      let env = *scope.env();
       let mut decoder = CallbackDecoder::<N>::new(env, callback_info, None)?;
-      decoder.with_frame(invoke)
+      decoder.with_frame_in_scope(scope, invoke)
     })
   }
   .unwrap_or_else(|error| {
@@ -686,3 +693,4 @@ pub unsafe fn __napi_binding_entry<const N: usize>(
     ptr::null_mut::<sys::napi_value__>()
   })
 }
+

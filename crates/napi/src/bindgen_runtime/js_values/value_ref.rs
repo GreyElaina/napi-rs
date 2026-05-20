@@ -180,7 +180,7 @@ impl<T: NapiReceiver> Reference<T> {
     let raw_object = object.raw_for(context)?;
     let (access, _) = T::validate_object(context, object)?;
     let raw = create_reference(context.scope_mut().env().raw(), raw_object, 1)?;
-    let record = Rc::downgrade(context.scope_mut().required_record()?);
+    let record = Rc::downgrade(context.scope_mut().record());
 
     Ok(Self {
       state: ClassReferenceState::new(raw, record, access, ClassReferenceKind::Strong),
@@ -209,7 +209,7 @@ impl<T: NapiReceiver> Reference<T> {
   ) -> Result<Self> {
     let (access, _) = unsafe { T::validate_raw_object(scope, object) }?;
     let raw = create_reference(scope.env().raw(), object, 1)?;
-    let record = Rc::downgrade(scope.required_record()?);
+    let record = Rc::downgrade(scope.record());
 
     Ok(Self {
       state: ClassReferenceState::new(raw, record, access, ClassReferenceKind::Strong),
@@ -355,7 +355,7 @@ impl<'env, 'scope> Scope<'env, 'scope> {
     local: &ClassLocal<'env, 'scope, T>,
   ) -> Result<WeakReference<T>> {
     let raw = create_reference(self.env().raw(), local.object.raw(), 0)?;
-    let record = Rc::downgrade(self.required_record()?);
+    let record = Rc::downgrade(self.record());
 
     Ok(WeakReference {
       state: ClassReferenceState::new(raw, record, local.access, ClassReferenceKind::Weak),
@@ -425,7 +425,7 @@ impl<T: NapiReceiver> Reference<T> {
     initial_refcount: u32,
   ) -> Result<Self> {
     let raw = create_reference(scope.env().raw(), local.object.raw(), initial_refcount)?;
-    let record = Rc::downgrade(scope.required_record()?);
+    let record = Rc::downgrade(scope.record());
 
     Ok(Self {
       state: ClassReferenceState::new(raw, record, local.access, ClassReferenceKind::Strong),
@@ -436,10 +436,7 @@ impl<T: NapiReceiver> Reference<T> {
 }
 
 fn ensure_same_record(record: &Rc<EnvRecord>, scope: &Scope<'_, '_>) -> Result<()> {
-  let Some(current) = scope.record() else {
-    return Err(owner_mismatch());
-  };
-
+  let current = scope.record();
   if Rc::ptr_eq(record, current) {
     Ok(())
   } else {

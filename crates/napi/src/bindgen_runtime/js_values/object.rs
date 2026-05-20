@@ -617,7 +617,7 @@ impl<'scope, const LEAK_CHECK: bool> JsRefTarget<'scope, ObjectRef<LEAK_CHECK>> 
     )?;
     Ok(ObjectRef {
       inner: ref_,
-      record: Rc::downgrade(scope.required_record()?),
+      record: Rc::downgrade(scope.record()),
       not_send: PhantomData,
     })
   }
@@ -681,7 +681,7 @@ impl<'scope, const LEAK_CHECK: bool> IntoJs<'scope> for &ObjectRef<LEAK_CHECK> {
 
   fn into_js(self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
     let env = scope.env().raw();
-    ensure_object_ref_owner_record(&self.record, scope.required_record()?)?;
+    ensure_object_ref_owner_record(&self.record, scope.record())?;
     let mut result = ptr::null_mut();
     check_status!(
       unsafe { sys::napi_get_reference_value(env, self.inner, &mut result) },
@@ -696,7 +696,7 @@ impl<'scope, const LEAK_CHECK: bool> IntoJs<'scope> for ObjectRef<LEAK_CHECK> {
 
   fn into_js(mut self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
     let env = scope.env().raw();
-    ensure_object_ref_owner_record(&self.record, scope.required_record()?)?;
+    ensure_object_ref_owner_record(&self.record, scope.record())?;
     let mut result = ptr::null_mut();
     check_status!(
       unsafe { sys::napi_get_reference_value(env, self.inner, &mut result) },
@@ -868,7 +868,7 @@ unsafe extern "C" fn finalize_callback<T, Hint, F>(
   crate::run_unwind_boundary("running object finalizer callback", || {
     callback(FinalizeContext { value, hint })
   });
-  if !raw_ref.is_null() && !crate::bindgen_runtime::defer_ref_for_env(raw_env, raw_ref) {
+  if !raw_ref.is_null() && !crate::bindgen_runtime::EnvRecord::defer_ref(raw_env, raw_ref) {
     eprintln!("napi-rs: leaked object finalize reference after env teardown");
   }
 }

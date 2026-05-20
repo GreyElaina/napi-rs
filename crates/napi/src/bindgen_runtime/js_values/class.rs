@@ -333,12 +333,12 @@ impl<T: NapiClass> ClassDef<T> {
   where
     T: ClassChain,
   {
-    let record = Rc::downgrade(scope.required_record()?);
+    let record = Rc::downgrade(scope.record());
     let storage = unsafe { PendingClassStorage::new(record, init) }?;
     let value = storage.segment::<T>(self.info())?;
     let guard = PendingClassStorageGuard::push(storage);
 
-    let ctor_ref = scope.required_record()?.constructor(self.key())?;
+    let ctor_ref = scope.record().constructor(self.key())?;
 
     let Some(ctor_ref) = ctor_ref else {
       return Err(Error::new(
@@ -490,6 +490,8 @@ impl ClassLayout {
     }
   }
 
+  /// Drops class values in-place without deallocating `data`.
+  ///
   /// # Safety
   ///
   /// `data` must point at initialized storage owned by this layout chain entry.
@@ -662,12 +664,7 @@ impl<'scope> ClassStorageRef<'scope> {
         "Class storage owner environment is no longer available".to_owned(),
       )
     })?;
-    let Some(scope_record) = scope.record() else {
-      return Err(Error::new(
-        Status::InvalidArg,
-        "Class storage owner environment is unavailable".to_owned(),
-      ));
-    };
+    let scope_record = scope.record();
     if !Rc::ptr_eq(&record, scope_record) {
       return Err(Error::new(
         Status::InvalidArg,
@@ -868,6 +865,8 @@ pub unsafe trait ClassChain: NapiClass {
   /// `data` must point at storage initialized by [`Self::write_init`].
   unsafe fn drop_segments(data: NonNull<Self::Layout>);
 
+  /// Drops class values in-place without deallocating the storage.
+  ///
   /// # Safety
   ///
   /// `data` must point at the initialized payload region for this class chain.
@@ -936,9 +935,20 @@ impl<T: NapiClass> IntoClassInitializer<T> for ClassInitializer<T> {
   }
 }
 
+fn combined_class_storage_layout(
+  data_layout: alloc::Layout,
+) -> Option<(alloc::Layout, usize, usize)> {
+  let header_layout = alloc::Layout::new::<ClassStorageHeader>();
+  let (combined, state_offset) = header_layout
+    .extend(alloc::Layout::new::<ClassStorageState>())
+    .ok()?;
+  let (combined, data_offset) = combined.extend(data_layout).ok()?;
+  Some((combined.pad_to_align(), state_offset, data_offset))
+}
+
 struct PendingClassStorageAllocation {
   header: NonNull<ClassStorageHeader>,
-  data_layout: alloc::Layout,
+  combined_layout: alloc::Layout,
 }
 
 impl PendingClassStorageAllocation {
@@ -947,24 +957,33 @@ impl PendingClassStorageAllocation {
     record: Weak<EnvRecord>,
     data_layout: alloc::Layout,
   ) -> Result<Self> {
-    let data = NonNull::new(unsafe { alloc::alloc(data_layout) }).ok_or_else(|| {
+    let (combined_layout, state_offset, data_offset) =
+      combined_class_storage_layout(data_layout).ok_or_else(|| {
+        Error::new(
+          Status::GenericFailure,
+          "Class storage layout overflow".to_owned(),
+        )
+      })?;
+
+    let base = NonNull::new(unsafe { alloc::alloc(combined_layout) }).ok_or_else(|| {
       Error::new(
         Status::GenericFailure,
         "Allocate class storage failed".to_owned(),
       )
     })?;
-    let state = Box::new(ClassStorageState::new(record));
-    let state_ptr = NonNull::from(state.as_ref());
-    let header_value = unsafe { ClassStorageHeader::new(layout, data, state_ptr) };
-    let header = Box::new(header_value);
 
-    let state = NonNull::new(Box::into_raw(state)).expect("Box::into_raw must not return null");
-    let header = NonNull::new(Box::into_raw(header)).expect("Box::into_raw must not return null");
-    debug_assert_eq!(unsafe { header.as_ref().state() }, state);
+    let state_ptr = unsafe {
+      NonNull::new_unchecked(base.as_ptr().add(state_offset).cast::<ClassStorageState>())
+    };
+    let data_ptr = unsafe { NonNull::new_unchecked(base.as_ptr().add(data_offset)) };
+
+    unsafe { state_ptr.as_ptr().write(ClassStorageState::new(record)) };
+    let header_ptr = base.cast::<ClassStorageHeader>();
+    unsafe { header_ptr.as_ptr().write(ClassStorageHeader::new(layout, data_ptr, state_ptr)) };
 
     Ok(Self {
-      header,
-      data_layout,
+      header: header_ptr,
+      combined_layout,
     })
   }
 
@@ -980,11 +999,10 @@ impl PendingClassStorageAllocation {
 
 impl Drop for PendingClassStorageAllocation {
   fn drop(&mut self) {
-    let header = unsafe { Box::from_raw(self.header.as_ptr()) };
-    let state = header.state();
     unsafe {
-      alloc::dealloc(header.data().as_ptr(), self.data_layout);
-      drop(Box::from_raw(state.as_ptr()));
+      let state = self.header.as_ref().state();
+      ptr::drop_in_place(state.as_ptr());
+      alloc::dealloc(self.header.as_ptr().cast(), self.combined_layout);
     }
   }
 }
@@ -1126,20 +1144,26 @@ unsafe extern "C" fn class_storage_finalize(
 }
 
 unsafe fn drop_class_storage(header: NonNull<ClassStorageHeader>) {
-  let header = ManuallyDrop::new(unsafe { Box::from_raw(header.as_ptr()) });
-  let state = header.state();
+  let header_ref = unsafe { header.as_ref() };
+  let class_layout = header_ref.layout();
+  let state = header_ref.state();
 
   let drop_completed = catch_unwind_boundary("dropping class storage", || {
-    if header.validate_abi() {
-      unsafe { header.layout().drop_initialized(header.data()) };
+    if header_ref.validate_abi() {
+      unsafe { class_layout.drop_initialized(header_ref.data()) };
     }
   });
   if drop_completed.is_none() {
     return;
   }
 
+  let data_layout = alloc::Layout::from_size_align(class_layout.size(), class_layout.align())
+    .expect("class layout was valid at allocation time");
+  let (combined_layout, _, _) = combined_class_storage_layout(data_layout)
+    .expect("combined layout was valid at allocation time");
+
   unsafe {
-    drop(ManuallyDrop::into_inner(header));
-    drop(Box::from_raw(state.as_ptr()));
+    ptr::drop_in_place(state.as_ptr());
+    alloc::dealloc(header.as_ptr().cast(), combined_layout);
   }
 }

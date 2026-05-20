@@ -5,7 +5,7 @@ use crate::{
     FnArgs, FromJs, Function, JsObjectValue, Local, Object, Promise, Scope, TypeName, Unknown,
     ValidateNapiValue,
   },
-  bindgen_runtime::with_env,
+  bindgen_runtime::EnvRecord,
   check_status, sys, Error, JsValue, Result, Status, Value, ValueType,
 };
 
@@ -43,24 +43,22 @@ impl ValidateNapiValue for WriteableStream<'_> {
     napi_val: napi_sys::napi_value,
   ) -> Result<napi_sys::napi_value> {
     unsafe {
-      with_env(env, |mut env_wrapper| {
-        env_wrapper.with_scope(|scope| {
-          let global = scope.env().get_global()?;
-          let constructor: Function<'_, (), ()> =
-            scope.get_named_property(&global, "WritableStream")?;
-          let mut is_instance = false;
-          check_status!(
-            sys::napi_instanceof(env, napi_val, constructor.value, &mut is_instance),
-            "Check WritableStream instance failed"
-          )?;
-          if !is_instance {
-            return Err(Error::new(
-              Status::InvalidArg,
-              "Value is not a WritableStream",
-            ));
-          }
-          Ok(ptr::null_mut())
-        })
+      EnvRecord::enter_scope(env, |scope| {
+        let global = scope.env().get_global()?;
+        let constructor: Function<'_, (), ()> =
+          scope.get_named_property(&global, "WritableStream")?;
+        let mut is_instance = false;
+        check_status!(
+          sys::napi_instanceof(env, napi_val, constructor.value, &mut is_instance),
+          "Check WritableStream instance failed"
+        )?;
+        if !is_instance {
+          return Err(Error::new(
+            Status::InvalidArg,
+            "Value is not a WritableStream",
+          ));
+        }
+        Ok(ptr::null_mut())
       })
     }
   }
@@ -89,12 +87,10 @@ impl WriteableStream<'_> {
     ) -> Result<R>,
   ) -> Result<R> {
     unsafe {
-      with_env(self.env, |mut env| {
-        env.with_scope(|scope| {
-          let stream = Local::from_value(scope, self, "WriteableStream")?;
-          let stream_object = Object::from_js(scope, stream)?;
-          f(scope, stream, stream_object)
-        })
+      EnvRecord::enter_scope(self.env, |scope| {
+        let stream = Local::from_value(scope, self, "WriteableStream")?;
+        let stream_object = Object::from_js(scope, stream)?;
+        f(scope, stream, stream_object)
       })
     }
   }

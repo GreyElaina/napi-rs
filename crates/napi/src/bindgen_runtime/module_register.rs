@@ -25,7 +25,7 @@ use rustc_hash::FxBuildHasher;
 
 #[cfg(not(feature = "noop"))]
 use crate::bindgen_runtime::{
-  env_record, ClassInfo, ClassKey, ClassStorageRef, ErasedClassDef, NapiClass, NativeParent,
+  ClassInfo, ClassKey, ClassStorageRef, EnvRecord, ErasedClassDef, NapiClass, NativeParent,
 };
 #[cfg(all(not(feature = "noop"), feature = "napi4"))]
 use crate::Env;
@@ -423,9 +423,8 @@ unsafe extern "C" fn class_has_instance(
     })?;
     let value = args.first().copied().unwrap_or(ptr::null_mut());
     let instance = unsafe {
-      crate::bindgen_prelude::with_env(env, |mut env_wrapper| {
-        env_wrapper
-          .with_scope(|scope| Ok(ClassStorageRef::validate_raw_object(scope, value, class).is_ok()))
+      crate::bindgen_runtime::EnvRecord::enter_scope(env, |scope| {
+        Ok(ClassStorageRef::validate_raw_object(scope, value, class).is_ok())
       })
     }?;
 
@@ -881,7 +880,7 @@ unsafe fn commit_staged_classes(
     return Err(error);
   }
 
-  let record = env_record(env);
+  let record = EnvRecord::acquire(env);
   if let Err(error) = record.with_data_mut(|data| {
     for item in staged {
       data
@@ -927,8 +926,8 @@ pub unsafe extern "C" fn napi_register_module_v1(
   }
 
   match unsafe {
-    crate::bindgen_runtime::with_env(env, |env_wrapper| {
-      Ok(napi_register_module_v1_inner(env_wrapper.raw(), exports))
+    crate::bindgen_runtime::EnvRecord::enter_scope(env, |scope| {
+      Ok(napi_register_module_v1_inner(scope.env().raw(), exports))
     })
   } {
     Ok(value) => value,
@@ -1249,7 +1248,7 @@ unsafe extern "C" fn custom_gc(
   }
 
   let result = unsafe {
-    crate::bindgen_runtime::with_env(env, |env_wrapper| custom_gc_impl(env_wrapper, data))
+    crate::bindgen_runtime::EnvRecord::enter_scope(env, |scope| custom_gc_impl(scope.env(), data))
   };
   if let Err(error) = result {
     unsafe { JsError::from(error).throw_into(env) };
@@ -1257,7 +1256,7 @@ unsafe extern "C" fn custom_gc(
 }
 
 #[cfg(all(feature = "napi4", not(feature = "noop")))]
-fn custom_gc_impl(env_wrapper: Env<'_>, data: *mut std::ffi::c_void) -> Result<()> {
+fn custom_gc_impl(env_wrapper: &Env<'_>, data: *mut std::ffi::c_void) -> Result<()> {
   if THREADS_CAN_ACCESS_ENV.with(|cell| !cell.get()) {
     return Ok(());
   }

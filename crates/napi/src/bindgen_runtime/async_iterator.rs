@@ -4,7 +4,7 @@ use std::ptr;
 
 use crate::{
   bindgen_runtime::{
-    with_env, CallbackDecoder, FromJs, IntoJs, Local, NapiClass, Object, Scope, Unknown,
+    CallbackDecoder, EnvRecord, FromJs, IntoJs, Local, NapiClass, Object, Scope, Unknown,
   },
   check_status, check_status_or_throw, sys, Env, Error, JsError, Status,
 };
@@ -133,8 +133,8 @@ pub unsafe extern "C" fn symbol_async_generator<T: AsyncGenerator + NapiClass>(
   info: sys::napi_callback_info,
 ) -> sys::napi_value {
   match unsafe {
-    with_env(env, |env_wrapper| {
-      symbol_async_generator_impl::<T>(env_wrapper, info)
+    EnvRecord::enter_scope(env, |scope| {
+      symbol_async_generator_impl::<T>(*scope.env(), info)
     })
   } {
     Ok(value) => value,
@@ -255,7 +255,7 @@ fn symbol_async_generator_impl<T: AsyncGenerator + NapiClass>(
     ) {
       let instance_ref = data as sys::napi_ref;
       if !instance_ref.is_null() {
-        if crate::bindgen_runtime::defer_ref_for_env(env, instance_ref) {
+        if crate::bindgen_runtime::EnvRecord::defer_ref(env, instance_ref) {
           return;
         }
 
@@ -344,7 +344,7 @@ unsafe extern "C" fn generator_next<T: AsyncGenerator + NapiClass>(
   env: sys::napi_env,
   info: sys::napi_callback_info,
 ) -> sys::napi_value {
-  match unsafe { with_env(env, |env_wrapper| generator_next_fn::<T>(env_wrapper, info)) } {
+  match unsafe { EnvRecord::enter_scope(env, |scope| generator_next_fn::<T>(*scope.env(), info)) } {
     Ok(value) => value,
     Err(e) => unsafe {
       let js_error: JsError = e.into();
@@ -385,8 +385,8 @@ unsafe extern "C" fn generator_return<T: AsyncGenerator + NapiClass>(
   info: sys::napi_callback_info,
 ) -> sys::napi_value {
   match unsafe {
-    with_env(env, |env_wrapper| {
-      generator_return_impl::<T>(env_wrapper, info)
+    EnvRecord::enter_scope(env, |scope| {
+      generator_return_impl::<T>(*scope.env(), info)
     })
   } {
     Ok(value) => value,
@@ -426,8 +426,8 @@ unsafe extern "C" fn generator_throw<T: AsyncGenerator + NapiClass>(
   info: sys::napi_callback_info,
 ) -> sys::napi_value {
   match unsafe {
-    with_env(env, |env_wrapper| {
-      generator_throw_impl::<T>(env_wrapper, info)
+    EnvRecord::enter_scope(env, |scope| {
+      generator_throw_impl::<T>(*scope.env(), info)
     })
   } {
     Ok(value) => value,

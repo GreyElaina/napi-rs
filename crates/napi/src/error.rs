@@ -14,7 +14,7 @@ use serde_json::Error as SerdeJSONError;
 
 use crate::ValueType;
 use crate::{
-  bindgen_runtime::{into_js_raw, with_env, FromJs, IntoJs, Local, Object, Scope},
+  bindgen_runtime::{into_js_raw, FromJs, IntoJs, Local, Object, Scope},
   sys, Env, JsValue, Status, Unknown,
 };
 
@@ -144,14 +144,13 @@ impl From<Unknown<'_>> for Error {
 
     if let Ok(vt) = value_type {
       if vt == ValueType::Object {
-        maybe_error_message = value.coerce_to_object().and_then(|obj| unsafe {
-          with_env(value.0.env, |mut env| {
-            env.with_scope(|scope| {
-              let message: Unknown = scope.get_named_property(&obj, "message")?;
-              message
-                .coerce_to_string()
-                .and_then(|message| message.into_utf8().and_then(|message| message.into_owned()))
-            })
+        maybe_error_message = value.coerce_to_object().and_then(|obj| {
+          let mut env = unsafe { Env::from_raw(value.0.env) };
+          env.with_scope(|scope| {
+            let message: Unknown = scope.get_named_property(&obj, "message")?;
+            message
+              .coerce_to_string()
+              .and_then(|message| message.into_utf8().and_then(|message| message.into_owned()))
           })
         });
       } else {
@@ -615,16 +614,15 @@ pub(crate) fn extract_error_cause(value: Unknown<'_>) -> Result<Option<Box<Error
     return Ok(None);
   }
 
-  unsafe {
-    with_env(value.0.env, |mut env| {
-      env.with_scope(|scope| {
-        let object = Object::from_raw(scope.env().raw(), value.0.value);
-        let cause: Unknown = scope.get_c_named_property(&object, c"cause")?;
-        match cause.get_type()? {
-          ValueType::Undefined | ValueType::Null => Ok(None),
-          _ => Ok(Some(Box::new(cause.into()))),
-        }
-      })
+  {
+    let mut env = unsafe { Env::from_raw(value.0.env) };
+    env.with_scope(|scope| {
+      let object = unsafe { Object::from_raw(scope.env().raw(), value.0.value) };
+      let cause: Unknown = scope.get_c_named_property(&object, c"cause")?;
+      match cause.get_type()? {
+        ValueType::Undefined | ValueType::Null => Ok(None),
+        _ => Ok(Some(Box::new(cause.into()))),
+      }
     })
   }
 }
@@ -645,20 +643,19 @@ fn error_string_property(value: Unknown<'_>, key: &CStr) -> Result<Option<String
     return Ok(None);
   }
 
-  unsafe {
-    with_env(value.0.env, |mut env| {
-      env.with_scope(|scope| {
-        let object = Object::from_raw(scope.env().raw(), value.0.value);
-        let property: Unknown = scope.get_c_named_property(&object, key)?;
-        match property.get_type()? {
-          ValueType::Undefined | ValueType::Null => Ok(None),
-          _ => property
-            .coerce_to_string()
-            .and_then(|value| value.into_utf8())
-            .and_then(|value| value.into_owned())
-            .map(Some),
-        }
-      })
+  {
+    let mut env = unsafe { Env::from_raw(value.0.env) };
+    env.with_scope(|scope| {
+      let object = unsafe { Object::from_raw(scope.env().raw(), value.0.value) };
+      let property: Unknown = scope.get_c_named_property(&object, key)?;
+      match property.get_type()? {
+        ValueType::Undefined | ValueType::Null => Ok(None),
+        _ => property
+          .coerce_to_string()
+          .and_then(|value| value.into_utf8())
+          .and_then(|value| value.into_owned())
+          .map(Some),
+      }
     })
   }
 }

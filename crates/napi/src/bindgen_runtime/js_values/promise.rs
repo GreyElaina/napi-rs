@@ -4,7 +4,7 @@ use std::ptr;
 
 use crate::{
   bindgen_prelude::{
-    with_env, CallbackDecoder, FromJs, IntoJs, JsObjectValue, Local, Result, Scope, TypeName,
+    CallbackDecoder, EnvRecord, FromJs, IntoJs, JsObjectValue, Local, Result, Scope, TypeName,
     Unknown, ValidateNapiValue,
   },
   check_status, sys, Env, Error, JsValue, Status, Value, ValueType,
@@ -420,8 +420,8 @@ where
   ) -> Result<U>,
 {
   unsafe {
-    with_env(env, |env_wrapper| {
-      handle_then_callback::<T, U, Cb>(env_wrapper, cbinfo)
+    EnvRecord::enter_scope(env, |scope| {
+      handle_then_callback::<T, U, Cb>(*scope.env(), cbinfo)
     })
   }
   .unwrap_or_else(|err| throw_error(env, err, "Error in Promise.then"))
@@ -472,8 +472,8 @@ where
   ) -> Result<U>,
 {
   unsafe {
-    with_env(env, |env_wrapper| {
-      handle_catch_callback::<E, U, Cb>(env_wrapper, cbinfo)
+    EnvRecord::enter_scope(env, |scope| {
+      handle_catch_callback::<E, U, Cb>(*scope.env(), cbinfo)
     })
   }
   .unwrap_or_else(|err| throw_error(env, err, "Error in Promise.catch"))
@@ -520,8 +520,8 @@ where
   Cb: for<'callback, 'scope> FnOnce(&mut Scope<'callback, 'scope>) -> Result<U>,
 {
   unsafe {
-    with_env(env, |env_wrapper| {
-      handle_finally_callback::<U, Cb>(env_wrapper, cbinfo)
+    EnvRecord::enter_scope(env, |scope| {
+      handle_finally_callback::<U, Cb>(*scope.env(), cbinfo)
     })
   }
   .unwrap_or_else(|err| throw_error(env, err, "Error in Promise.finally"))

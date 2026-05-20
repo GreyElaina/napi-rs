@@ -80,7 +80,7 @@ impl<'scope, const LEAK_CHECK: bool>
     )?;
     Ok(UnknownRef {
       inner: ref_,
-      record: Rc::downgrade(scope.required_record()?),
+      record: Rc::downgrade(scope.record()),
       not_send: PhantomData,
     })
   }
@@ -148,7 +148,7 @@ impl<'scope, const LEAK_CHECK: bool> IntoJs<'scope> for &UnknownRef<LEAK_CHECK> 
 
   fn into_js(self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
     let env = scope.env().raw();
-    ensure_unknown_ref_owner_record(&self.record, scope.required_record()?)?;
+    ensure_unknown_ref_owner_record(&self.record, scope.record())?;
     let mut result = ptr::null_mut();
     check_status!(
       unsafe { sys::napi_get_reference_value(env, self.inner, &mut result) },
@@ -163,7 +163,7 @@ impl<'scope, const LEAK_CHECK: bool> IntoJs<'scope> for UnknownRef<LEAK_CHECK> {
 
   fn into_js(self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
     let env = scope.env().raw();
-    ensure_unknown_ref_owner_record(&self.record, scope.required_record()?)?;
+    ensure_unknown_ref_owner_record(&self.record, scope.record())?;
     let mut result = ptr::null_mut();
     check_status!(
       unsafe { sys::napi_get_reference_value(env, self.inner, &mut result) },

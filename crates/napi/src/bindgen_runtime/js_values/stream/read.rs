@@ -21,7 +21,7 @@ use crate::{
     BufferSlice, FnArgs, FromJs, Function, IntoJsArgs, JsObjectValue, Local, Object, Promise,
     PromiseFuture, Scope, TypeName, Unknown, ValidateNapiValue, NAPI_AUTO_LENGTH,
   },
-  bindgen_runtime::{with_env, CallbackDecoder, IntoJs},
+  bindgen_runtime::{CallbackDecoder, EnvRecord, IntoJs},
   check_status, sys,
   threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode},
   Env, Error, JsError, JsValue, Result, Status, Value, ValueType,
@@ -61,24 +61,22 @@ impl<T> ValidateNapiValue for ReadableStream<'_, T> {
     napi_val: napi_sys::napi_value,
   ) -> Result<napi_sys::napi_value> {
     unsafe {
-      with_env(env, |mut env_wrapper| {
-        env_wrapper.with_scope(|scope| {
-          let global = scope.env().get_global()?;
-          let constructor: Function<'_, (), ()> =
-            scope.get_named_property(&global, "ReadableStream")?;
-          let mut is_instance = false;
-          check_status!(
-            sys::napi_instanceof(env, napi_val, constructor.value, &mut is_instance),
-            "Check ReadableStream instance failed"
-          )?;
-          if !is_instance {
-            return Err(Error::new(
-              Status::InvalidArg,
-              "Value is not a ReadableStream",
-            ));
-          }
-          Ok(ptr::null_mut())
-        })
+      EnvRecord::enter_scope(env, |scope| {
+        let global = scope.env().get_global()?;
+        let constructor: Function<'_, (), ()> =
+          scope.get_named_property(&global, "ReadableStream")?;
+        let mut is_instance = false;
+        check_status!(
+          sys::napi_instanceof(env, napi_val, constructor.value, &mut is_instance),
+          "Check ReadableStream instance failed"
+        )?;
+        if !is_instance {
+          return Err(Error::new(
+            Status::InvalidArg,
+            "Value is not a ReadableStream",
+          ));
+        }
+        Ok(ptr::null_mut())
       })
     }
   }
@@ -107,12 +105,10 @@ impl<T> ReadableStream<'_, T> {
     ) -> Result<R>,
   ) -> Result<R> {
     unsafe {
-      with_env(self.env, |mut env| {
-        env.with_scope(|scope| {
-          let stream = Local::from_value(scope, self, "ReadableStream")?;
-          let stream_object = Object::from_js(scope, stream)?;
-          f(scope, stream, stream_object)
-        })
+      EnvRecord::enter_scope(self.env, |scope| {
+        let stream = Local::from_value(scope, self, "ReadableStream")?;
+        let stream_object = Object::from_js(scope, stream)?;
+        f(scope, stream, stream_object)
       })
     }
   }
@@ -205,25 +201,23 @@ impl<T: for<'scope> IntoJs<'scope> + Send + 'static> ReadableStream<'_, T> {
     register_invoke::<S>(env.raw(), underlying_source.0.value, state_ptr)?;
 
     unsafe {
-      with_env(env.raw(), |mut env| {
-        env.with_scope(|scope| {
-          let global = scope.env().get_global()?;
-          let constructor: Unknown = scope.get_named_property(&global, "ReadableStream")?;
-          if constructor.get_type()? == ValueType::Undefined {
-            return Err(Error::new(
-              Status::GenericFailure,
-              "ReadableStream is not supported in this Node.js version",
-            ));
-          }
-          let constructor = Local::from_value(scope, &constructor, "ReadableStream")?;
-          let constructor: Function<'_, FnArgs<(Object<'_>,)>, Unknown<'_>> =
-            Function::from_js(scope, constructor)?;
-          let stream = scope.new_instance(&constructor, FnArgs::from((underlying_source,)))?;
-          Ok(Self {
-            value: stream.value().value,
-            env: scope.env().raw(),
-            _marker: PhantomData,
-          })
+      EnvRecord::enter_scope(env.raw(), |scope| {
+        let global = scope.env().get_global()?;
+        let constructor: Unknown = scope.get_named_property(&global, "ReadableStream")?;
+        if constructor.get_type()? == ValueType::Undefined {
+          return Err(Error::new(
+            Status::GenericFailure,
+            "ReadableStream is not supported in this Node.js version",
+          ));
+        }
+        let constructor = Local::from_value(scope, &constructor, "ReadableStream")?;
+        let constructor: Function<'_, FnArgs<(Object<'_>,)>, Unknown<'_>> =
+          Function::from_js(scope, constructor)?;
+        let stream = scope.new_instance(&constructor, FnArgs::from((underlying_source,)))?;
+        Ok(Self {
+          value: stream.value().value,
+          env: scope.env().raw(),
+          _marker: PhantomData,
         })
       })
     }
@@ -290,18 +284,16 @@ impl<T: for<'scope> IntoJs<'scope> + Send + 'static> ReadableStream<'_, T> {
     register_invoke::<S>(env.raw(), underlying_source.0.value, state_ptr)?;
 
     unsafe {
-      with_env(env.raw(), |mut env| {
-        env.with_scope(|scope| {
-          let readable_stream_class =
-            Local::from_value(scope, readable_stream_class, "ReadableStream")?;
-          let constructor: Function<'_, FnArgs<(Object<'_>,)>, Unknown<'_>> =
-            Function::from_js(scope, readable_stream_class)?;
-          let stream = scope.new_instance(&constructor, FnArgs::from((underlying_source,)))?;
-          Ok(Self {
-            value: stream.value().value,
-            env: scope.env().raw(),
-            _marker: PhantomData,
-          })
+      EnvRecord::enter_scope(env.raw(), |scope| {
+        let readable_stream_class =
+          Local::from_value(scope, readable_stream_class, "ReadableStream")?;
+        let constructor: Function<'_, FnArgs<(Object<'_>,)>, Unknown<'_>> =
+          Function::from_js(scope, readable_stream_class)?;
+        let stream = scope.new_instance(&constructor, FnArgs::from((underlying_source,)))?;
+        Ok(Self {
+          value: stream.value().value,
+          env: scope.env().raw(),
+          _marker: PhantomData,
         })
       })
     }
@@ -362,17 +354,15 @@ impl<'env> ReadableStream<'env, BufferSlice<'env>> {
 
     underlying_source.set("type", "bytes")?;
     unsafe {
-      with_env(env.raw(), |mut env| {
-        env.with_scope(|scope| {
-          let global = scope.env().get_global()?;
-          let constructor: Function<'_, FnArgs<(Object<'_>,)>, Unknown<'_>> =
-            scope.get_named_property(&global, "ReadableStream")?;
-          let stream = scope.new_instance(&constructor, FnArgs::from((underlying_source,)))?;
-          Ok(Self {
-            value: stream.value().value,
-            env: scope.env().raw(),
-            _marker: PhantomData,
-          })
+      EnvRecord::enter_scope(env.raw(), |scope| {
+        let global = scope.env().get_global()?;
+        let constructor: Function<'_, FnArgs<(Object<'_>,)>, Unknown<'_>> =
+          scope.get_named_property(&global, "ReadableStream")?;
+        let stream = scope.new_instance(&constructor, FnArgs::from((underlying_source,)))?;
+        Ok(Self {
+          value: stream.value().value,
+          env: scope.env().raw(),
+          _marker: PhantomData,
         })
       })
     }
@@ -439,18 +429,16 @@ impl<'env> ReadableStream<'env, BufferSlice<'env>> {
 
     underlying_source.set("type", "bytes")?;
     unsafe {
-      with_env(env.raw(), |mut env| {
-        env.with_scope(|scope| {
-          let readable_stream_class =
-            Local::from_value(scope, readable_stream_class, "ReadableStream")?;
-          let constructor: Function<'_, FnArgs<(Object<'_>,)>, Unknown<'_>> =
-            Function::from_js(scope, readable_stream_class)?;
-          let stream = scope.new_instance(&constructor, FnArgs::from((underlying_source,)))?;
-          Ok(Self {
-            value: stream.value().value,
-            env: scope.env().raw(),
-            _marker: PhantomData,
-          })
+      EnvRecord::enter_scope(env.raw(), |scope| {
+        let readable_stream_class =
+          Local::from_value(scope, readable_stream_class, "ReadableStream")?;
+        let constructor: Function<'_, FnArgs<(Object<'_>,)>, Unknown<'_>> =
+          Function::from_js(scope, readable_stream_class)?;
+        let stream = scope.new_instance(&constructor, FnArgs::from((underlying_source,)))?;
+        Ok(Self {
+          value: stream.value().value,
+          env: scope.env().raw(),
+          _marker: PhantomData,
         })
       })
     }
@@ -696,7 +684,7 @@ unsafe extern "C" fn cancel_callback<S>(
   env: sys::napi_env,
   info: sys::napi_callback_info,
 ) -> sys::napi_value {
-  let result = unsafe { with_env(env, |env| cancel_callback_impl::<S>(env, info)) };
+  let result = unsafe { EnvRecord::enter_scope(env, |scope| cancel_callback_impl::<S>(*scope.env(), info)) };
   if let Err(err) = result {
     unsafe {
       let js_error: JsError = err.into();
@@ -742,8 +730,8 @@ unsafe extern "C" fn pull_callback<
   info: sys::napi_callback_info,
 ) -> sys::napi_value {
   let result = unsafe {
-    with_env(env, |env_wrapper| {
-      pull_callback_impl::<T, S>(env_wrapper, info)
+    EnvRecord::enter_scope(env, |scope| {
+      pull_callback_impl::<T, S>(*scope.env(), info)
     })
   };
   match result {
@@ -827,8 +815,8 @@ unsafe extern "C" fn pull_callback_bytes<
   info: sys::napi_callback_info,
 ) -> sys::napi_value {
   let result = unsafe {
-    with_env(env, |env_wrapper| {
-      pull_callback_impl_bytes::<B, S>(env_wrapper, info)
+    EnvRecord::enter_scope(env, |scope| {
+      pull_callback_impl_bytes::<B, S>(*scope.env(), info)
     })
   };
   match result {

@@ -791,7 +791,8 @@ unsafe extern "C" fn call_js_cb<
   }
 
   let result = crate::catch_unwind_boundary("running threadsafe function callback", || unsafe {
-    crate::bindgen_prelude::with_env(raw_env, |mut env_wrapper| {
+    crate::bindgen_prelude::EnvRecord::enter_scope(raw_env, |scope| {
+      let mut env_wrapper = *scope.env();
       let callback: &mut R = Box::leak(Box::from_raw(context.cast()));
       let val = if CalleeHandled {
         *Box::<Result<ThreadsafeFunctionCallJsBackData<T, Return>, ErrorStatus>>::from_raw(

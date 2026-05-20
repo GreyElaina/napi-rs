@@ -361,7 +361,7 @@ impl<'scope, T: 'static> IntoJs<'scope> for ExternalRef<T> {
   fn into_js(self, scope: &mut Scope<'_, 'scope>) -> crate::Result<Local<'scope, Self::Output>> {
     let env = scope.env().raw();
     let record = self.owner_record()?;
-    if !Rc::ptr_eq(&record, scope.required_record()?) {
+    if !Rc::ptr_eq(&record, scope.record()) {
       return Err(owner_mismatch());
     }
     let mut value = ptr::null_mut();
@@ -379,7 +379,7 @@ impl<'scope, T: 'static> IntoJs<'scope> for &ExternalRef<T> {
   fn into_js(self, scope: &mut Scope<'_, 'scope>) -> crate::Result<Local<'scope, Self::Output>> {
     let env = scope.env().raw();
     let record = self.owner_record()?;
-    if !Rc::ptr_eq(&record, scope.required_record()?) {
+    if !Rc::ptr_eq(&record, scope.record()) {
       return Err(owner_mismatch());
     }
     let mut value = ptr::null_mut();

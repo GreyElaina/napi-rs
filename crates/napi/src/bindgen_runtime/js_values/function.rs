@@ -379,7 +379,7 @@ impl<'scope, Args, Return> JsRefTarget<'scope, FunctionRef<Args, Return>>
     )?;
     Ok(FunctionRef {
       inner: Cell::new(reference),
-      record: Rc::downgrade(scope.required_record()?),
+      record: Rc::downgrade(scope.record()),
       _args: std::marker::PhantomData,
       _return: std::marker::PhantomData,
     })
@@ -710,7 +710,7 @@ impl<Args, Return> FunctionRef<Args, Return> {
     &self,
     scope: &mut Scope<'env, 'scope>,
   ) -> Result<Function<'scope, Args, Return>> {
-    self.borrow_in_env(scope.env().raw(), scope.required_record()?)
+    self.borrow_in_env(scope.env().raw(), scope.record())
   }
 
   fn borrow_in_env<'scope>(

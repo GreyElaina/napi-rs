@@ -5,7 +5,7 @@ use serde::Serialize;
 use serde_json::{Map, Number, Value};
 
 use crate::{
-  bindgen_runtime::{with_env, Object},
+  bindgen_runtime::{EnvRecord, Object},
   check_status, sys, type_of, Error, Result, Ser, Status, ValueType,
 };
 
@@ -112,8 +112,8 @@ fn to_string(env: sys::napi_env, napi_val: sys::napi_value) -> Result<String> {
     "Failed to coerce to string"
   )?;
   unsafe {
-    with_env(env, |mut env| {
-      env.with_scope(|scope| String::from_js(scope, Local::from_raw(string)))
+    EnvRecord::enter_scope(env, |scope| {
+      String::from_js(scope, Local::from_raw(string))
     })
   }
 }

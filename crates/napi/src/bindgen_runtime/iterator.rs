@@ -3,7 +3,7 @@ use std::ptr;
 
 use crate::{bindgen_runtime::Unknown, check_status, check_status_or_throw, sys, Env, JsValue};
 
-use super::{into_js_raw, with_env, CallbackDecoder, CallbackFrame, FromJs, IntoJs, NapiClass};
+use super::{into_js_raw, CallbackDecoder, CallbackFrame, EnvRecord, FromJs, IntoJs, NapiClass};
 
 const GENERATOR_STATE_KEY: &CStr = c"[[GeneratorState]]";
 
@@ -229,7 +229,7 @@ pub unsafe extern "C" fn symbol_generator<T: for<'a> ScopedGenerator<'a> + NapiC
   env: sys::napi_env,
   info: sys::napi_callback_info,
 ) -> sys::napi_value {
-  match unsafe { with_env(env, |env_wrapper| symbol_generator_impl(env_wrapper, info)) } {
+  match unsafe { EnvRecord::enter_scope(env, |scope| symbol_generator_impl(*scope.env(), info)) } {
     Ok(value) => value,
     Err(e) => {
       unsafe { crate::JsError::from(e).throw_into(env) };
@@ -251,8 +251,8 @@ unsafe extern "C" fn generator_next<T: for<'a> ScopedGenerator<'a> + NapiClass +
   info: sys::napi_callback_info,
 ) -> sys::napi_value {
   match unsafe {
-    with_env(env, |env_wrapper| {
-      generator_next_impl::<T>(env_wrapper, info)
+    EnvRecord::enter_scope(env, |scope| {
+      generator_next_impl::<T>(*scope.env(), info)
     })
   } {
     Ok(value) => value,
@@ -299,8 +299,8 @@ unsafe extern "C" fn generator_return<T: for<'a> ScopedGenerator<'a> + NapiClass
   info: sys::napi_callback_info,
 ) -> sys::napi_value {
   match unsafe {
-    with_env(env, |env_wrapper| {
-      generator_return_impl::<T>(env_wrapper, info)
+    EnvRecord::enter_scope(env, |scope| {
+      generator_return_impl::<T>(*scope.env(), info)
     })
   } {
     Ok(value) => value,
@@ -340,8 +340,8 @@ unsafe extern "C" fn generator_throw<T: for<'a> ScopedGenerator<'a> + NapiClass 
   info: sys::napi_callback_info,
 ) -> sys::napi_value {
   match unsafe {
-    with_env(env, |env_wrapper| {
-      generator_throw_impl::<T>(env_wrapper, info)
+    EnvRecord::enter_scope(env, |scope| {
+      generator_throw_impl::<T>(*scope.env(), info)
     })
   } {
     Ok(value) => value,
