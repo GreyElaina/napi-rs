@@ -1,6 +1,9 @@
 use std::ptr;
 
-use crate::{bindgen_runtime::FromNapiValue, check_status, sys, Env, JsValue, Result};
+use crate::{
+  bindgen_runtime::{Local, Unknown},
+  check_status, sys, Env, JsValue, Result,
+};
 
 pub struct HandleScope {
   pub(crate) scope: sys::napi_handle_scope,
@@ -28,10 +31,10 @@ impl HandleScope {
   ///   let len = arr.len();
   ///   let mut result = Vec::with_capacity(len as usize);
   ///   for i in 0..len {
-  ///     let scope = HandleScope::create(env)?;
-  ///     let value: Unknown = arr.get_element(i)?;
+  ///     let handle_scope = HandleScope::create(env)?;
+  ///     let value = env.with_scope(|scope| scope.get_optional_element::<Unknown>(&arr, i))?;
   ///         ^^^ this will be invalidated after the scope is closed
-  ///     let len = unsafe { scope.close(value, |v| match v.get_type()? {
+  ///     let len = unsafe { handle_scope.close(value, |v| match v.get_type()? {
   ///       ValueType::String => Ok(v.utf8_len()? as u32),
   ///       _ => Ok(0),
   ///     })? };
@@ -81,13 +84,13 @@ impl<'env, 'scope: 'env> EscapableHandleScope<'scope> {
     scope_fn(scope, args)
   }
 
-  pub fn escape<V: JsValue<'env> + FromNapiValue>(&self, value: V) -> Result<V> {
+  pub fn escape<V: JsValue<'env>>(&self, value: V) -> Result<Local<'env, Unknown<'env>>> {
     let mut result = ptr::null_mut();
     check_status!(
       unsafe { sys::napi_escape_handle(self.env, self.scope, value.raw(), &mut result) },
       "Failed to escape handle"
     )?;
-    unsafe { V::from_napi_value(self.env, result) }
+    Ok(unsafe { Local::from_raw(result) })
   }
 }
 
