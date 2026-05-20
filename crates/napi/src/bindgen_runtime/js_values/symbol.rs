@@ -1,7 +1,9 @@
 use std::ptr;
 
 use crate::{
-  bindgen_runtime::{Env, FromNapiValue, Result, ToNapiValue, TypeName, ValidateNapiValue},
+  bindgen_runtime::{
+    Env, FromJs, IntoJs, Local, Result, Scope, TypeName, Unknown, ValidateNapiValue,
+  },
   check_status, sys, JsSymbol,
 };
 
@@ -50,16 +52,29 @@ impl Symbol {
 
   /// Convert `Symbol` to `JsSymbol`
   pub fn into_js_symbol<'env>(self, env: &'env Env) -> Result<JsSymbol<'env>> {
-    let napi_value = unsafe { ToNapiValue::to_napi_value(env.0, self)? };
-    unsafe { JsSymbol::from_napi_value(env.0, napi_value) }
+    let mut env = *env;
+    env.with_scope(|scope| {
+      let symbol = self.into_js(scope)?;
+      Ok(JsSymbol(
+        crate::Value {
+          env: scope.env().raw(),
+          value: symbol.raw(),
+          value_type: crate::ValueType::Symbol,
+        },
+        std::marker::PhantomData,
+      ))
+    })
   }
 }
 
-impl ToNapiValue for Symbol {
-  unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> crate::Result<sys::napi_value> {
+impl<'scope> IntoJs<'scope> for Symbol {
+  type Output = JsSymbol<'scope>;
+
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> crate::Result<Local<'scope, Self::Output>> {
+    let env = scope.env().raw();
     let mut symbol_value = ptr::null_mut();
     #[cfg(feature = "napi9")]
-    if let Some(desc) = val.for_desc {
+    if let Some(desc) = self.for_desc {
       check_status!(
         unsafe {
           sys::node_api_symbol_for(
@@ -71,12 +86,12 @@ impl ToNapiValue for Symbol {
         },
         "Failed to call node_api_symbol_for"
       )?;
-      return Ok(symbol_value);
+      return Ok(unsafe { Local::from_raw(symbol_value) });
     }
     check_status!(unsafe {
       sys::napi_create_symbol(
         env,
-        match val.desc {
+        match self.desc {
           Some(desc) => {
             let mut desc_string = ptr::null_mut();
             let desc_len = desc.len();
@@ -93,14 +108,14 @@ impl ToNapiValue for Symbol {
         &mut symbol_value,
       )
     })?;
-    Ok(symbol_value)
+    Ok(unsafe { Local::from_raw(symbol_value) })
   }
 }
 
-impl FromNapiValue for Symbol {
-  unsafe fn from_napi_value(
-    _env: sys::napi_env,
-    _napi_val: sys::napi_value,
+impl<'env, 'scope> FromJs<'env, 'scope> for Symbol {
+  fn from_js(
+    _: &mut Scope<'env, 'scope>,
+    _: Local<'scope, Unknown<'scope>>,
   ) -> crate::Result<Self> {
     Ok(Self {
       desc: None,

@@ -1,5 +1,5 @@
-/// We don't implement `FromNapiValue` for `i64` `u64` `i128` `u128` `isize` `usize` here
-/// Because converting directly from `JsBigInt` to these values may result in a loss of precision and thus unintended behavior
+/// We don't implement `FromJs` for `i64` `u64` `i128` `u128` `isize` `usize` here
+/// because converting directly from `JsBigInt` to these values may result in a loss of precision and thus unintended behavior.
 /// ```rust
 /// use napi::{bindgen_prelude::*, JsBigint};
 ///
@@ -12,7 +12,7 @@ use std::{cmp::max, ptr};
 
 use crate::{check_status, sys};
 
-use super::{FromNapiValue, ToNapiValue, TypeName, ValidateNapiValue};
+use super::{FromJs, IntoJs, Local, Scope, TypeName, Unknown, ValidateNapiValue};
 
 /// i64 is converted to `Number`
 #[repr(transparent)]
@@ -51,8 +51,8 @@ impl TypeName for BigInt {
 
 impl ValidateNapiValue for BigInt {}
 
-impl FromNapiValue for BigInt {
-  unsafe fn from_napi_value(env: sys::napi_env, napi_val: sys::napi_value) -> crate::Result<Self> {
+impl BigInt {
+  unsafe fn from_raw(env: sys::napi_env, napi_val: sys::napi_value) -> crate::Result<Self> {
     let mut word_count = 0usize;
     check_status!(unsafe {
       sys::napi_get_value_bigint_words(
@@ -85,9 +85,7 @@ impl FromNapiValue for BigInt {
       words,
     })
   }
-}
 
-impl BigInt {
   /// (signed, value, lossless)
   /// get the first word of the BigInt as `u64`
   /// return true in the last element of tuple if the value is lossless
@@ -152,27 +150,39 @@ impl BigInt {
   }
 }
 
-impl ToNapiValue for BigInt {
-  unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> crate::Result<sys::napi_value> {
+impl<'env, 'scope> FromJs<'env, 'scope> for BigInt {
+  fn from_js(
+    scope: &mut Scope<'env, 'scope>,
+    value: Local<'scope, Unknown<'scope>>,
+  ) -> crate::Result<Self> {
+    unsafe { BigInt::from_raw(scope.env().raw(), value.raw()) }
+  }
+}
+
+impl<'scope> IntoJs<'scope> for BigInt {
+  type Output = BigInt;
+
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> crate::Result<Local<'scope, Self::Output>> {
+    let env = scope.env().raw();
     let mut raw_value = ptr::null_mut();
-    let len = val.words.len();
+    let len = self.words.len();
     check_status!(unsafe {
       sys::napi_create_bigint_words(
         env,
-        match val.sign_bit {
+        match self.sign_bit {
           true => 1,
           false => 0,
         },
         len,
-        val.words.as_ptr(),
+        self.words.as_ptr(),
         &mut raw_value,
       )
     })?;
-    Ok(raw_value)
+    Ok(unsafe { Local::from_raw(raw_value) })
   }
 }
 
-pub(crate) unsafe fn u128_with_sign_to_napi_value(
+pub(crate) unsafe fn create_bigint_from_u128_with_sign(
   env: sys::napi_env,
   val: u128,
   sign_bit: i32,
@@ -196,112 +206,151 @@ pub(crate) unsafe fn u128_with_sign_to_napi_value(
   Ok(raw_value)
 }
 
-impl ToNapiValue for i128 {
-  unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> crate::Result<sys::napi_value> {
-    let sign_bit = i32::from(val <= 0);
-    let val = val.unsigned_abs();
-    u128_with_sign_to_napi_value(env, val, sign_bit)
+impl<'scope> IntoJs<'scope> for i128 {
+  type Output = BigInt;
+
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> crate::Result<Local<'scope, Self::Output>> {
+    let sign_bit = i32::from(self <= 0);
+    let raw = unsafe {
+      create_bigint_from_u128_with_sign(scope.env().raw(), self.unsigned_abs(), sign_bit)?
+    };
+    Ok(unsafe { Local::from_raw(raw) })
   }
 }
 
-impl ToNapiValue for &i128 {
-  unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> crate::Result<sys::napi_value> {
-    ToNapiValue::to_napi_value(env, *val)
+impl<'scope> IntoJs<'scope> for &i128 {
+  type Output = BigInt;
+
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> crate::Result<Local<'scope, Self::Output>> {
+    self.to_owned().into_js(scope)
   }
 }
 
-impl ToNapiValue for &mut i128 {
-  unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> crate::Result<sys::napi_value> {
-    ToNapiValue::to_napi_value(env, *val)
+impl<'scope> IntoJs<'scope> for &mut i128 {
+  type Output = BigInt;
+
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> crate::Result<Local<'scope, Self::Output>> {
+    self.to_owned().into_js(scope)
   }
 }
 
-impl ToNapiValue for u128 {
-  unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> crate::Result<sys::napi_value> {
-    u128_with_sign_to_napi_value(env, val, 0)
+impl<'scope> IntoJs<'scope> for u128 {
+  type Output = BigInt;
+
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> crate::Result<Local<'scope, Self::Output>> {
+    let raw = unsafe { create_bigint_from_u128_with_sign(scope.env().raw(), self, 0)? };
+    Ok(unsafe { Local::from_raw(raw) })
   }
 }
 
-impl ToNapiValue for &u128 {
-  unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> crate::Result<sys::napi_value> {
-    ToNapiValue::to_napi_value(env, *val)
+impl<'scope> IntoJs<'scope> for &u128 {
+  type Output = BigInt;
+
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> crate::Result<Local<'scope, Self::Output>> {
+    self.to_owned().into_js(scope)
   }
 }
 
-impl ToNapiValue for &mut u128 {
-  unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> crate::Result<sys::napi_value> {
-    ToNapiValue::to_napi_value(env, *val)
+impl<'scope> IntoJs<'scope> for &mut u128 {
+  type Output = BigInt;
+
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> crate::Result<Local<'scope, Self::Output>> {
+    self.to_owned().into_js(scope)
   }
 }
 
-impl ToNapiValue for i64n {
-  unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> crate::Result<sys::napi_value> {
+impl<'scope> IntoJs<'scope> for i64n {
+  type Output = BigInt;
+
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> crate::Result<Local<'scope, Self::Output>> {
+    let env = scope.env().raw();
     let mut raw_value = ptr::null_mut();
-    check_status!(unsafe { sys::napi_create_bigint_int64(env, val.0, &mut raw_value) })?;
-    Ok(raw_value)
+    check_status!(unsafe { sys::napi_create_bigint_int64(env, self.0, &mut raw_value) })?;
+    Ok(unsafe { Local::from_raw(raw_value) })
   }
 }
 
-impl ToNapiValue for &i64n {
-  unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> crate::Result<sys::napi_value> {
-    ToNapiValue::to_napi_value(env, i64n(val.0))
+impl<'scope> IntoJs<'scope> for &i64n {
+  type Output = BigInt;
+
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> crate::Result<Local<'scope, Self::Output>> {
+    i64n(self.0).into_js(scope)
   }
 }
 
-impl ToNapiValue for &mut i64n {
-  unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> crate::Result<sys::napi_value> {
-    ToNapiValue::to_napi_value(env, i64n(val.0))
+impl<'scope> IntoJs<'scope> for &mut i64n {
+  type Output = BigInt;
+
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> crate::Result<Local<'scope, Self::Output>> {
+    i64n(self.0).into_js(scope)
   }
 }
 
-impl ToNapiValue for u64 {
-  unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> crate::Result<sys::napi_value> {
+impl<'scope> IntoJs<'scope> for u64 {
+  type Output = BigInt;
+
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> crate::Result<Local<'scope, Self::Output>> {
+    let env = scope.env().raw();
     let mut raw_value = ptr::null_mut();
     check_status!(
-      unsafe { sys::napi_create_bigint_uint64(env, val, &mut raw_value) },
+      unsafe { sys::napi_create_bigint_uint64(env, self, &mut raw_value) },
       "Failed to create BigInt from u64"
     )?;
-    Ok(raw_value)
+    Ok(unsafe { Local::from_raw(raw_value) })
   }
 }
 
-impl ToNapiValue for &u64 {
-  unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> crate::Result<sys::napi_value> {
-    ToNapiValue::to_napi_value(env, *val)
+impl<'scope> IntoJs<'scope> for &u64 {
+  type Output = BigInt;
+
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> crate::Result<Local<'scope, Self::Output>> {
+    self.to_owned().into_js(scope)
   }
 }
 
-impl ToNapiValue for &mut u64 {
-  unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> crate::Result<sys::napi_value> {
-    ToNapiValue::to_napi_value(env, *val)
+impl<'scope> IntoJs<'scope> for &mut u64 {
+  type Output = BigInt;
+
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> crate::Result<Local<'scope, Self::Output>> {
+    self.to_owned().into_js(scope)
   }
 }
 
-impl ToNapiValue for usize {
-  unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> crate::Result<sys::napi_value> {
+impl<'scope> IntoJs<'scope> for usize {
+  type Output = BigInt;
+
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> crate::Result<Local<'scope, Self::Output>> {
+    let env = scope.env().raw();
     let mut raw_value = ptr::null_mut();
-    check_status!(unsafe { sys::napi_create_bigint_uint64(env, val as u64, &mut raw_value) })?;
-    Ok(raw_value)
+    check_status!(unsafe { sys::napi_create_bigint_uint64(env, self as u64, &mut raw_value) })?;
+    Ok(unsafe { Local::from_raw(raw_value) })
   }
 }
 
-impl ToNapiValue for isize {
-  unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> crate::Result<sys::napi_value> {
+impl<'scope> IntoJs<'scope> for isize {
+  type Output = BigInt;
+
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> crate::Result<Local<'scope, Self::Output>> {
+    let env = scope.env().raw();
     let mut raw_value = ptr::null_mut();
-    check_status!(unsafe { sys::napi_create_bigint_int64(env, val as i64, &mut raw_value) })?;
-    Ok(raw_value)
+    check_status!(unsafe { sys::napi_create_bigint_int64(env, self as i64, &mut raw_value) })?;
+    Ok(unsafe { Local::from_raw(raw_value) })
   }
 }
 
-impl ToNapiValue for &usize {
-  unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> crate::Result<sys::napi_value> {
-    ToNapiValue::to_napi_value(env, *val)
+impl<'scope> IntoJs<'scope> for &usize {
+  type Output = BigInt;
+
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> crate::Result<Local<'scope, Self::Output>> {
+    self.to_owned().into_js(scope)
   }
 }
 
-impl ToNapiValue for &mut usize {
-  unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> crate::Result<sys::napi_value> {
-    ToNapiValue::to_napi_value(env, *val)
+impl<'scope> IntoJs<'scope> for &mut usize {
+  type Output = BigInt;
+
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> crate::Result<Local<'scope, Self::Output>> {
+    self.to_owned().into_js(scope)
   }
 }
 

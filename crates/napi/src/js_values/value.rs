@@ -1,17 +1,16 @@
 use std::fmt::{self, Display};
 use std::ptr;
 
-use crate::bindgen_runtime::EscapableHandleScope;
 use crate::{
-  bindgen_runtime::{FromNapiValue, Object, Unknown},
+  bindgen_runtime::{EscapableHandleScope, Local, Object, Unknown},
   {check_status, sys, JsNumber, JsString, Result, ValueType},
 };
 
 #[derive(Debug, Clone, Copy)]
 pub struct Value {
-  pub env: sys::napi_env,
-  pub value: sys::napi_value,
-  pub value_type: ValueType,
+  pub(crate) env: sys::napi_env,
+  pub(crate) value: sys::napi_value,
+  pub(crate) value_type: ValueType,
 }
 
 impl Display for Value {
@@ -20,10 +19,11 @@ impl Display for Value {
   }
 }
 
-pub trait JsValue<'env>: Sized + FromNapiValue {
+pub trait JsValue<'env>: Sized {
   fn value(&self) -> Value;
 
-  fn raw(&self) -> sys::napi_value {
+  #[doc(hidden)]
+  unsafe fn raw(&self) -> sys::napi_value {
     self.value().value
   }
 
@@ -46,7 +46,9 @@ pub trait JsValue<'env>: Sized + FromNapiValue {
     check_status!(unsafe {
       sys::napi_coerce_to_bool(env, self.value().value, &mut new_raw_value)
     })?;
-    unsafe { bool::from_napi_value(env, new_raw_value) }
+    let mut result = false;
+    check_status!(unsafe { sys::napi_get_value_bool(env, new_raw_value, &mut result) })?;
+    Ok(result)
   }
 
   fn coerce_to_number(&self) -> Result<JsNumber<'_>> {
@@ -87,7 +89,7 @@ pub trait JsValue<'env>: Sized + FromNapiValue {
     check_status!(unsafe {
       sys::napi_coerce_to_object(env, self.value().value, &mut new_raw_value)
     })?;
-    Ok(Object::from_raw(env, new_raw_value))
+    Ok(unsafe { Object::from_raw(env, new_raw_value) })
   }
 
   #[cfg(feature = "napi5")]
@@ -159,19 +161,22 @@ pub trait JsValue<'env>: Sized + FromNapiValue {
     Ok(result)
   }
 
-  fn escape<'scope, E: JsValue<'scope> + FromNapiValue>(
+  fn escape<'scope>(
     &self,
     escapable_handle_scope: EscapableHandleScope<'scope>,
-  ) -> Result<E> {
+  ) -> Result<Local<'scope, Unknown<'scope>>> {
     let mut result = ptr::null_mut();
-    unsafe {
-      sys::napi_escape_handle(
-        escapable_handle_scope.env,
-        escapable_handle_scope.scope,
-        self.raw(),
-        &mut result,
-      )
-    };
-    unsafe { <E as FromNapiValue>::from_napi_value(self.value().env, result) }
+    check_status!(
+      unsafe {
+        sys::napi_escape_handle(
+          escapable_handle_scope.env,
+          escapable_handle_scope.scope,
+          self.raw(),
+          &mut result,
+        )
+      },
+      "Failed to escape handle"
+    )?;
+    Ok(unsafe { Local::from_raw(result) })
   }
 }

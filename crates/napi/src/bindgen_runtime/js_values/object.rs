@@ -4,10 +4,9 @@ use std::convert::TryFrom;
 use std::ffi::{c_void, CStr, CString};
 use std::marker::PhantomData;
 use std::ptr;
+use std::rc::{Rc, Weak};
 
-use crate::{
-  bindgen_prelude::*, check_status, raw_finalize, sys, type_of, Callback, TaggedObject, Value,
-};
+use crate::{bindgen_prelude::*, check_status, raw_finalize, sys, Callback, TaggedObject, Value};
 #[cfg(feature = "napi5")]
 use crate::{Env, PropertyClosures};
 
@@ -24,56 +23,15 @@ pub trait JsObjectValue<'env>: JsValue<'env> {
     })
   }
 
-  /// Get the property value from the `Object`
-  ///
-  /// Return the `InvalidArg` error if the property is not `T`
-  fn get_property<'k, K, T>(&self, key: K) -> Result<T>
-  where
-    K: JsValue<'k>,
-    T: FromNapiValue + ValidateNapiValue,
-  {
-    let mut raw_value = ptr::null_mut();
-    let env = self.value().env;
-    check_status!(unsafe {
-      sys::napi_get_property(env, self.value().value, key.raw(), &mut raw_value)
-    })?;
-    unsafe { T::validate(env, raw_value) }.map_err(|mut err| {
-      err.reason = format!(
-        "Object property '{:?}' type mismatch. {}",
-        key
-          .coerce_to_string()
-          .and_then(|s| s.into_utf8())
-          .and_then(|s| s.into_owned()),
-        err.reason
-      );
-      err
-    })?;
-    unsafe { T::from_napi_value(env, raw_value) }
-  }
-
-  /// Get the property value from the `Object` without validation
-  fn get_property_unchecked<'k, K, T>(&self, key: K) -> Result<T>
-  where
-    K: JsValue<'k>,
-    T: FromNapiValue,
-  {
-    let mut raw_value = ptr::null_mut();
-    let env = self.value().env;
-    check_status!(unsafe {
-      sys::napi_get_property(env, self.value().value, key.raw(), &mut raw_value)
-    })?;
-    unsafe { T::from_napi_value(env, raw_value) }
-  }
-
   /// Set the property value to the `Object`
   fn set_named_property<T>(&mut self, name: &str, value: T) -> Result<()>
   where
-    T: ToNapiValue,
+    for<'scope> T: IntoJs<'scope>,
   {
     let key = CString::new(name)?;
     let env = self.value().env;
     check_status!(unsafe {
-      sys::napi_set_named_property(env, self.raw(), key.as_ptr(), T::to_napi_value(env, value)?)
+      sys::napi_set_named_property(env, self.raw(), key.as_ptr(), into_js_raw(env, value)?)
     })
   }
 
@@ -81,16 +39,11 @@ pub trait JsObjectValue<'env>: JsValue<'env> {
   /// This is useful when the property name comes from a `C` library
   fn set_c_named_property<T>(&mut self, name: &CStr, value: T) -> Result<()>
   where
-    T: ToNapiValue,
+    for<'scope> T: IntoJs<'scope>,
   {
     let env = self.value().env;
     check_status!(unsafe {
-      sys::napi_set_named_property(
-        env,
-        self.raw(),
-        name.as_ptr(),
-        T::to_napi_value(env, value)?,
-      )
+      sys::napi_set_named_property(env, self.raw(), name.as_ptr(), into_js_raw(env, value)?)
     })
   }
 
@@ -139,92 +92,6 @@ pub trait JsObjectValue<'env>: JsValue<'env> {
       unsafe { sys::napi_set_named_property(env, self.value().value, name.as_ptr(), js_function) },
       "create_named_method error"
     )
-  }
-
-  /// Get the property value from the `Object`
-  ///
-  /// Return the `InvalidArg` error if the property is not `T`
-  fn get_named_property<T>(&self, name: &str) -> Result<T>
-  where
-    T: FromNapiValue + ValidateNapiValue,
-  {
-    let key = CString::new(name)?;
-    let mut raw_value = ptr::null_mut();
-    let env = self.value().env;
-    check_status!(
-      unsafe {
-        sys::napi_get_named_property(env, self.value().value, key.as_ptr(), &mut raw_value)
-      },
-      "get_named_property error"
-    )?;
-    unsafe { <T as ValidateNapiValue>::validate(env, raw_value) }.map_err(|mut err| {
-      err.reason = format!("Object property '{name}' type mismatch. {}", err.reason);
-      err
-    })?;
-    unsafe { <T as FromNapiValue>::from_napi_value(env, raw_value) }
-  }
-
-  /// Get the property value from the `Object`
-  ///
-  /// Return the `InvalidArg` error if the property is not `T`
-  ///
-  /// This is useful when the property name comes from a `C` library
-  fn get_c_named_property<T>(&self, name: &CStr) -> Result<T>
-  where
-    T: FromNapiValue + ValidateNapiValue,
-  {
-    let mut raw_value = ptr::null_mut();
-    let env = self.value().env;
-    check_status!(
-      unsafe {
-        sys::napi_get_named_property(env, self.value().value, name.as_ptr(), &mut raw_value)
-      },
-      "get_named_property error"
-    )?;
-    unsafe { <T as ValidateNapiValue>::validate(env, raw_value) }.map_err(|mut err| {
-      err.reason = format!(
-        "Object property '{}' type mismatch. {}",
-        name.to_string_lossy(),
-        err.reason
-      );
-      err
-    })?;
-    unsafe { <T as FromNapiValue>::from_napi_value(env, raw_value) }
-  }
-
-  /// Get the property value from the `Object` without validation
-  fn get_named_property_unchecked<T>(&self, name: &str) -> Result<T>
-  where
-    T: FromNapiValue,
-  {
-    let key = CString::new(name)?;
-    let mut raw_value = ptr::null_mut();
-    let env = self.value().env;
-    check_status!(
-      unsafe {
-        sys::napi_get_named_property(env, self.value().value, key.as_ptr(), &mut raw_value)
-      },
-      "get_named_property_unchecked error"
-    )?;
-    unsafe { <T as FromNapiValue>::from_napi_value(env, raw_value) }
-  }
-
-  /// Get the property value from the `Object` without validation
-  ///
-  /// This is useful when the property name comes from a `C` library
-  fn get_c_named_property_unchecked<T>(&self, name: &CStr) -> Result<T>
-  where
-    T: FromNapiValue,
-  {
-    let mut raw_value = ptr::null_mut();
-    let env = self.value().env;
-    check_status!(
-      unsafe {
-        sys::napi_get_named_property(env, self.value().value, name.as_ptr(), &mut raw_value)
-      },
-      "get_c_named_property_unchecked error"
-    )?;
-    unsafe { <T as FromNapiValue>::from_napi_value(env, raw_value) }
   }
 
   /// Check if the `Object` has the named property
@@ -373,7 +240,7 @@ pub trait JsObjectValue<'env>: JsValue<'env> {
     check_status!(unsafe {
       sys::napi_get_property_names(env, self.value().value, &mut raw_value)
     })?;
-    Ok(Object::from_raw(env, raw_value))
+    Ok(unsafe { Object::from_raw(env, raw_value) })
   }
 
   #[cfg(feature = "napi6")]
@@ -397,7 +264,7 @@ pub trait JsObjectValue<'env>: JsValue<'env> {
         &mut properties_value,
       )
     })?;
-    Ok(Object::from_raw(env, properties_value))
+    Ok(unsafe { Object::from_raw(env, properties_value) })
   }
 
   /// This returns the equivalent of `Object.getPrototypeOf` (which is not the same as the function's prototype property).
@@ -406,17 +273,6 @@ pub trait JsObjectValue<'env>: JsValue<'env> {
     let env = self.value().env;
     check_status!(unsafe { sys::napi_get_prototype(env, self.value().value, &mut result) })?;
     Ok(unsafe { Unknown::from_raw_unchecked(env, result) })
-  }
-
-  /// Get the prototype of the `Object`
-  fn get_prototype_unchecked<T>(&self) -> Result<T>
-  where
-    T: FromNapiValue,
-  {
-    let mut result = ptr::null_mut();
-    let env = self.value().env;
-    check_status!(unsafe { sys::napi_get_prototype(env, self.value().value, &mut result) })?;
-    unsafe { T::from_napi_value(env, result) }
   }
 
   /// Set the element at the given index
@@ -444,21 +300,6 @@ pub trait JsObjectValue<'env>: JsValue<'env> {
       sys::napi_delete_element(env, self.value().value, index, &mut result)
     })?;
     Ok(result)
-  }
-
-  /// Get the element at the given index
-  ///
-  /// If the `Object` is not an array, `ArrayExpected` error returned
-  fn get_element<T>(&self, index: u32) -> Result<T>
-  where
-    T: FromNapiValue,
-  {
-    let mut raw_value = ptr::null_mut();
-    let env = self.value().env;
-    check_status!(unsafe {
-      sys::napi_get_element(env, self.value().value, index, &mut raw_value)
-    })?;
-    unsafe { T::from_napi_value(env, raw_value) }
   }
 
   /// This method allows the efficient definition of multiple properties on a given object.
@@ -529,7 +370,7 @@ pub trait JsObjectValue<'env>: JsValue<'env> {
   /// the `T` will be dropped when this `Object` is finalized
   fn wrap<T: 'static>(&mut self, native_object: T, size_hint: Option<usize>) -> Result<()> {
     let env = self.value().env;
-    let value = self.raw();
+    let value = unsafe { self.raw() };
     check_status!(unsafe {
       sys::napi_wrap(
         env,
@@ -548,7 +389,7 @@ pub trait JsObjectValue<'env>: JsValue<'env> {
   #[allow(clippy::mut_from_ref)]
   fn unwrap<T: 'static>(&self) -> Result<&mut T> {
     let env = self.value().env;
-    let value = self.raw();
+    let value = unsafe { self.raw() };
     unsafe {
       let mut unknown_tagged_object: *mut c_void = ptr::null_mut();
       check_status!(
@@ -582,7 +423,7 @@ pub trait JsObjectValue<'env>: JsValue<'env> {
   /// Return the `InvalidArg` error if the `Object` is not wrapped the `T`
   fn remove_wrapped<T: 'static>(&mut self) -> Result<()> {
     let env = self.value().env;
-    let value = self.raw();
+    let value = unsafe { self.raw() };
     unsafe {
       let mut unknown_tagged_object = ptr::null_mut();
       check_status!(sys::napi_remove_wrap(
@@ -623,7 +464,7 @@ pub trait JsObjectValue<'env>: JsValue<'env> {
   {
     let mut maybe_ref = ptr::null_mut();
     let env = self.value().env;
-    let value = self.raw();
+    let value = unsafe { self.raw() };
     let wrap_context = Box::leak(Box::new((native, finalize_cb, ptr::null_mut())));
     check_status!(unsafe {
       sys::napi_add_finalizer(
@@ -680,28 +521,27 @@ impl TypeName for Object<'_> {
 
 impl ValidateNapiValue for Object<'_> {}
 
-impl FromNapiValue for Object<'_> {
-  unsafe fn from_napi_value(env: sys::napi_env, napi_val: sys::napi_value) -> Result<Self> {
-    Ok(Self(
-      Value {
-        env,
-        value: napi_val,
-        value_type: ValueType::Object,
-      },
-      PhantomData,
-    ))
+impl<'env, 'scope> FromJs<'env, 'scope> for Object<'scope> {
+  fn from_js(
+    scope: &mut Scope<'env, 'scope>,
+    value: Local<'scope, Unknown<'scope>>,
+  ) -> Result<Self> {
+    Ok(unsafe { Object::from_raw(scope.env().raw(), value.raw()) })
   }
 }
 
-impl ToNapiValue for &Object<'_> {
-  unsafe fn to_napi_value(_env: sys::napi_env, val: Self) -> Result<sys::napi_value> {
-    Ok(val.0.value)
+impl<'scope> IntoJs<'scope> for &Object<'_> {
+  type Output = Object<'scope>;
+
+  fn into_js(self, _: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
+    Ok((*self).into_local())
   }
 }
 
 impl Object<'_> {
   /// create a new `Object` from raw values
-  pub fn from_raw(env: sys::napi_env, value: sys::napi_value) -> Self {
+  #[doc(hidden)]
+  pub unsafe fn from_raw(env: sys::napi_env, value: sys::napi_value) -> Self {
     Self(
       Value {
         env,
@@ -710,6 +550,10 @@ impl Object<'_> {
       },
       PhantomData,
     )
+  }
+
+  pub(crate) fn into_local<'scope>(self) -> Local<'scope, Object<'scope>> {
+    unsafe { Local::from_raw(self.0.value) }
   }
 
   /// create a new `Object` from a `Env`
@@ -732,52 +576,16 @@ impl Object<'_> {
     ))
   }
 
-  /// Get the property value from the `Object`, if the property is not found, `None` is returned
-  pub fn get<V: FromNapiValue>(&self, field: &str) -> Result<Option<V>> {
-    unsafe {
-      self
-        .get_inner(field)?
-        .map(|v| V::from_napi_value(self.0.env, v))
-        .transpose()
-    }
-  }
-
-  fn get_inner(&self, field: &str) -> Result<Option<sys::napi_value>> {
-    unsafe {
-      let mut property_key = std::ptr::null_mut();
-      check_status!(
-        sys::napi_create_string_utf8(
-          self.0.env,
-          field.as_ptr().cast(),
-          field.len() as isize,
-          &mut property_key,
-        ),
-        "Failed to create property key with `{field}`"
-      )?;
-
-      let mut ret = ptr::null_mut();
-
-      check_status!(
-        sys::napi_get_property(self.0.env, self.0.value, property_key, &mut ret),
-        "Failed to get property with field `{field}`",
-      )?;
-
-      let ty = type_of!(self.0.env, ret)?;
-
-      Ok(if ty == ValueType::Undefined {
-        None
-      } else {
-        Some(ret)
-      })
-    }
-  }
-
   /// Set the property value to the `Object`
-  pub fn set<K: AsRef<str>, V: ToNapiValue>(&mut self, field: K, val: V) -> Result<()> {
-    unsafe { self.set_inner(field.as_ref(), V::to_napi_value(self.0.env, val)?) }
+  pub fn set<K, V>(&mut self, field: K, val: V) -> Result<()>
+  where
+    K: AsRef<str>,
+    for<'scope> V: IntoJs<'scope>,
+  {
+    unsafe { self.set_inner(field.as_ref(), into_js_raw(self.0.env, val)?) }
   }
 
-  unsafe fn set_inner(&mut self, field: &str, napi_val: sys::napi_value) -> Result<()> {
+  pub(crate) unsafe fn set_inner(&mut self, field: &str, napi_val: sys::napi_value) -> Result<()> {
     let mut property_key = std::ptr::null_mut();
     check_status!(
       unsafe {
@@ -797,37 +605,21 @@ impl Object<'_> {
     )?;
     Ok(())
   }
+}
 
-  /// Get the string keys of the `Object`
-  pub fn keys(obj: &Object) -> Result<Vec<String>> {
-    let mut names = ptr::null_mut();
-    unsafe {
-      check_status!(
-        sys::napi_get_property_names(obj.0.env, obj.0.value, &mut names),
-        "Failed to get property names of given object"
-      )?;
-    }
-
-    let names = unsafe { Array::from_napi_value(obj.0.env, names)? };
-    let mut ret = vec![];
-
-    for i in 0..names.len() {
-      ret.push(names.get_element::<String>(i)?);
-    }
-
-    Ok(ret)
-  }
-
-  /// Create a reference to the object.
-  ///
-  /// Set the `LEAK_CHECK` to `false` to disable the leak check during the `Drop`
-  pub fn create_ref<const LEAK_CHECK: bool>(&self) -> Result<ObjectRef<LEAK_CHECK>> {
+impl<'scope, const LEAK_CHECK: bool> JsRefTarget<'scope, ObjectRef<LEAK_CHECK>> for &Object<'_> {
+  fn create_ref(self, scope: &mut Scope<'_, 'scope>) -> Result<ObjectRef<LEAK_CHECK>> {
+    scope.ensure_value_env(self.0.env, "Object")?;
     let mut ref_ = ptr::null_mut();
     check_status!(
-      unsafe { sys::napi_create_reference(self.0.env, self.0.value, 1, &mut ref_) },
+      unsafe { sys::napi_create_reference(scope.env().raw(), self.0.value, 1, &mut ref_) },
       "Failed to create reference"
     )?;
-    Ok(ObjectRef { inner: ref_ })
+    Ok(ObjectRef {
+      inner: ref_,
+      record: Rc::downgrade(scope.required_record()?),
+      not_send: PhantomData,
+    })
   }
 }
 
@@ -838,9 +630,9 @@ impl Object<'_> {
 /// Set the `LEAK_CHECK` to `false` to disable the leak check during the `Drop`
 pub struct ObjectRef<const LEAK_CHECK: bool = true> {
   pub(crate) inner: sys::napi_ref,
+  record: Weak<EnvRecord>,
+  not_send: PhantomData<Rc<()>>,
 }
-
-unsafe impl<const LEAK_CHECK: bool> Send for ObjectRef<LEAK_CHECK> {}
 
 impl<const LEAK_CHECK: bool> Drop for ObjectRef<LEAK_CHECK> {
   fn drop(&mut self) {
@@ -853,16 +645,18 @@ impl<const LEAK_CHECK: bool> Drop for ObjectRef<LEAK_CHECK> {
 impl<const LEAK_CHECK: bool> ObjectRef<LEAK_CHECK> {
   /// Get the object from the reference
   pub fn get_value<'env>(&self, env: &'env Env) -> Result<Object<'env>> {
+    ensure_object_ref_owner(&self.record, env)?;
     let mut result = ptr::null_mut();
     check_status!(
       unsafe { sys::napi_get_reference_value(env.0, self.inner, &mut result) },
       "Failed to get reference value"
     )?;
-    Ok(Object::from_raw(env.0, result))
+    Ok(unsafe { Object::from_raw(env.0, result) })
   }
 
   /// Unref the reference
   pub fn unref(mut self, env: &Env) -> Result<()> {
+    ensure_object_ref_owner(&self.record, env)?;
     check_status!(
       unsafe { sys::napi_delete_reference(env.0, self.inner) },
       "delete Ref failed"
@@ -872,48 +666,76 @@ impl<const LEAK_CHECK: bool> ObjectRef<LEAK_CHECK> {
   }
 }
 
-impl<const LEAK_CHECK: bool> FromNapiValue for ObjectRef<LEAK_CHECK> {
-  unsafe fn from_napi_value(env: sys::napi_env, napi_val: sys::napi_value) -> Result<Self> {
-    let mut ref_ = ptr::null_mut();
-    check_status!(
-      unsafe { sys::napi_create_reference(env, napi_val, 1, &mut ref_) },
-      "Failed to create reference"
-    )?;
-    Ok(Self { inner: ref_ })
+impl<'env, 'scope, const LEAK_CHECK: bool> FromJs<'env, 'scope> for ObjectRef<LEAK_CHECK> {
+  fn from_js(
+    scope: &mut Scope<'env, 'scope>,
+    value: Local<'scope, Unknown<'scope>>,
+  ) -> Result<Self> {
+    let value = Object::from_js(scope, value)?;
+    scope.create_ref(&value)
   }
 }
 
-impl<const LEAK_CHECK: bool> ToNapiValue for &ObjectRef<LEAK_CHECK> {
-  unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> Result<sys::napi_value> {
+impl<'scope, const LEAK_CHECK: bool> IntoJs<'scope> for &ObjectRef<LEAK_CHECK> {
+  type Output = Object<'scope>;
+
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
+    let env = scope.env().raw();
+    ensure_object_ref_owner_record(&self.record, scope.required_record()?)?;
     let mut result = ptr::null_mut();
     check_status!(
-      unsafe { sys::napi_get_reference_value(env, val.inner, &mut result) },
+      unsafe { sys::napi_get_reference_value(env, self.inner, &mut result) },
       "Failed to get reference value"
     )?;
-    Ok(result)
+    Ok(unsafe { Local::from_raw(result) })
   }
 }
 
-impl<const LEAK_CHECK: bool> ToNapiValue for ObjectRef<LEAK_CHECK> {
-  unsafe fn to_napi_value(env: sys::napi_env, mut val: Self) -> Result<sys::napi_value> {
+impl<'scope, const LEAK_CHECK: bool> IntoJs<'scope> for ObjectRef<LEAK_CHECK> {
+  type Output = Object<'scope>;
+
+  fn into_js(mut self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
+    let env = scope.env().raw();
+    ensure_object_ref_owner_record(&self.record, scope.required_record()?)?;
     let mut result = ptr::null_mut();
     check_status!(
-      unsafe { sys::napi_get_reference_value(env, val.inner, &mut result) },
+      unsafe { sys::napi_get_reference_value(env, self.inner, &mut result) },
       "Failed to get reference value"
     )?;
     check_status!(
-      unsafe { sys::napi_delete_reference(env, val.inner) },
+      unsafe { sys::napi_delete_reference(env, self.inner) },
       "delete Ref failed"
     )?;
-    val.inner = ptr::null_mut();
-    drop(val);
-    Ok(result)
+    self.inner = ptr::null_mut();
+    drop(self);
+    Ok(unsafe { Local::from_raw(result) })
+  }
+}
+
+fn ensure_object_ref_owner(record: &Weak<EnvRecord>, env: &Env) -> Result<()> {
+  let current = env.record();
+  ensure_object_ref_owner_record(record, &current)
+}
+
+fn ensure_object_ref_owner_record(record: &Weak<EnvRecord>, current: &Rc<EnvRecord>) -> Result<()> {
+  let owner = record.upgrade().ok_or_else(|| {
+    Error::new(
+      Status::InvalidArg,
+      "ObjectRef owner environment is no longer available",
+    )
+  })?;
+  if Rc::ptr_eq(&owner, current) {
+    Ok(())
+  } else {
+    Err(Error::new(
+      Status::InvalidArg,
+      "ObjectRef owner environment does not match the current environment",
+    ))
   }
 }
 
 #[cfg(feature = "napi5")]
 pub struct FinalizeContext<T: 'static, Hint: 'static> {
-  pub env: Env,
   pub value: T,
   pub hint: Hint,
 }
@@ -1026,6 +848,10 @@ impl From<KeyConversion> for sys::napi_key_conversion {
   }
 }
 
+/// # Safety
+///
+/// Called by Node when wrapping an object. `finalize_data` and `finalize_hint` must be the
+/// pointers previously passed to `napi_wrap`.
 #[cfg(feature = "napi5")]
 unsafe extern "C" fn finalize_callback<T, Hint, F>(
   raw_env: sys::napi_env,
@@ -1036,19 +862,14 @@ unsafe extern "C" fn finalize_callback<T, Hint, F>(
   Hint: 'static,
   F: FnOnce(FinalizeContext<T, Hint>),
 {
-  use crate::Env;
-
   let (value, callback, raw_ref) =
     unsafe { *Box::from_raw(finalize_data as *mut (T, F, sys::napi_ref)) };
   let hint = unsafe { *Box::from_raw(finalize_hint as *mut Hint) };
-  let env = Env::from_raw(raw_env);
-  callback(FinalizeContext { env, value, hint });
-  if !raw_ref.is_null() {
-    check_status_or_throw!(
-      raw_env,
-      unsafe { sys::napi_delete_reference(raw_env, raw_ref) },
-      "Delete reference in finalize callback failed"
-    );
+  crate::run_unwind_boundary("running object finalizer callback", || {
+    callback(FinalizeContext { value, hint })
+  });
+  if !raw_ref.is_null() && !crate::bindgen_runtime::defer_ref_for_env(raw_env, raw_ref) {
+    eprintln!("napi-rs: leaked object finalize reference after env teardown");
   }
 }
 

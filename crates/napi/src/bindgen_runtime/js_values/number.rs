@@ -1,4 +1,4 @@
-use crate::{bindgen_prelude::ToNapiValue, check_status, sys, type_of, Error, Result};
+use crate::{bindgen_prelude::*, check_status, sys, type_of, Error, Result};
 
 macro_rules! impl_number_conversions {
   ( $( ($name:literal, $t:ty as $st:ty, $get:ident, $create:ident) ,)* ) => {
@@ -15,10 +15,13 @@ macro_rules! impl_number_conversions {
 
       impl $crate::bindgen_prelude::ValidateNapiValue for $t { }
 
-      impl ToNapiValue for $t {
-        unsafe fn to_napi_value(env: $crate::sys::napi_env, val: $t) -> Result<$crate::sys::napi_value> {
+      impl<'scope> IntoJs<'scope> for $t {
+        type Output = crate::JsNumber<'scope>;
+
+        fn into_js(self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
+          let env = scope.env().raw();
           let mut ptr = std::ptr::null_mut();
-          let val: $st = val.into();
+          let val: $st = self.into();
 
           check_status!(
             unsafe { sys::$create(env, val, &mut ptr) },
@@ -26,30 +29,39 @@ macro_rules! impl_number_conversions {
             $name,
           )?;
 
-          Ok(ptr)
+          Ok(unsafe { Local::from_raw(ptr) })
         }
       }
 
-      impl ToNapiValue for &$t {
-        unsafe fn to_napi_value(env: $crate::sys::napi_env, val: &$t) -> Result<$crate::sys::napi_value> {
-          ToNapiValue::to_napi_value(env, *val)
+      impl<'scope> IntoJs<'scope> for &$t {
+        type Output = crate::JsNumber<'scope>;
+
+        fn into_js(self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
+          self.to_owned().into_js(scope)
         }
       }
 
-      impl ToNapiValue for &mut $t {
-        unsafe fn to_napi_value(env: $crate::sys::napi_env, val: &mut $t) -> Result<$crate::sys::napi_value> {
-          ToNapiValue::to_napi_value(env, *val)
+      impl<'scope> IntoJs<'scope> for &mut $t {
+        type Output = crate::JsNumber<'scope>;
+
+        fn into_js(self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
+          self.to_owned().into_js(scope)
         }
       }
 
-      impl $crate::bindgen_prelude::FromNapiValue for $t {
-        unsafe fn from_napi_value(env: $crate::sys::napi_env, napi_val: $crate::sys::napi_value) -> Result<Self> {
+      impl<'env, 'scope> FromJs<'env, 'scope> for $t {
+        fn from_js(
+          scope: &mut Scope<'env, 'scope>,
+          value: Local<'scope, Unknown<'scope>>,
+        ) -> Result<Self> {
+          let env = scope.env().raw();
+          let raw = value.raw();
           let mut ret = 0 as $st;
 
           check_status!(
-            unsafe { sys::$get(env, napi_val, &mut ret) },
-            "Failed to convert napi value {:?} into rust type `{}`",
-            type_of!(env, napi_val)?,
+            unsafe { sys::$get(env, raw, &mut ret) },
+            "Failed to convert JavaScript value {:?} into rust type `{}`",
+            type_of!(env, raw)?,
             $name,
           )?;
 
@@ -71,15 +83,34 @@ impl_number_conversions!(
   ("f64", f64 as f64, napi_get_value_double, napi_create_double),
 );
 
-impl ToNapiValue for f32 {
-  unsafe fn to_napi_value(env: crate::sys::napi_env, val: f32) -> Result<crate::sys::napi_value> {
+impl<'env, 'scope> FromJs<'env, 'scope> for crate::JsNumber<'scope> {
+  fn from_js(
+    scope: &mut Scope<'env, 'scope>,
+    value: Local<'scope, Unknown<'scope>>,
+  ) -> Result<Self> {
+    Ok(crate::JsNumber(
+      crate::Value {
+        env: scope.env().raw(),
+        value: value.raw(),
+        value_type: crate::ValueType::Number,
+      },
+      std::marker::PhantomData,
+    ))
+  }
+}
+
+impl<'scope> IntoJs<'scope> for f32 {
+  type Output = crate::JsNumber<'scope>;
+
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
+    let env = scope.env().raw();
     let mut ptr = std::ptr::null_mut();
 
     check_status!(
-      unsafe { sys::napi_create_double(env, val.into(), &mut ptr) },
+      unsafe { sys::napi_create_double(env, self.into(), &mut ptr) },
       "Failed to convert rust type `f32` into napi value",
     )?;
 
-    Ok(ptr)
+    Ok(unsafe { Local::from_raw(ptr) })
   }
 }

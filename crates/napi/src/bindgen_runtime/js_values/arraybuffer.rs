@@ -10,7 +10,8 @@ use std::sync::atomic::Ordering;
 use crate::bindgen_prelude::{CUSTOM_GC_TSFN, CUSTOM_GC_TSFN_DESTROYED, THREADS_CAN_ACCESS_ENV};
 use crate::{
   bindgen_prelude::{
-    FromNapiValue, JsObjectValue, JsValue, This, ToNapiValue, TypeName, ValidateNapiValue,
+    FromJs, IntoJs, JsObjectValue, JsValue, Local, Scope, This, TypeName, Unknown,
+    ValidateNapiValue,
   },
   check_status, sys, Env, Error, Result, Status, Value, ValueType,
 };
@@ -121,8 +122,8 @@ impl TypeName for ArrayBuffer<'_> {
   }
 }
 
-impl FromNapiValue for ArrayBuffer<'_> {
-  unsafe fn from_napi_value(env: sys::napi_env, napi_val: sys::napi_value) -> Result<Self> {
+impl ArrayBuffer<'_> {
+  unsafe fn from_raw(env: sys::napi_env, napi_val: sys::napi_value) -> Result<Self> {
     let value = Value {
       env,
       value: napi_val,
@@ -141,6 +142,15 @@ impl FromNapiValue for ArrayBuffer<'_> {
         unsafe { std::slice::from_raw_parts(data as *const u8, byte_length) }
       },
     })
+  }
+}
+
+impl<'env, 'scope> FromJs<'env, 'scope> for ArrayBuffer<'scope> {
+  fn from_js(
+    scope: &mut Scope<'env, 'scope>,
+    value: Local<'scope, Unknown<'scope>>,
+  ) -> Result<Self> {
+    unsafe { ArrayBuffer::from_raw(scope.env().raw(), value.raw()) }
   }
 }
 
@@ -232,7 +242,7 @@ impl<'env> ArrayBuffer<'env> {
   ///
   /// If you need to support these runtimes, you should create a buffer by other means and then
   /// later copy the data back out.
-  pub unsafe fn from_external<T: 'env, F: FnOnce(Env, T)>(
+  pub unsafe fn from_external<T: 'static, F: FnOnce(T) + 'static>(
     env: &Env,
     data: *mut u8,
     len: usize,
@@ -278,7 +288,7 @@ impl<'env> ArrayBuffer<'env> {
         unsafe { std::ptr::copy_nonoverlapping(data.cast(), underlying_data, len) };
       }
       // Always call finalize to clean up caller's resources, even on error
-      finalize(*env, hint);
+      crate::run_unwind_boundary("running arraybuffer finalizer callback", || finalize(hint));
       check_status!(status, "Failed to create arraybuffer from data")?;
     } else {
       check_status!(status, "Failed to create arraybuffer from data")?;
@@ -401,8 +411,8 @@ impl<'env> JsValue<'env> for TypedArray<'env> {
 
 impl<'env> JsObjectValue<'env> for TypedArray<'env> {}
 
-impl FromNapiValue for TypedArray<'_> {
-  unsafe fn from_napi_value(env: sys::napi_env, napi_val: sys::napi_value) -> Result<Self> {
+impl TypedArray<'_> {
+  unsafe fn from_raw(env: sys::napi_env, napi_val: sys::napi_value) -> Result<Self> {
     let value = Value {
       env,
       value: napi_val,
@@ -447,6 +457,15 @@ impl FromNapiValue for TypedArray<'_> {
   }
 }
 
+impl<'env, 'scope> FromJs<'env, 'scope> for TypedArray<'scope> {
+  fn from_js(
+    scope: &mut Scope<'env, 'scope>,
+    value: Local<'scope, Unknown<'scope>>,
+  ) -> Result<Self> {
+    unsafe { TypedArray::from_raw(scope.env().raw(), value.raw()) }
+  }
+}
+
 trait Finalizer {
   type RustType;
 
@@ -481,8 +500,8 @@ macro_rules! impl_typed_array {
     impl Drop for $name {
       fn drop(&mut self) {
         if let Some((ref_, env)) = self.raw {
-          // If the ref is null, it means the TypedArray has been called `ToNapiValue::to_napi_value`, and the `ref` has been deleted
-          // If the env is null, it means the TypedArray is copied in `&mut TypedArray ToNapiValue::to_napi_value`, and the `ref` will be deleted in the raw TypedArray
+          // If the ref is null, the TypedArray has moved its JS reference into a value conversion.
+          // If the env is null, the TypedArray is a copied view whose reference is owned by the copied value.
           if ref_.is_null() || env.is_null() {
             return;
           }
@@ -640,6 +659,51 @@ macro_rules! impl_typed_array {
 
         unsafe { std::slice::from_raw_parts_mut(self.data, self.length) }
       }
+
+      unsafe fn from_raw(env: sys::napi_env, napi_val: sys::napi_value) -> Result<Self> {
+        let mut typed_array_type = 0;
+        let mut length = 0;
+        let mut data = ptr::null_mut();
+        let mut array_buffer = ptr::null_mut();
+        let mut byte_offset = 0;
+        let mut ref_ = ptr::null_mut();
+        check_status!(
+          unsafe { sys::napi_create_reference(env, napi_val, 1, &mut ref_) },
+          "Failed to create reference from TypedArray"
+        )?;
+        check_status!(
+          unsafe {
+            sys::napi_get_typedarray_info(
+              env,
+              napi_val,
+              &mut typed_array_type,
+              &mut length,
+              &mut data,
+              &mut array_buffer,
+              &mut byte_offset,
+            )
+          },
+          "Get TypedArray info failed"
+        )?;
+        if typed_array_type != $typed_array_type as i32 {
+          return Err(Error::new(
+            Status::InvalidArg,
+            format!(
+              "Expected {}, got {}Array",
+              stringify!($name),
+              TypedArrayType::from(typed_array_type).as_ref()
+            ),
+          ));
+        }
+        Ok($name {
+          data: data.cast(),
+          length,
+          capacity: length,
+          byte_offset,
+          raw: Some((ref_, env)),
+          finalizer_notify: ptr::null_mut::<fn(*mut $rust_type, usize)>(),
+        })
+      }
     }
 
     impl Deref for $name {
@@ -690,56 +754,21 @@ macro_rules! impl_typed_array {
       }
     }
 
-    impl FromNapiValue for $name {
-      unsafe fn from_napi_value(env: sys::napi_env, napi_val: sys::napi_value) -> Result<Self> {
-        let mut typed_array_type = 0;
-        let mut length = 0;
-        let mut data = ptr::null_mut();
-        let mut array_buffer = ptr::null_mut();
-        let mut byte_offset = 0;
-        let mut ref_ = ptr::null_mut();
-        check_status!(
-          unsafe { sys::napi_create_reference(env, napi_val, 1, &mut ref_) },
-          "Failed to create reference from TypedArray"
-        )?;
-        check_status!(
-          unsafe {
-            sys::napi_get_typedarray_info(
-              env,
-              napi_val,
-              &mut typed_array_type,
-              &mut length,
-              &mut data,
-              &mut array_buffer,
-              &mut byte_offset,
-            )
-          },
-          "Get TypedArray info failed"
-        )?;
-        if typed_array_type != $typed_array_type as i32 {
-          return Err(Error::new(
-            Status::InvalidArg,
-            format!(
-              "Expected {}, got {}Array",
-              stringify!($name),
-              TypedArrayType::from(typed_array_type).as_ref()
-            ),
-          ));
-        }
-        Ok($name {
-          data: data.cast(),
-          length,
-          capacity: length,
-          byte_offset,
-          raw: Some((ref_, env)),
-          finalizer_notify: ptr::null_mut::<fn(*mut $rust_type, usize)>(),
-        })
+    impl<'env, 'scope> FromJs<'env, 'scope> for $name {
+      fn from_js(
+        scope: &mut Scope<'env, 'scope>,
+        value: Local<'scope, Unknown<'scope>>,
+      ) -> Result<Self> {
+        unsafe { $name::from_raw(scope.env().raw(), value.raw()) }
       }
     }
 
-    impl ToNapiValue for $name {
-      unsafe fn to_napi_value(env: sys::napi_env, mut val: Self) -> Result<sys::napi_value> {
-        if let Some((ref_, _)) = val.raw {
+    impl<'scope> IntoJs<'scope> for $name {
+      type Output = $name;
+
+      fn into_js(mut self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
+        let env = scope.env().raw();
+        if let Some((ref_, _)) = self.raw {
           let mut napi_value = std::ptr::null_mut();
           check_status!(
             unsafe { sys::napi_get_reference_value(env, ref_, &mut napi_value) },
@@ -747,16 +776,16 @@ macro_rules! impl_typed_array {
           )?;
           check_status!(
             unsafe { sys::napi_delete_reference(env, ref_) },
-            "Failed to delete reference in ArrayBuffer::to_napi_value"
+            "Failed to delete reference in ArrayBuffer::into_js"
           )?;
-          val.raw = Some((ptr::null_mut(), ptr::null_mut()));
-          return Ok(napi_value);
+          self.raw = Some((ptr::null_mut(), ptr::null_mut()));
+          return Ok(unsafe { Local::from_raw(napi_value) });
         }
         let mut arraybuffer_value = ptr::null_mut();
         let ratio = mem::size_of::<$rust_type>();
-        let val_length = val.length;
+        let val_length = self.length;
         let length = val_length * ratio;
-        let val_data = val.data;
+        let val_data = self.data;
         if length == 0 {
           // Rust uses 0x1 as the data pointer for empty buffers,
           // but NAPI/V8 only allows multiple buffers to have
@@ -768,7 +797,7 @@ macro_rules! impl_typed_array {
             "Create external arraybuffer failed"
           )?;
         } else {
-          let hint_ptr = Box::into_raw(Box::new(val));
+          let hint_ptr = Box::into_raw(Box::new(self));
           let mut status = unsafe {
             sys::napi_create_external_arraybuffer(
               env,
@@ -812,25 +841,81 @@ macro_rules! impl_typed_array {
           },
           "Create TypedArray failed"
         )?;
-        Ok(napi_val)
+        Ok(unsafe { Local::from_raw(napi_val) })
       }
     }
 
-    impl ToNapiValue for &mut $name {
-      unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> Result<sys::napi_value> {
-        if let Some((ref_, _)) = val.raw {
+    impl<'scope> IntoJs<'scope> for &$name {
+      type Output = $name;
+
+      fn into_js(self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
+        let env = scope.env().raw();
+        if let Some((ref_, _)) = self.raw {
           let mut napi_value = std::ptr::null_mut();
           check_status!(
             unsafe { sys::napi_get_reference_value(env, ref_, &mut napi_value) },
             "Failed to get reference from ArrayBuffer"
           )?;
-          return Ok(napi_value);
+          return Ok(unsafe { Local::from_raw(napi_value) });
+        }
+
+        let ratio = mem::size_of::<$rust_type>();
+        let val_length = self.length;
+        let length = val_length * ratio;
+        let mut arraybuffer_value = ptr::null_mut();
+
+        if length == 0 {
+          check_status!(
+            unsafe {
+              sys::napi_create_arraybuffer(env, length, ptr::null_mut(), &mut arraybuffer_value)
+            },
+            "Create arraybuffer failed"
+          )?;
+        } else {
+          let mut data = ptr::null_mut();
+          check_status!(
+            unsafe { sys::napi_create_arraybuffer(env, length, &mut data, &mut arraybuffer_value) },
+            "Create arraybuffer failed"
+          )?;
+          unsafe { std::ptr::copy_nonoverlapping(self.data.cast(), data, length) };
+        }
+
+        let mut napi_val = ptr::null_mut();
+        check_status!(
+          unsafe {
+            sys::napi_create_typedarray(
+              env,
+              $typed_array_type as i32,
+              val_length,
+              arraybuffer_value,
+              0,
+              &mut napi_val,
+            )
+          },
+          "Create TypedArray failed"
+        )?;
+        Ok(unsafe { Local::from_raw(napi_val) })
+      }
+    }
+
+    impl<'scope> IntoJs<'scope> for &mut $name {
+      type Output = $name;
+
+      fn into_js(self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
+        let env = scope.env().raw();
+        if let Some((ref_, _)) = self.raw {
+          let mut napi_value = std::ptr::null_mut();
+          check_status!(
+            unsafe { sys::napi_get_reference_value(env, ref_, &mut napi_value) },
+            "Failed to get reference from ArrayBuffer"
+          )?;
+          return Ok(unsafe { Local::from_raw(napi_value) });
         }
         let mut arraybuffer_value = ptr::null_mut();
         let ratio = mem::size_of::<$rust_type>();
-        let val_length = val.length;
+        let val_length = self.length;
         let length = val_length * ratio;
-        let val_data = val.data;
+        let val_data = self.data;
         let mut copied_val = None;
         if length == 0 {
           // Rust uses 0x1 as the data pointer for empty buffers,
@@ -846,12 +931,12 @@ macro_rules! impl_typed_array {
           // manually copy the data instead of implement `Clone` & `Copy` for TypedArray
           // the TypedArray can't be copied if raw is not None
           let val_copy = $name {
-            data: val.data,
-            length: val.length,
-            capacity: val.capacity,
-            byte_offset: val.byte_offset,
+            data: self.data,
+            length: self.length,
+            capacity: self.capacity,
+            byte_offset: self.byte_offset,
             raw: None,
-            finalizer_notify: val.finalizer_notify,
+            finalizer_notify: self.finalizer_notify,
           };
           let hint_ref: &mut $name = Box::leak(Box::new(val_copy));
           let hint_ptr = hint_ref as *mut $name;
@@ -875,10 +960,10 @@ macro_rules! impl_typed_array {
             // We must clear val's fields before any check_status! that could return early,
             // otherwise val would have dangling pointers if we return with an error.
             // Note: hint.data still has the valid pointer for the copy operation below.
-            val.data = ptr::null_mut();
-            val.length = 0;
-            val.capacity = 0;
-            val.finalizer_notify = ptr::null_mut::<fn(*mut $rust_type, usize)>();
+            self.data = ptr::null_mut();
+            self.length = 0;
+            self.capacity = 0;
+            self.finalizer_notify = ptr::null_mut::<fn(*mut $rust_type, usize)>();
             let mut underlying_data = ptr::null_mut();
             status = unsafe {
               sys::napi_create_arraybuffer(
@@ -913,17 +998,17 @@ macro_rules! impl_typed_array {
         let mut ref_ = ptr::null_mut();
         check_status!(
           unsafe { sys::napi_create_reference(env, napi_val, 1, &mut ref_) },
-          "Failed to delete reference in ArrayBuffer::to_napi_value"
+          "Failed to create reference for TypedArray"
         )?;
-        val.raw = Some((ref_, env));
+        self.raw = Some((ref_, env));
         if let Some(copied_val) = copied_val {
-          val.finalizer_notify = ptr::null_mut::<fn(*mut $rust_type, usize)>();
-          val.data = ptr::null_mut();
-          val.length = 0;
-          val.capacity = 0;
+          self.finalizer_notify = ptr::null_mut::<fn(*mut $rust_type, usize)>();
+          self.data = ptr::null_mut();
+          self.length = 0;
+          self.capacity = 0;
           copied_val.raw = Some((ref_, ptr::null_mut()));
         }
-        Ok(napi_val)
+        Ok(unsafe { Local::from_raw(napi_val) })
       }
     }
   };
@@ -1048,7 +1133,7 @@ macro_rules! impl_from_slice {
       #[doc = ""]
       #[doc = "If you need to support these runtimes, you should create a buffer by other means and then"]
       #[doc = "later copy the data back out."]
-      pub unsafe fn from_external<T: 'env, F: FnOnce(Env, T)>(
+      pub unsafe fn from_external<T: 'static, F: FnOnce(T) + 'static>(
         env: &Env,
         data: *mut $rust_type,
         data_len: usize,
@@ -1102,7 +1187,7 @@ macro_rules! impl_from_slice {
             underlying_slice.copy_from_slice(unsafe { std::slice::from_raw_parts(data.cast(), array_buffer_len) });
           }
           // Always call finalize to clean up caller's resources, even on error
-          finalize(*env, hint);
+          crate::run_unwind_boundary("running arraybuffer finalizer callback", || finalize(hint));
           check_status!(status, "Failed to create arraybuffer from data")?;
         } else {
           check_status!(status, "Failed to create arraybuffer from data")?;
@@ -1195,13 +1280,13 @@ macro_rules! impl_from_slice {
           sys::napi_create_typedarray(env, $typed_array_type.into(), length, arraybuffer.value().value, byte_offset, &mut typed_array)
         }, "Failed to create TypedArray from ArrayBuffer")?;
 
-        unsafe { FromNapiValue::from_napi_value(env, typed_array) }
+        unsafe { $slice_type::from_raw(env, typed_array) }
       }
 
       /// extends the lifetime of the `TypedArray` to the lifetime of the `This`
       pub fn assign_to_this<'a, U>(&self, this: This<'a, U>, name: &str) -> Result<$slice_type<'a>>
       where
-        U: FromNapiValue + JsObjectValue<'a>,
+        U: JsObjectValue<'a>,
       {
         let name = CString::new(name)?;
         check_status!(
@@ -1235,7 +1320,7 @@ macro_rules! impl_from_slice {
       #[doc = ""]
       #[doc = "This will perform a `napi_create_reference` internally."]
       pub fn into_typed_array(self, env: &Env) -> Result<$name> {
-        unsafe { $name::from_napi_value(env.0, self.raw_value) }
+        unsafe { $name::from_raw(env.0, self.raw_value) }
       }
     }
 
@@ -1251,20 +1336,24 @@ macro_rules! impl_from_slice {
 
     impl<'env> JsObjectValue<'env> for $slice_type<'env> { }
 
-    impl ToNapiValue for &$slice_type<'_> {
-      unsafe fn to_napi_value(_: sys::napi_env, val: Self) -> Result<sys::napi_value> {
-        Ok(val.raw_value)
+    impl<'scope> IntoJs<'scope> for &$slice_type<'_> {
+      type Output = $slice_type<'scope>;
+
+      fn into_js(self, _: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
+        Ok(unsafe { Local::from_raw(self.raw_value) })
       }
     }
 
-    impl ToNapiValue for &mut $slice_type<'_> {
-      unsafe fn to_napi_value(_: sys::napi_env, val: Self) -> Result<sys::napi_value> {
-        Ok(val.raw_value)
+    impl<'scope> IntoJs<'scope> for &mut $slice_type<'_> {
+      type Output = $slice_type<'scope>;
+
+      fn into_js(self, _: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
+        Ok(unsafe { Local::from_raw(self.raw_value) })
       }
     }
 
-    impl FromNapiValue for $slice_type<'_> {
-      unsafe fn from_napi_value(env: sys::napi_env, napi_val: sys::napi_value) -> Result<Self> {
+    impl $slice_type<'_> {
+      unsafe fn from_raw(env: sys::napi_env, napi_val: sys::napi_value) -> Result<Self> {
         let mut typed_array_type = 0;
         let mut length = 0;
         let mut data = ptr::null_mut();
@@ -1311,6 +1400,15 @@ macro_rules! impl_from_slice {
       }
     }
 
+    impl<'env, 'scope> FromJs<'env, 'scope> for $slice_type<'scope> {
+      fn from_js(
+        scope: &mut Scope<'env, 'scope>,
+        value: Local<'scope, Unknown<'scope>>,
+      ) -> Result<Self> {
+        unsafe { $slice_type::from_raw(scope.env().raw(), value.raw()) }
+      }
+    }
+
     impl TypeName for $slice_type<'_> {
       fn type_name() -> &'static str {
         concat!("TypedArray<", stringify!($rust_type), ">")
@@ -1352,8 +1450,12 @@ macro_rules! impl_from_slice {
       }
     }
 
-    impl FromNapiValue for &mut [$rust_type] {
-      unsafe fn from_napi_value(env: sys::napi_env, napi_val: sys::napi_value) -> Result<Self> {
+    impl<'env, 'scope> FromJs<'env, 'scope> for &'scope mut [$rust_type] {
+      fn from_js(
+        scope: &mut Scope<'env, 'scope>,
+        value: Local<'scope, Unknown<'scope>>,
+      ) -> Result<Self> {
+        let env = scope.env().raw();
         let mut typed_array_type = 0;
         let mut length = 0;
         let mut data = ptr::null_mut();
@@ -1363,7 +1465,7 @@ macro_rules! impl_from_slice {
           unsafe {
             sys::napi_get_typedarray_info(
               env,
-              napi_val,
+              value.raw(),
               &mut typed_array_type,
               &mut length,
               &mut data,
@@ -1387,8 +1489,12 @@ macro_rules! impl_from_slice {
       }
     }
 
-    impl FromNapiValue for &[$rust_type] {
-      unsafe fn from_napi_value(env: sys::napi_env, napi_val: sys::napi_value) -> Result<Self> {
+    impl<'env, 'scope> FromJs<'env, 'scope> for &'scope [$rust_type] {
+      fn from_js(
+        scope: &mut Scope<'env, 'scope>,
+        value: Local<'scope, Unknown<'scope>>,
+      ) -> Result<Self> {
+        let env = scope.env().raw();
         let mut typed_array_type = 0;
         let mut length = 0;
         let mut data = ptr::null_mut();
@@ -1398,7 +1504,7 @@ macro_rules! impl_from_slice {
           unsafe {
             sys::napi_get_typedarray_info(
               env,
-              napi_val,
+              value.raw(),
               &mut typed_array_type,
               &mut length,
               &mut data,
@@ -1417,7 +1523,7 @@ macro_rules! impl_from_slice {
         Ok(if length == 0 {
           &[]
         } else {
-          unsafe { core::slice::from_raw_parts_mut(data as *mut $rust_type, length) }
+          unsafe { core::slice::from_raw_parts(data as *const $rust_type, length) }
         })
       }
     }
@@ -1578,8 +1684,8 @@ pub struct Uint8ClampedSlice<'scope> {
   _marker: PhantomData<&'scope ()>,
 }
 
-impl FromNapiValue for Uint8ClampedSlice<'_> {
-  unsafe fn from_napi_value(env: sys::napi_env, napi_val: sys::napi_value) -> Result<Self> {
+impl Uint8ClampedSlice<'_> {
+  unsafe fn from_raw(env: sys::napi_env, napi_val: sys::napi_value) -> Result<Self> {
     let mut typed_array_type = 0;
     let mut length = 0;
     let mut data = ptr::null_mut();
@@ -1616,6 +1722,15 @@ impl FromNapiValue for Uint8ClampedSlice<'_> {
       env,
       _marker: PhantomData,
     })
+  }
+}
+
+impl<'env, 'scope> FromJs<'env, 'scope> for Uint8ClampedSlice<'scope> {
+  fn from_js(
+    scope: &mut Scope<'env, 'scope>,
+    value: Local<'scope, Unknown<'scope>>,
+  ) -> Result<Self> {
+    unsafe { Uint8ClampedSlice::from_raw(scope.env().raw(), value.raw()) }
   }
 }
 
@@ -1766,7 +1881,7 @@ impl<'env> Uint8ClampedSlice<'env> {
   ///
   /// If you need to support these runtimes, you should create a buffer by other means and then
   /// later copy the data back out.
-  pub unsafe fn from_external<T: 'env, F: FnOnce(Env, T)>(
+  pub unsafe fn from_external<T: 'static, F: FnOnce(T) + 'static>(
     env: &Env,
     data: *mut u8,
     len: usize,
@@ -1814,7 +1929,7 @@ impl<'env> Uint8ClampedSlice<'env> {
         underlying_slice.copy_from_slice(unsafe { std::slice::from_raw_parts(data, len) });
       }
       // Always call finalize to clean up caller's resources, even on error
-      finalize(*env, hint);
+      crate::run_unwind_boundary("running arraybuffer finalizer callback", || finalize(hint));
       check_status!(status, "Failed to create arraybuffer from data")?;
     } else {
       check_status!(status, "Failed to create arraybuffer from data")?;
@@ -1912,13 +2027,13 @@ impl<'env> Uint8ClampedSlice<'env> {
       "Failed to create TypedArray from ArrayBuffer"
     )?;
 
-    unsafe { FromNapiValue::from_napi_value(env, typed_array) }
+    unsafe { Self::from_raw(env, typed_array) }
   }
 
   /// extends the lifetime of the `TypedArray` to the lifetime of the `This`
   pub fn assign_to_this<'a, U>(&self, this: This<'a, U>, name: &str) -> Result<Self>
   where
-    U: FromNapiValue + JsObjectValue<'a>,
+    U: JsObjectValue<'a>,
   {
     let name = CString::new(name)?;
     check_status!(
@@ -1948,7 +2063,7 @@ impl<'env> Uint8ClampedSlice<'env> {
 
   /// Convert a `Uint8ClampedSlice` to a `Uint8ClampedArray`.
   pub fn into_typed_array(self, env: &Env) -> Result<Self> {
-    unsafe { Self::from_napi_value(env.0, self.raw_value) }
+    unsafe { Self::from_raw(env.0, self.raw_value) }
   }
 }
 

@@ -1,7 +1,7 @@
 use std::convert::TryFrom;
 
 use crate::{
-  bindgen_runtime::{FromNapiValue, TypeName, ValidateNapiValue},
+  bindgen_runtime::{TypeName, ValidateNapiValue},
   check_status, sys, Error, JsValue, Result, Value, ValueType,
 };
 
@@ -29,20 +29,18 @@ impl<'env> JsValue<'env> for JsNumber<'env> {
   }
 }
 
-impl FromNapiValue for JsNumber<'_> {
-  unsafe fn from_napi_value(env: sys::napi_env, napi_val: sys::napi_value) -> Result<Self> {
-    Ok(JsNumber(
+impl JsNumber<'_> {
+  pub(crate) fn from_raw(env: sys::napi_env, value: sys::napi_value) -> Self {
+    JsNumber(
       Value {
         env,
-        value: napi_val,
+        value,
         value_type: ValueType::Number,
       },
       std::marker::PhantomData,
-    ))
+    )
   }
-}
 
-impl JsNumber<'_> {
   pub fn get_uint32(&self) -> Result<u32> {
     let mut result = 0;
     check_status!(unsafe { sys::napi_get_value_uint32(self.0.env, self.0.value, &mut result) })?;

@@ -1,16 +1,18 @@
 use std::{
   any::TypeId,
+  cell::Cell,
   ffi::c_void,
+  marker::PhantomData,
   ops::{Deref, DerefMut},
   ptr,
+  rc::{Rc, Weak},
 };
 
 use crate::{
   bindgen_runtime::{
-    sys, Env, FromNapiMutRef, FromNapiRef, FromNapiValue, Result, Status, ToNapiValue, TypeName,
-    Unknown, ValidateNapiValue,
+    Env, EnvRecord, FromJs, IntoJs, Local, Result, Scope, TypeName, Unknown, ValidateNapiValue,
   },
-  check_status, check_status_or_throw, Error, JsExternal,
+  check_status, sys, Error, JsExternal, Status,
 };
 
 #[repr(C)]
@@ -108,19 +110,25 @@ impl<T: 'static> External<T> {
   }
 
   /// convert `External<T>` to `Unknown`
-  pub fn into_unknown(self, env: &Env) -> Result<Unknown<'_>> {
-    let napi_value = unsafe { ToNapiValue::to_napi_value(env.0, self)? };
-    Ok(unsafe { Unknown::from_raw_unchecked(env.0, napi_value) })
+  pub fn into_unknown<'env>(self, env: &'env Env<'env>) -> Result<Unknown<'env>> {
+    let mut env = *env;
+    env.with_scope(|scope| {
+      let external = self.into_js(scope)?;
+      Ok(unsafe { Unknown::from_raw_unchecked(scope.env().raw(), external.raw()) })
+    })
   }
 
   /// Convert `External<T>` to `JsExternal`
-  pub fn into_js_external(self, env: &Env) -> Result<JsExternal<'_>> {
-    let napi_value = unsafe { ToNapiValue::to_napi_value(env.0, self)? };
-    unsafe { JsExternal::from_napi_value(env.0, napi_value) }
+  pub fn into_js_external<'env>(self, env: &'env Env<'env>) -> Result<JsExternal<'env>> {
+    let mut env = *env;
+    env.with_scope(|scope| {
+      let external = self.into_js(scope)?;
+      Ok(unsafe { JsExternal::from_raw(scope.env().raw(), external.raw()) })
+    })
   }
 
   #[allow(clippy::wrong_self_convention)]
-  unsafe fn to_napi_value_impl(
+  unsafe fn create_external_value(
     self,
     env: sys::napi_env,
   ) -> Result<(sys::napi_value, *mut External<T>)> {
@@ -166,18 +174,20 @@ impl<T: 'static> External<T> {
   }
 }
 
-impl<T: 'static> FromNapiMutRef for External<T> {
-  unsafe fn from_napi_mut_ref(
-    env: sys::napi_env,
-    napi_val: sys::napi_value,
-  ) -> crate::Result<&'static mut Self> {
+impl<'env, 'scope, T: 'static> FromJs<'env, 'scope> for &'scope External<T> {
+  fn from_js(
+    scope: &mut Scope<'env, 'scope>,
+    value: Local<'scope, Unknown<'scope>>,
+  ) -> Result<Self> {
     let mut unknown_tagged_object = ptr::null_mut();
     check_status!(
-      unsafe { sys::napi_get_value_external(env, napi_val, &mut unknown_tagged_object) },
+      unsafe {
+        sys::napi_get_value_external(scope.env().raw(), value.raw(), &mut unknown_tagged_object)
+      },
       "Failed to get external value"
     )?;
 
-    match Self::from_raw_impl(unknown_tagged_object) {
+    match unsafe { External::<T>::from_raw_impl(unknown_tagged_object) } {
       Some(external) => Ok(external),
       None => Err(Error::new(
         Status::InvalidArg,
@@ -190,12 +200,29 @@ impl<T: 'static> FromNapiMutRef for External<T> {
   }
 }
 
-impl<T: 'static> FromNapiRef for External<T> {
-  unsafe fn from_napi_ref(
-    env: sys::napi_env,
-    napi_val: sys::napi_value,
-  ) -> crate::Result<&'static Self> {
-    unsafe { Self::from_napi_mut_ref(env, napi_val) }.map(|v| v as &Self)
+impl<'env, 'scope, T: 'static> FromJs<'env, 'scope> for &'scope mut External<T> {
+  fn from_js(
+    scope: &mut Scope<'env, 'scope>,
+    value: Local<'scope, Unknown<'scope>>,
+  ) -> Result<Self> {
+    let mut unknown_tagged_object = ptr::null_mut();
+    check_status!(
+      unsafe {
+        sys::napi_get_value_external(scope.env().raw(), value.raw(), &mut unknown_tagged_object)
+      },
+      "Failed to get external value"
+    )?;
+
+    match unsafe { External::<T>::from_raw_impl(unknown_tagged_object) } {
+      Some(external) => Ok(external),
+      None => Err(Error::new(
+        Status::InvalidArg,
+        format!(
+          "<{}> on `External` is not the type of wrapped object",
+          std::any::type_name::<T>()
+        ),
+      )),
+    }
   }
 }
 
@@ -225,21 +252,21 @@ impl<T: 'static> DerefMut for External<T> {
   }
 }
 
-impl<T: 'static> ToNapiValue for External<T> {
-  unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> crate::Result<sys::napi_value> {
-    let (napi_value, _) = unsafe { val.to_napi_value_impl(env)? };
-    Ok(napi_value)
+impl<'scope, T: 'static> IntoJs<'scope> for External<T> {
+  type Output = JsExternal<'scope>;
+
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> crate::Result<Local<'scope, Self::Output>> {
+    let (napi_value, _) = unsafe { self.create_external_value(scope.env().raw())? };
+    Ok(unsafe { Local::from_raw(napi_value) })
   }
 }
 
-/// `ExternalRef` is a reference to an `External` object
+/// `ExternalRef` is an explicit handle to an `External` object.
 pub struct ExternalRef<T: 'static> {
-  pub(crate) obj: &'static mut External<T>,
-  pub(crate) raw: sys::napi_ref,
-  pub(crate) env: sys::napi_env,
+  pub(crate) raw: Cell<sys::napi_ref>,
+  pub(crate) record: Weak<EnvRecord>,
+  pub(crate) marker: PhantomData<fn() -> T>,
 }
-
-unsafe impl<T: Sync + 'static> Sync for ExternalRef<T> {}
 
 impl<T: 'static> TypeName for ExternalRef<T> {
   fn type_name() -> &'static str {
@@ -255,11 +282,13 @@ impl<T: 'static> ValidateNapiValue for ExternalRef<T> {}
 
 impl<T: 'static> Drop for ExternalRef<T> {
   fn drop(&mut self) {
-    check_status_or_throw!(
-      self.env,
-      unsafe { sys::napi_delete_reference(self.env, self.raw) },
-      "Failed to delete reference on external value"
-    );
+    let raw = self.raw.replace(ptr::null_mut());
+    if raw.is_null() {
+      return;
+    }
+    if let Some(record) = self.record.upgrade() {
+      record.deferred_refs().push(raw);
+    }
   }
 }
 
@@ -267,97 +296,104 @@ impl<T: 'static> ExternalRef<T> {
   pub fn new(env: &Env, value: T) -> Result<Self> {
     let external = External::new(value);
     let mut ref_ptr = ptr::null_mut();
-    let (napi_val, external) = unsafe { external.to_napi_value_impl(env.0)? };
+    let external_value = unsafe { external.create_external_value(env.0)? };
+    let napi_val = external_value.0;
     check_status!(
       unsafe { sys::napi_create_reference(env.0, napi_val, 1, &mut ref_ptr) },
       "Failed to create reference on external value"
     )?;
     Ok(ExternalRef {
-      obj: Box::leak(unsafe { Box::from_raw(external) }),
-      raw: ref_ptr,
-      env: env.0,
+      raw: Cell::new(ref_ptr),
+      record: Rc::downgrade(&env.record()),
+      marker: PhantomData,
     })
   }
 
   /// Get the raw JsExternal value from the reference
-  pub fn get_value(&self) -> Result<JsExternal<'_>> {
+  pub fn get_value<'env>(&self, env: &'env Env<'env>) -> Result<JsExternal<'env>> {
+    let record = self.owner_record()?;
+    if !Rc::ptr_eq(&record, &env.record()) {
+      return Err(owner_mismatch());
+    }
     let mut napi_val = ptr::null_mut();
     check_status!(
-      unsafe { sys::napi_get_reference_value(self.env, self.raw, &mut napi_val) },
+      unsafe { sys::napi_get_reference_value(env.0, self.raw_ref()?, &mut napi_val) },
       "Failed to get reference value on external value"
     )?;
-    unsafe { JsExternal::from_napi_value(self.env, napi_val) }
+    Ok(unsafe { JsExternal::from_raw(env.0, napi_val) })
   }
-}
 
-impl<T: 'static> FromNapiValue for ExternalRef<T> {
-  unsafe fn from_napi_value(env: sys::napi_env, napi_val: sys::napi_value) -> crate::Result<Self> {
-    let mut unknown_tagged_object = ptr::null_mut();
-    check_status!(
-      unsafe { sys::napi_get_value_external(env, napi_val, &mut unknown_tagged_object) },
-      "Failed to get external value"
-    )?;
-
-    let type_id = unknown_tagged_object as *const TypeId;
-    let external = if unsafe { *type_id } == TypeId::of::<T>() {
-      let tagged_object = unknown_tagged_object as *mut External<T>;
-      Box::leak(unsafe { Box::from_raw(tagged_object) })
-    } else {
-      return Err(Error::new(
+  fn owner_record(&self) -> Result<Rc<EnvRecord>> {
+    self.record.upgrade().ok_or_else(|| {
+      Error::new(
         Status::InvalidArg,
-        format!(
-          "<{}> on `External` is not the type of wrapped object",
-          std::any::type_name::<T>()
-        ),
-      ));
-    };
-
-    let mut ref_ptr = ptr::null_mut();
-    check_status!(
-      unsafe { sys::napi_create_reference(env, napi_val, 1, &mut ref_ptr) },
-      "Failed to create reference on external value"
-    )?;
-
-    Ok(ExternalRef {
-      obj: external,
-      raw: ref_ptr,
-      env,
+        "External reference owner environment is no longer available".to_owned(),
+      )
     })
   }
+
+  fn raw_ref(&self) -> Result<sys::napi_ref> {
+    let raw = self.raw.get();
+    if raw.is_null() {
+      Err(Error::new(
+        Status::InvalidArg,
+        "External reference is already closed".to_owned(),
+      ))
+    } else {
+      Ok(raw)
+    }
+  }
 }
 
-impl<T: 'static> ToNapiValue for ExternalRef<T> {
-  unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> crate::Result<sys::napi_value> {
+impl<'env, 'scope, T: 'static> FromJs<'env, 'scope> for ExternalRef<T> {
+  fn from_js(
+    scope: &mut Scope<'env, 'scope>,
+    value: Local<'scope, Unknown<'scope>>,
+  ) -> crate::Result<Self> {
+    let value = JsExternal::from_js(scope, value)?;
+    scope.create_ref(&value)
+  }
+}
+
+impl<'scope, T: 'static> IntoJs<'scope> for ExternalRef<T> {
+  type Output = JsExternal<'scope>;
+
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> crate::Result<Local<'scope, Self::Output>> {
+    let env = scope.env().raw();
+    let record = self.owner_record()?;
+    if !Rc::ptr_eq(&record, scope.required_record()?) {
+      return Err(owner_mismatch());
+    }
     let mut value = ptr::null_mut();
     check_status!(
-      unsafe { sys::napi_get_reference_value(env, val.raw, &mut value) },
+      unsafe { sys::napi_get_reference_value(env, self.raw_ref()?, &mut value) },
       "Failed to get reference value on external value"
     )?;
-    Ok(value)
+    Ok(unsafe { Local::from_raw(value) })
   }
 }
 
-impl<T: 'static> ToNapiValue for &ExternalRef<T> {
-  unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> crate::Result<sys::napi_value> {
+impl<'scope, T: 'static> IntoJs<'scope> for &ExternalRef<T> {
+  type Output = JsExternal<'scope>;
+
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> crate::Result<Local<'scope, Self::Output>> {
+    let env = scope.env().raw();
+    let record = self.owner_record()?;
+    if !Rc::ptr_eq(&record, scope.required_record()?) {
+      return Err(owner_mismatch());
+    }
     let mut value = ptr::null_mut();
     check_status!(
-      unsafe { sys::napi_get_reference_value(env, val.raw, &mut value) },
+      unsafe { sys::napi_get_reference_value(env, self.raw_ref()?, &mut value) },
       "Failed to get reference value on external value"
     )?;
-    Ok(value)
+    Ok(unsafe { Local::from_raw(value) })
   }
 }
 
-impl<T: 'static> Deref for ExternalRef<T> {
-  type Target = T;
-
-  fn deref(&self) -> &Self::Target {
-    self.obj
-  }
-}
-
-impl<T: 'static> DerefMut for ExternalRef<T> {
-  fn deref_mut(&mut self) -> &mut Self::Target {
-    self.obj
-  }
+fn owner_mismatch() -> Error {
+  Error::new(
+    Status::InvalidArg,
+    "External reference owner environment does not match the current environment".to_owned(),
+  )
 }

@@ -7,8 +7,11 @@ use std::ptr;
 use bitflags::bitflags;
 
 #[cfg(feature = "napi5")]
-use crate::bindgen_runtime::{FromNapiValue, This};
-use crate::{bindgen_runtime::ToNapiValue, sys, Callback, Env, JsValue, Result};
+use crate::bindgen_runtime::{FromJs, This};
+use crate::{
+  bindgen_runtime::{into_js_raw, IntoJs},
+  sys, Callback, Env, JsValue, Result,
+};
 
 #[cfg(feature = "napi5")]
 #[derive(Copy, Clone)]
@@ -95,8 +98,11 @@ impl Property {
     Ok(self)
   }
 
-  pub fn with_name<T: ToNapiValue>(mut self, env: &Env, name: T) -> Result<Self> {
-    self.name = unsafe { T::to_napi_value(env.0, name)? };
+  pub fn with_name<T>(mut self, env: &Env, name: T) -> Result<Self>
+  where
+    for<'scope> T: IntoJs<'scope>,
+  {
+    self.name = unsafe { into_js_raw(env.0, name)? };
     Ok(self)
   }
 
@@ -114,7 +120,7 @@ impl Property {
   pub fn with_getter_closure<R, F>(mut self, callback: F) -> Self
   where
     F: 'static + Fn(Env, This) -> Result<R>,
-    R: ToNapiValue,
+    for<'scope> R: IntoJs<'scope>,
   {
     let boxed_callback = Box::new(callback);
     let closure_data_ptr: *mut F = Box::into_raw(boxed_callback);
@@ -137,7 +143,7 @@ impl Property {
   pub fn with_setter_closure<F, V>(mut self, callback: F) -> Self
   where
     F: 'static + Fn(crate::Env, This, V) -> Result<()>,
-    V: FromNapiValue,
+    V: for<'env, 'scope> FromJs<'env, 'scope>,
   {
     let boxed_callback = Box::new(callback);
     let closure_data_ptr: *mut F = Box::into_raw(boxed_callback);
@@ -157,12 +163,15 @@ impl Property {
   }
 
   pub fn with_value<'env, T: JsValue<'env>>(mut self, value: &T) -> Self {
-    self.value = T::raw(value);
+    self.value = unsafe { T::raw(value) };
     self
   }
 
-  pub fn with_napi_value<T: ToNapiValue>(mut self, env: &Env, value: T) -> Result<Self> {
-    self.value = unsafe { T::to_napi_value(env.0, value)? };
+  pub fn with_napi_value<T>(mut self, env: &Env, value: T) -> Result<Self>
+  where
+    for<'scope> T: IntoJs<'scope>,
+  {
+    self.value = unsafe { into_js_raw(env.0, value)? };
     Ok(self)
   }
 
@@ -192,6 +201,10 @@ impl Property {
       #[cfg(feature = "napi5")]
       data,
     }
+  }
+
+  pub(crate) fn is_static(&self) -> bool {
+    self.attrs.contains(PropertyAttributes::Static)
   }
 
   pub fn with_ctor(mut self, callback: Callback) -> Self {

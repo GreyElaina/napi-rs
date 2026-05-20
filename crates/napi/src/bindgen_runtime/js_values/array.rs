@@ -28,7 +28,11 @@ impl<'env> Array<'env> {
     })
   }
 
-  pub fn get<T: FromNapiValue>(&self, index: u32) -> Result<Option<T>> {
+  pub fn get_reference<'scope, T: NapiReceiver>(
+    &self,
+    scope: &mut Scope<'_, 'scope>,
+    index: u32,
+  ) -> Result<Option<Reference<T>>> {
     if index >= self.len() {
       return Ok(None);
     }
@@ -36,35 +40,21 @@ impl<'env> Array<'env> {
     let mut ret = ptr::null_mut();
     unsafe {
       check_status!(
-        sys::napi_get_element(self.env, self.inner, index, &mut ret),
+        sys::napi_get_element(scope.env().raw(), self.inner, index, &mut ret),
         "Failed to get element with index `{}`",
         index,
       )?;
 
-      Ok(Some(T::from_napi_value(self.env, ret)?))
+      Ok(Some(Reference::from_object_unchecked(scope, ret)?))
     }
   }
 
-  pub fn get_ref<T: 'static + FromNapiRef>(&self, index: u32) -> Result<Option<&'env T>> {
-    if index >= self.len() {
-      return Ok(None);
-    }
-
-    let mut ret = ptr::null_mut();
+  pub fn set<T>(&mut self, index: u32, val: T) -> Result<()>
+  where
+    for<'scope> T: IntoJs<'scope>,
+  {
     unsafe {
-      check_status!(
-        sys::napi_get_element(self.env, self.inner, index, &mut ret),
-        "Failed to get element with index `{}`",
-        index,
-      )?;
-
-      Ok(Some(T::from_napi_ref(self.env, ret)?))
-    }
-  }
-
-  pub fn set<T: ToNapiValue>(&mut self, index: u32, val: T) -> Result<()> {
-    unsafe {
-      let napi_val = T::to_napi_value(self.env, val)?;
+      let napi_val = into_js_raw(self.env, val)?;
 
       check_status!(
         sys::napi_set_element(self.env, self.inner, index, napi_val),
@@ -80,7 +70,10 @@ impl<'env> Array<'env> {
     }
   }
 
-  pub fn insert<T: ToNapiValue>(&mut self, val: T) -> Result<()> {
+  pub fn insert<T>(&mut self, val: T) -> Result<()>
+  where
+    for<'scope> T: IntoJs<'scope>,
+  {
     self.set(self.len(), val)?;
     Ok(())
   }
@@ -101,6 +94,10 @@ impl<'env> Array<'env> {
       },
       PhantomData,
     ))
+  }
+
+  pub(crate) fn into_local<'scope>(self) -> Local<'scope, Array<'scope>> {
+    unsafe { Local::from_raw(self.inner) }
   }
 }
 
@@ -126,18 +123,21 @@ impl<'env> JsValue<'env> for Array<'env> {
 
 impl<'env> JsObjectValue<'env> for Array<'env> {}
 
-impl FromNapiValue for Array<'_> {
-  unsafe fn from_napi_value(env: sys::napi_env, napi_val: sys::napi_value) -> Result<Self> {
+impl<'env, 'scope> FromJs<'env, 'scope> for Array<'scope> {
+  fn from_js(
+    scope: &mut Scope<'env, 'scope>,
+    value: Local<'scope, Unknown<'scope>>,
+  ) -> Result<Self> {
     let mut len = 0;
 
     check_status!(
-      unsafe { sys::napi_get_array_length(env, napi_val, &mut len) },
+      unsafe { sys::napi_get_array_length(scope.env().raw(), value.raw(), &mut len) },
       "Failed to get Array length",
     )?;
 
     Ok(Array {
-      inner: napi_val,
-      env,
+      inner: value.raw(),
+      env: scope.env().raw(),
       len,
       _marker: std::marker::PhantomData,
     })
@@ -165,7 +165,7 @@ impl Array<'_> {
   /// Create `Array` from `Vec<T>`
   pub fn from_vec<T>(env: &Env, value: Vec<T>) -> Result<Self>
   where
-    T: ToNapiValue,
+    for<'scope> T: IntoJs<'scope>,
   {
     let mut arr = Array::new(env.0, value.len() as u32)?;
     value.into_iter().enumerate().try_for_each(|(index, val)| {
@@ -185,10 +185,11 @@ impl Array<'_> {
     Ok(arr)
   }
 
-  /// Create `Array` from `&Vec<T: Copy + ToNapiValue>`
+  /// Create `Array` from `&Vec<T: Copy + IntoJs>`
   pub fn from_ref_vec<T>(env: &Env, value: &[T]) -> Result<Self>
   where
-    T: ToNapiValue + Copy,
+    T: Copy,
+    for<'scope> T: IntoJs<'scope>,
   {
     let mut arr = Array::new(env.0, value.len() as u32)?;
     value.iter().enumerate().try_for_each(|(index, val)| {
@@ -209,85 +210,143 @@ impl<T> TypeName for Vec<T> {
   }
 }
 
-impl<T, const N: usize> ToNapiValue for [T; N]
+impl<'scope, T, const N: usize> IntoJs<'scope> for [T; N]
 where
-  T: ToNapiValue + Copy,
+  T: IntoJs<'scope> + Copy + 'scope,
 {
-  unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> Result<sys::napi_value> {
-    let mut arr = Array::new(env, val.len() as u32)?;
+  type Output = Array<'scope>;
 
-    for (i, v) in val.into_iter().enumerate() {
-      arr.set(i as u32, v)?;
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
+    let env = scope.env().raw();
+    let arr = Array::new(env, self.len() as u32)?;
+
+    for (index, value) in self.into_iter().enumerate() {
+      let local = value.into_js(scope)?;
+      check_status!(
+        unsafe { sys::napi_set_element(env, arr.inner, index as u32, local.raw()) },
+        "Failed to set element with index `{}`",
+        index,
+      )?;
     }
 
-    unsafe { Array::to_napi_value(env, arr) }
+    Ok(arr.into_local())
   }
 }
 
-impl<T, const N: usize> ToNapiValue for &[T; N]
+impl<'scope, T, const N: usize> IntoJs<'scope> for &'scope [T; N]
 where
-  for<'a> &'a T: ToNapiValue,
+  &'scope T: IntoJs<'scope>,
 {
-  unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> Result<sys::napi_value> {
-    let mut arr = Array::new(env, val.len() as u32)?;
+  type Output = Array<'scope>;
 
-    for (i, v) in val.iter().enumerate() {
-      arr.set(i as u32, v)?;
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
+    let env = scope.env().raw();
+    let arr = Array::new(env, self.len() as u32)?;
+
+    for (index, value) in self.iter().enumerate() {
+      let local = value.into_js(scope)?;
+      check_status!(
+        unsafe { sys::napi_set_element(env, arr.inner, index as u32, local.raw()) },
+        "Failed to set element with index `{}`",
+        index,
+      )?;
     }
 
-    unsafe { Array::to_napi_value(env, arr) }
+    Ok(arr.into_local())
   }
 }
 
-impl<T> ToNapiValue for Vec<T>
+impl<'scope, T> IntoJs<'scope> for Vec<T>
 where
-  T: ToNapiValue,
+  T: IntoJs<'scope> + 'scope,
 {
-  unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> Result<sys::napi_value> {
-    let mut arr = Array::new(env, val.len() as u32)?;
+  type Output = Array<'scope>;
 
-    for (i, v) in val.into_iter().enumerate() {
-      arr.set(i as u32, v)?;
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
+    let env = scope.env().raw();
+    let arr = Array::new(env, self.len() as u32)?;
+
+    for (index, value) in self.into_iter().enumerate() {
+      let local = value.into_js(scope)?;
+      check_status!(
+        unsafe { sys::napi_set_element(env, arr.inner, index as u32, local.raw()) },
+        "Failed to set element with index `{}`",
+        index,
+      )?;
     }
 
-    unsafe { Array::to_napi_value(env, arr) }
+    Ok(arr.into_local())
   }
 }
 
-impl<T> ToNapiValue for &Vec<T>
+impl<'scope, T> IntoJs<'scope> for &'scope Vec<T>
 where
-  for<'a> &'a T: ToNapiValue,
+  &'scope T: IntoJs<'scope>,
 {
-  unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> Result<sys::napi_value> {
-    let mut arr = Array::new(env, val.len() as u32)?;
+  type Output = Array<'scope>;
 
-    for (i, v) in val.iter().enumerate() {
-      arr.set(i as u32, v)?;
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
+    self.as_slice().into_js(scope)
+  }
+}
+
+impl<'scope, T> IntoJs<'scope> for &'scope [T]
+where
+  &'scope T: IntoJs<'scope>,
+{
+  type Output = Array<'scope>;
+
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
+    let env = scope.env().raw();
+    let arr = Array::new(env, self.len() as u32)?;
+
+    for (index, value) in self.iter().enumerate() {
+      let local = value.into_js(scope)?;
+      check_status!(
+        unsafe { sys::napi_set_element(env, arr.inner, index as u32, local.raw()) },
+        "Failed to set element with index `{}`",
+        index,
+      )?;
     }
 
-    unsafe { Array::to_napi_value(env, arr) }
+    Ok(arr.into_local())
   }
 }
 
-impl<T> ToNapiValue for &mut Vec<T>
+impl<'scope, T> IntoJs<'scope> for &'scope mut Vec<T>
 where
-  for<'a> &'a T: ToNapiValue,
+  &'scope T: IntoJs<'scope>,
 {
-  unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> Result<sys::napi_value> {
-    ToNapiValue::to_napi_value(env, &*val)
+  type Output = Array<'scope>;
+
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
+    self.as_slice().into_js(scope)
   }
 }
 
-impl<T> FromNapiValue for Vec<T>
+impl<'env, 'scope, T> FromJs<'env, 'scope> for Vec<T>
 where
-  T: FromNapiValue,
+  T: FromJs<'env, 'scope>,
 {
-  unsafe fn from_napi_value(env: sys::napi_env, napi_val: sys::napi_value) -> Result<Self> {
-    let arr = unsafe { Array::from_napi_value(env, napi_val)? };
+  fn from_js(
+    scope: &mut Scope<'env, 'scope>,
+    value: Local<'scope, Unknown<'scope>>,
+  ) -> Result<Self> {
+    let mut len = 0;
+    check_status!(
+      unsafe { sys::napi_get_array_length(scope.env().raw(), value.raw(), &mut len) },
+      "Failed to get Array length",
+    )?;
+    let arr = Array {
+      inner: value.raw(),
+      env: scope.env().raw(),
+      len,
+      _marker: std::marker::PhantomData,
+    };
     let mut vec = Vec::with_capacity(arr.len() as usize);
 
     for i in 0..arr.len() {
-      if let Some(val) = arr.get::<T>(i)? {
+      if let Some(val) = scope.get_optional_element::<T>(&arr, i)? {
         vec.push(val);
       } else {
         return Err(Error::new(
@@ -301,10 +360,7 @@ where
   }
 }
 
-impl<T> ValidateNapiValue for Vec<T>
-where
-  T: FromNapiValue,
-{
+impl<T> ValidateNapiValue for Vec<T> {
   unsafe fn validate(env: sys::napi_env, napi_val: sys::napi_value) -> Result<sys::napi_value> {
     let mut is_array = false;
     check_status!(
@@ -321,9 +377,9 @@ where
   }
 }
 
-macro_rules! arr_get {
-  ($arr:expr, $n:expr, $err:expr) => {
-    if let Some(e) = $arr.get($n)? {
+macro_rules! arr_get_js {
+  ($arr:expr, $scope:expr, $n:expr, $err:expr) => {
+    if let Some(e) = $scope.get_optional_element(&$arr, $n)? {
       e
     } else {
       return $err($n);
@@ -331,10 +387,10 @@ macro_rules! arr_get {
   };
 }
 
-macro_rules! tuple_from_napi_value {
+macro_rules! tuple_from_js {
   ($total:expr, $($n:expr),+,) => {
-    unsafe fn from_napi_value(env: sys::napi_env, napi_val: sys::napi_value) -> Result<Self> {
-      let arr = unsafe { Array::from_napi_value(env, napi_val)? };
+    fn from_js(scope: &mut Scope<'env, 'scope>, value: Local<'scope, Unknown<'scope>>) -> Result<Self> {
+      let arr = Array::from_js(scope, value)?;
       let err = |v| Err(Error::new(
         Status::InvalidArg,
         format!(
@@ -349,15 +405,15 @@ macro_rules! tuple_from_napi_value {
             format!("Array length < {}",$total).to_owned(),
         ));
       }
-      Ok(($(arr_get!(arr,$n,err),)+))
+      Ok(($(arr_get_js!(arr, scope, $n, err),)+))
     }
   }
 }
 
 macro_rules! impl_tuple_validate_napi_value {
   ($($ident:ident),+) => {
-    impl<$($ident: FromNapiValue),*> ValidateNapiValue for ($($ident,)*) {}
-    impl<$($ident: FromNapiValue),*> TypeName for ($($ident,)*) {
+    impl<$($ident),*> ValidateNapiValue for ($($ident,)*) {}
+    impl<$($ident),*> TypeName for ($($ident,)*) {
       fn type_name() -> &'static str {
         concat!("Tuple", "(", $(stringify!($ident), ","),*, ")")
       }
@@ -373,10 +429,18 @@ macro_rules! impl_from_tuple {
     $($typs:ident),*;
     $($tidents:expr),+;
     $length:expr
+  ) => {};
+}
+
+macro_rules! impl_from_js_tuple {
+  (
+    $($typs:ident),*;
+    $($tidents:expr),+;
+    $length:expr
   ) => {
-    impl<$($typs),*> FromNapiValue for ($($typs,)*)
-      where $($typs: FromNapiValue,)* {
-      tuple_from_napi_value!($length, $($tidents,)*);
+    impl<'env, 'scope, $($typs),*> FromJs<'env, 'scope> for ($($typs,)*)
+      where $($typs: FromJs<'env, 'scope>,)* {
+      tuple_from_js!($length, $($tidents,)*);
     }
   };
 }
@@ -387,18 +451,29 @@ macro_rules! impl_to_tuple {
     $($tidents:expr),+;
     $length:expr
   ) => {
-    impl<$($typs),*> ToNapiValue for ($($typs,)*)
-      where $($typs: ToNapiValue,)* {
-      unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> Result<sys::napi_value> {
-        let mut arr = Array::new(env, $length as u32)?;
+    impl<'scope, $($typs),*> IntoJs<'scope> for ($($typs,)*)
+      where $($typs: IntoJs<'scope> + 'scope,)* {
+      type Output = Array<'scope>;
+
+      fn into_js(self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
+        let env = scope.env().raw();
+        let arr = Array::new(env, $length as u32)?;
 
         #[allow(non_snake_case)]
-        let ($($typs,)*) = val;
+        let ($($typs,)*) = self;
         let mut i = 0;
 
-        $(i+=1; unsafe {arr.set(i-1, <$typs as ToNapiValue>::to_napi_value(env, $typs)? )?}; )*
+        $(
+          i += 1;
+          let local = $typs.into_js(scope)?;
+          check_status!(
+            unsafe { sys::napi_set_element(env, arr.inner, i - 1, local.raw()) },
+            "Failed to set element with index `{}`",
+            i - 1,
+          )?;
+        )*
 
-        unsafe { Array::to_napi_value(env, arr) }
+        Ok(arr.into_local())
       }
     }
   };
@@ -422,6 +497,11 @@ macro_rules! impl_tuples {
       $shift + 1
     );
     impl_from_tuple!(
+      $typ$(, $($typs),*)?;
+      $tident - $shift$(, $($tidents - $shift),*)?;
+      $length
+    );
+    impl_from_js_tuple!(
       $typ$(, $($typs),*)?;
       $tident - $shift$(, $($tidents - $shift),*)?;
       $length

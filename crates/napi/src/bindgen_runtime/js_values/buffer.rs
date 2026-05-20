@@ -27,7 +27,6 @@ thread_local! {
 pub struct BufferSlice<'env> {
   pub(crate) inner: &'env mut [u8],
   pub(crate) raw_value: sys::napi_value,
-  #[allow(dead_code)]
   pub(crate) env: sys::napi_env,
 }
 
@@ -110,7 +109,7 @@ impl<'env> BufferSlice<'env> {
   ///
   /// If you need to support these runtimes, you should create a buffer by other means and then
   /// later copy the data back out.
-  pub unsafe fn from_external<T: 'env, F: FnOnce(Env, T)>(
+  pub unsafe fn from_external<T: 'static, F: FnOnce(T) + 'static>(
     env: &Env,
     data: *mut u8,
     len: usize,
@@ -149,7 +148,7 @@ impl<'env> BufferSlice<'env> {
       let (hint, finalize) = *Box::from_raw(hint_ptr);
       let status =
         unsafe { sys::napi_create_buffer_copy(env.0, len, data.cast(), ptr::null_mut(), &mut buf) };
-      finalize(*env, hint);
+      crate::run_unwind_boundary("running buffer finalizer callback", || finalize(hint));
       status
     } else {
       status
@@ -195,24 +194,10 @@ impl<'env> BufferSlice<'env> {
   ///
   /// This will perform a `napi_create_reference` internally.
   pub fn into_buffer(self, env: &Env) -> Result<Buffer> {
-    unsafe { Buffer::from_napi_value(env.0, self.raw_value) }
+    unsafe { Buffer::from_raw(env.0, self.raw_value) }
   }
-}
 
-impl<'env> JsValue<'env> for BufferSlice<'env> {
-  fn value(&self) -> Value {
-    Value {
-      env: self.env,
-      value: self.raw_value,
-      value_type: ValueType::Object,
-    }
-  }
-}
-
-impl<'env> JsObjectValue<'env> for BufferSlice<'env> {}
-
-impl FromNapiValue for BufferSlice<'_> {
-  unsafe fn from_napi_value(env: sys::napi_env, napi_val: sys::napi_value) -> Result<Self> {
+  unsafe fn from_raw(env: sys::napi_env, napi_val: sys::napi_value) -> Result<Self> {
     let mut buf = ptr::null_mut();
     let mut len = 0usize;
     check_status!(
@@ -238,10 +223,32 @@ impl FromNapiValue for BufferSlice<'_> {
   }
 }
 
-impl ToNapiValue for &BufferSlice<'_> {
-  #[allow(unused_variables)]
-  unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> Result<sys::napi_value> {
-    Ok(val.raw_value)
+impl<'env> JsValue<'env> for BufferSlice<'env> {
+  fn value(&self) -> Value {
+    Value {
+      env: self.env,
+      value: self.raw_value,
+      value_type: ValueType::Object,
+    }
+  }
+}
+
+impl<'env> JsObjectValue<'env> for BufferSlice<'env> {}
+
+impl<'env, 'scope> FromJs<'env, 'scope> for BufferSlice<'scope> {
+  fn from_js(
+    scope: &mut Scope<'env, 'scope>,
+    value: Local<'scope, Unknown<'scope>>,
+  ) -> Result<Self> {
+    unsafe { BufferSlice::from_raw(scope.env().raw(), value.raw()) }
+  }
+}
+
+impl<'scope> IntoJs<'scope> for &BufferSlice<'_> {
+  type Output = BufferSlice<'scope>;
+
+  fn into_js(self, _: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
+    Ok(unsafe { Local::from_raw(self.raw_value) })
   }
 }
 
@@ -456,8 +463,8 @@ impl TypeName for Buffer {
   }
 }
 
-impl FromNapiValue for Buffer {
-  unsafe fn from_napi_value(env: sys::napi_env, napi_val: sys::napi_value) -> Result<Self> {
+impl Buffer {
+  unsafe fn from_raw(env: sys::napi_env, napi_val: sys::napi_value) -> Result<Self> {
     let mut buf = ptr::null_mut();
     let mut len = 0;
     let mut ref_ = ptr::null_mut();
@@ -492,10 +499,22 @@ impl FromNapiValue for Buffer {
   }
 }
 
-impl ToNapiValue for Buffer {
-  unsafe fn to_napi_value(env: sys::napi_env, mut val: Self) -> Result<sys::napi_value> {
+impl<'env, 'scope> FromJs<'env, 'scope> for Buffer {
+  fn from_js(
+    scope: &mut Scope<'env, 'scope>,
+    value: Local<'scope, Unknown<'scope>>,
+  ) -> Result<Self> {
+    unsafe { Buffer::from_raw(scope.env().raw(), value.raw()) }
+  }
+}
+
+impl<'scope> IntoJs<'scope> for Buffer {
+  type Output = Buffer;
+
+  fn into_js(mut self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
+    let env = scope.env().raw();
     // From Node.js value, not from `Vec<u8>`
-    if let Some((ref_, _)) = val.raw {
+    if let Some((ref_, _)) = self.raw {
       let mut buf = ptr::null_mut();
       check_status!(
         unsafe { sys::napi_get_reference_value(env, ref_, &mut buf) },
@@ -504,12 +523,12 @@ impl ToNapiValue for Buffer {
 
       check_status!(
         unsafe { sys::napi_delete_reference(env, ref_) },
-        "Failed to delete Buffer reference in Buffer::to_napi_value"
+        "Failed to delete Buffer reference in Buffer::into_js"
       )?;
-      val.raw = Some((ptr::null_mut(), ptr::null_mut()));
-      return Ok(buf);
+      self.raw = Some((ptr::null_mut(), ptr::null_mut()));
+      return Ok(unsafe { Local::from_raw(buf) });
     }
-    let len = val.len;
+    let len = self.len;
     let mut ret = ptr::null_mut();
     check_status!(
       if len == 0 {
@@ -518,8 +537,8 @@ impl ToNapiValue for Buffer {
         // the same data pointer if it's 0x0.
         unsafe { sys::napi_create_buffer(env, len, ptr::null_mut(), &mut ret) }
       } else {
-        let value_ptr = val.inner.as_ptr();
-        let val_box_ptr = Box::into_raw(Box::new(val));
+        let value_ptr = self.inner.as_ptr();
+        let val_box_ptr = Box::into_raw(Box::new(self));
         let mut status = unsafe {
           sys::napi_create_external_buffer(
             env,
@@ -547,7 +566,7 @@ impl ToNapiValue for Buffer {
       "Failed to create napi buffer"
     )?;
 
-    Ok(ret)
+    Ok(unsafe { Local::from_raw(ret) })
   }
 }
 

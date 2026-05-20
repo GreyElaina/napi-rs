@@ -1,7 +1,10 @@
 use std::convert::TryFrom;
 use std::str;
 
-use crate::{bindgen_prelude::ToNapiValue, sys, Error, JsString, Result, Status};
+use crate::{
+  bindgen_prelude::{IntoJs, Local, Scope},
+  Error, JsString, Result, Status,
+};
 
 pub struct JsStringUtf8<'env> {
   pub(crate) inner: JsString<'env>,
@@ -53,8 +56,10 @@ impl From<JsStringUtf8<'_>> for Vec<u8> {
   }
 }
 
-impl ToNapiValue for JsStringUtf8<'_> {
-  unsafe fn to_napi_value(_: sys::napi_env, val: JsStringUtf8) -> Result<sys::napi_value> {
-    Ok(val.inner.0.value)
+impl<'scope> IntoJs<'scope> for JsStringUtf8<'_> {
+  type Output = JsString<'scope>;
+
+  fn into_js(self, _: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
+    Ok(unsafe { Local::from_raw(self.inner.0.value) })
   }
 }

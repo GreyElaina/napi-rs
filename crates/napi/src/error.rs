@@ -12,49 +12,39 @@ use serde::{de, ser};
 #[cfg(feature = "serde-json")]
 use serde_json::Error as SerdeJSONError;
 
-#[cfg(target_family = "wasm")]
-use crate::bindgen_runtime::JsObjectValue;
 use crate::ValueType;
-use crate::{bindgen_runtime::ToNapiValue, check_status, sys, Env, JsValue, Status, Unknown};
+use crate::{
+  bindgen_runtime::{into_js_raw, with_env, FromJs, IntoJs, Local, Object, Scope},
+  sys, Env, JsValue, Status, Unknown,
+};
 
 pub type Result<T, S = Status> = std::result::Result<T, Error<S>>;
 
 /// Represent `JsError`.
-/// Return this Error in `js_function`, **napi-rs** will throw it as `JsError` for you.
+/// Return this Error from an exported callback, **napi-rs** will throw it as `JsError` for you.
 /// If you want throw it as `TypeError` or `RangeError`, you can use `JsTypeError/JsRangeError::from(Error).throw_into(env)`
 pub struct Error<S: AsRef<str> = Status> {
   pub status: S,
   pub reason: String,
   pub cause: Option<Box<Error>>,
-  // Convert raw `JsError` into Error
-  pub(crate) maybe_raw: sys::napi_ref,
-  pub(crate) maybe_env: sys::napi_env,
-}
-
-#[cfg(not(feature = "noop"))]
-impl<S: AsRef<str>> Drop for Error<S> {
-  fn drop(&mut self) {
-    // @TODO: deal with Error created with reference and leave it to drop in `async fn`
-    if !self.maybe_raw.is_null() {
-      let mut ref_count = 0;
-      let status =
-        unsafe { sys::napi_reference_unref(self.maybe_env, self.maybe_raw, &mut ref_count) };
-      if status != sys::Status::napi_ok {
-        eprintln!("unref error reference failed: {}", Status::from(status));
-      }
-      if ref_count == 0 {
-        let status = unsafe { sys::napi_delete_reference(self.maybe_env, self.maybe_raw) };
-        if status != sys::Status::napi_ok {
-          eprintln!("delete error reference failed: {}", Status::from(status));
-        }
-      }
-    }
-  }
+  pub(crate) js_code: Option<String>,
+  pub(crate) js_name: Option<String>,
 }
 
 impl<S: AsRef<str>> Error<S> {
   pub fn set_cause(&mut self, cause: Error) {
     self.cause = Some(Box::new(cause));
+  }
+
+  #[cfg(feature = "napi4")]
+  pub(crate) fn with_status<T: AsRef<str>>(self, status: T) -> Error<T> {
+    Error {
+      status,
+      reason: self.reason,
+      cause: self.cause,
+      js_code: self.js_code,
+      js_name: self.js_name,
+    }
   }
 }
 
@@ -69,38 +59,24 @@ impl<S: AsRef<str>> std::fmt::Debug for Error<S> {
   }
 }
 
-impl<S: AsRef<str>> ToNapiValue for Error<S> {
-  unsafe fn to_napi_value(env: sys::napi_env, mut val: Self) -> Result<sys::napi_value> {
-    if val.maybe_raw.is_null() {
-      let err = unsafe { JsError::from(val).into_value(env) };
-      Ok(err)
-    } else {
-      let mut value = std::ptr::null_mut();
-      check_status!(
-        unsafe { sys::napi_get_reference_value(env, val.maybe_raw, &mut value) },
-        "Get error reference in `to_napi_value` failed"
-      )?;
-      let mut ref_count = 0;
-      check_status!(
-        unsafe { sys::napi_reference_unref(env, val.maybe_raw, &mut ref_count) },
-        "Unref error reference in `to_napi_value` failed"
-      )?;
-      if ref_count == 0 {
-        check_status!(
-          unsafe { sys::napi_delete_reference(env, val.maybe_raw) },
-          "Delete error reference in `to_napi_value` failed"
-        )?;
-      }
-      // already unref, skip the logic in `Drop`
-      val.maybe_raw = ptr::null_mut();
-      val.maybe_env = ptr::null_mut();
-      Ok(value)
-    }
+impl<'env, 'scope> FromJs<'env, 'scope> for Error {
+  fn from_js(
+    scope: &mut Scope<'env, 'scope>,
+    value: Local<'scope, Unknown<'scope>>,
+  ) -> Result<Self> {
+    let value = unsafe { Unknown::from_raw_unchecked(scope.env().raw(), value.raw()) };
+    Ok(Error::from(value))
   }
 }
 
-unsafe impl<S> Send for Error<S> where S: Send + AsRef<str> {}
-unsafe impl<S> Sync for Error<S> where S: Sync + AsRef<str> {}
+impl<'scope, S: AsRef<str>> IntoJs<'scope> for Error<S> {
+  type Output = Unknown<'scope>;
+
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
+    let err = unsafe { JsError::from(self).into_value(scope.env().raw()) };
+    Ok(unsafe { Local::from_raw(err) })
+  }
+}
 
 impl<S: AsRef<str> + std::fmt::Debug> error::Error for Error<S> {}
 
@@ -134,18 +110,9 @@ impl From<SerdeJSONError> for Error {
 #[cfg(not(target_family = "wasm"))]
 impl From<Unknown<'_>> for Error {
   fn from(value: Unknown) -> Self {
-    let mut result = std::ptr::null_mut();
-    let status = unsafe { sys::napi_create_reference(value.0.env, value.0.value, 1, &mut result) };
-    if status != sys::Status::napi_ok {
-      return Error::new(
-        Status::from(status),
-        "Create Error reference failed".to_owned(),
-      );
-    }
-    let maybe_env = value.0.env;
-    let maybe_error_message = value
-      .coerce_to_string()
-      .and_then(|a| a.into_utf8().and_then(|a| a.into_owned()));
+    let maybe_error_message = error_message(value);
+    let js_code = error_string_property(value, c"code").ok().flatten();
+    let js_name = error_string_property(value, c"name").ok().flatten();
     let maybe_cause = extract_error_cause(value).unwrap_or(None);
 
     if let Ok(error_message) = maybe_error_message {
@@ -153,8 +120,8 @@ impl From<Unknown<'_>> for Error {
         status: Status::GenericFailure,
         reason: error_message,
         cause: maybe_cause,
-        maybe_raw: result,
-        maybe_env,
+        js_code,
+        js_name,
       };
     }
 
@@ -162,8 +129,8 @@ impl From<Unknown<'_>> for Error {
       status: Status::GenericFailure,
       reason: "".to_string(),
       cause: maybe_cause,
-      maybe_raw: result,
-      maybe_env,
+      js_code,
+      js_name,
     }
   }
 }
@@ -177,14 +144,16 @@ impl From<Unknown<'_>> for Error {
 
     if let Ok(vt) = value_type {
       if vt == ValueType::Object {
-        maybe_error_message = value
-          .coerce_to_object()
-          .and_then(|obj| obj.get_named_property::<Unknown>("message"))
-          .and_then(|message| {
-            message
-              .coerce_to_string()
-              .and_then(|message| message.into_utf8().and_then(|message| message.into_owned()))
-          });
+        maybe_error_message = value.coerce_to_object().and_then(|obj| unsafe {
+          with_env(value.0.env, |mut env| {
+            env.with_scope(|scope| {
+              let message: Unknown = scope.get_named_property(&obj, "message")?;
+              message
+                .coerce_to_string()
+                .and_then(|message| message.into_utf8().and_then(|message| message.into_owned()))
+            })
+          })
+        });
       } else {
         maybe_error_message = value
           .coerce_to_string()
@@ -203,8 +172,8 @@ impl From<Unknown<'_>> for Error {
         status: Status::GenericFailure,
         reason: error_message,
         cause: maybe_cause,
-        maybe_raw: ptr::null_mut(),
-        maybe_env: ptr::null_mut(),
+        js_code: None,
+        js_name: None,
       };
     }
 
@@ -212,8 +181,8 @@ impl From<Unknown<'_>> for Error {
       status: Status::GenericFailure,
       reason: "".to_string(),
       cause: maybe_cause,
-      maybe_raw: ptr::null_mut(),
-      maybe_env: ptr::null_mut(),
+      js_code: None,
+      js_name: None,
     }
   }
 }
@@ -241,8 +210,8 @@ impl<S: AsRef<str>> Error<S> {
       status,
       reason: reason.to_string(),
       cause: None,
-      maybe_raw: ptr::null_mut(),
-      maybe_env: ptr::null_mut(),
+      js_code: None,
+      js_name: None,
     }
   }
 
@@ -251,26 +220,26 @@ impl<S: AsRef<str>> Error<S> {
       status,
       reason: "".to_owned(),
       cause: None,
-      maybe_raw: ptr::null_mut(),
-      maybe_env: ptr::null_mut(),
+      js_code: None,
+      js_name: None,
     }
   }
 }
 
 impl<S: AsRef<str> + Clone> Error<S> {
-  pub fn try_clone(&self) -> Result<Self> {
-    if !self.maybe_raw.is_null() {
-      check_status!(
-        unsafe { sys::napi_reference_ref(self.maybe_env, self.maybe_raw, &mut 0) },
-        "Failed to increase error reference count"
-      )?;
-    }
+  pub fn try_clone(&self, env: &Env) -> Result<Self> {
+    debug_assert!(!env.raw().is_null(), "Env must not be null");
+    let cause = self
+      .cause
+      .as_ref()
+      .map(|cause| cause.try_clone(env).map(Box::new))
+      .transpose()?;
     Ok(Self {
       status: self.status.clone(),
       reason: self.reason.to_string(),
-      cause: None,
-      maybe_raw: self.maybe_raw,
-      maybe_env: self.maybe_env,
+      cause,
+      js_code: self.js_code.clone(),
+      js_name: self.js_name.clone(),
     })
   }
 }
@@ -281,8 +250,8 @@ impl Error {
       status: Status::GenericFailure,
       reason: reason.into(),
       cause: None,
-      maybe_raw: ptr::null_mut(),
-      maybe_env: ptr::null_mut(),
+      js_code: None,
+      js_name: None,
     }
   }
 }
@@ -293,8 +262,8 @@ impl From<std::ffi::NulError> for Error {
       status: Status::GenericFailure,
       reason: format!("{error}"),
       cause: None,
-      maybe_raw: ptr::null_mut(),
-      maybe_env: ptr::null_mut(),
+      js_code: None,
+      js_name: None,
     }
   }
 }
@@ -305,8 +274,8 @@ impl From<std::io::Error> for Error {
       status: Status::GenericFailure,
       reason: format!("{error}"),
       cause: None,
-      maybe_raw: ptr::null_mut(),
-      maybe_env: ptr::null_mut(),
+      js_code: None,
+      js_name: None,
     }
   }
 }
@@ -357,36 +326,24 @@ pub struct JsRangeError<S: AsRef<str> = Status>(Error<S>);
 #[cfg(feature = "napi9")]
 pub struct JsSyntaxError<S: AsRef<str> = Status>(Error<S>);
 
-pub(crate) fn get_error_message_and_stack_trace(
+unsafe fn set_error_string_property(
   env: sys::napi_env,
-  err: sys::napi_value,
-) -> Result<String> {
-  use crate::bindgen_runtime::FromNapiValue;
-
-  let mut error_string = ptr::null_mut();
-  check_status!(
-    unsafe { sys::napi_coerce_to_string(env, err, &mut error_string) },
-    "Get error message failed"
-  )?;
-  let mut result = unsafe { String::from_napi_value(env, error_string) }?;
-
-  let mut stack_trace = ptr::null_mut();
-  check_status!(
-    unsafe { sys::napi_get_named_property(env, err, c"stack".as_ptr().cast(), &mut stack_trace) },
-    "Get stack trace failed"
-  )?;
-  let mut stack_type = -1;
-  check_status!(
-    unsafe { sys::napi_typeof(env, stack_trace, &mut stack_type) },
-    "Get stack trace type failed"
-  )?;
-  if stack_type == sys::ValueType::napi_string {
-    let stack_trace = unsafe { String::from_napi_value(env, stack_trace) }?;
-    result.push('\n');
-    result.push_str(&stack_trace);
-  }
-
-  Ok(result)
+  object: sys::napi_value,
+  key: &CStr,
+  value: &str,
+) {
+  let mut raw_value = ptr::null_mut();
+  let status = unsafe {
+    sys::napi_create_string_utf8(
+      env,
+      value.as_ptr().cast(),
+      value.len() as isize,
+      &mut raw_value,
+    )
+  };
+  debug_assert!(status == sys::Status::napi_ok);
+  let status = unsafe { sys::napi_set_named_property(env, object, key.as_ptr().cast(), raw_value) };
+  debug_assert!(status == sys::Status::napi_ok);
 }
 
 macro_rules! impl_object_methods {
@@ -396,54 +353,18 @@ macro_rules! impl_object_methods {
       ///
       /// This function is safety if env is not null ptr.
       pub unsafe fn into_value(mut self, env: sys::napi_env) -> sys::napi_value {
-        if !self.0.maybe_raw.is_null() {
-          let mut err = ptr::null_mut();
-          let get_err_status =
-            unsafe { sys::napi_get_reference_value(env, self.0.maybe_raw, &mut err) };
-          debug_assert!(
-            get_err_status == sys::Status::napi_ok,
-            "Get Error from Reference failed"
-          );
-          let mut ref_count = 0;
-          let unref_status =
-            unsafe { sys::napi_reference_unref(env, self.0.maybe_raw, &mut ref_count) };
-          debug_assert!(
-            unref_status == sys::Status::napi_ok,
-            "Unref Error Reference failed"
-          );
-          if ref_count == 0 {
-            let delete_err_status = unsafe { sys::napi_delete_reference(env, self.0.maybe_raw) };
-            debug_assert!(
-              delete_err_status == sys::Status::napi_ok,
-              "Delete Error Reference failed"
-            );
-          }
-          // already unref, skip the logic in `Drop`
-          self.0.maybe_raw = ptr::null_mut();
-          self.0.maybe_env = ptr::null_mut();
-          let mut is_error = false;
-          let is_error_status = unsafe { sys::napi_is_error(env, err, &mut is_error) };
-          debug_assert!(
-            is_error_status == sys::Status::napi_ok,
-            "Check Error failed"
-          );
-          // make sure ref_value is a valid error at first and avoid throw error failed.
-          if is_error {
-            return err;
-          }
-        }
-
         let error_status = self.0.status.as_ref();
-        let status_len = error_status.len();
+        let code = self.0.js_code.as_deref().unwrap_or(error_status);
+        let code_len = code.len();
         let reason_len = self.0.reason.len();
-        let mut error_code = ptr::null_mut();
-        let mut reason_string = ptr::null_mut();
-        let mut js_error = ptr::null_mut();
+        let mut error_code = std::ptr::null_mut();
+        let mut reason_string = std::ptr::null_mut();
+        let mut js_error = std::ptr::null_mut();
         let create_code_status = unsafe {
           sys::napi_create_string_utf8(
             env,
-            error_status.as_ptr().cast(),
-            status_len as isize,
+            code.as_ptr().cast(),
+            code_len as isize,
             &mut error_code,
           )
         };
@@ -459,8 +380,14 @@ macro_rules! impl_object_methods {
         debug_assert!(create_reason_status == sys::Status::napi_ok);
         let create_error_status = unsafe { $kind(env, error_code, reason_string, &mut js_error) };
         debug_assert!(create_error_status == sys::Status::napi_ok);
+        if let Some(js_name) = self.0.js_name.as_ref() {
+          unsafe { set_error_string_property(env, js_error, c"name", js_name) };
+        }
+        if let Some(js_code) = self.0.js_code.as_ref() {
+          unsafe { set_error_string_property(env, js_error, c"code", js_code) };
+        }
         if let Some(cause_error) = self.0.cause.take() {
-          let cause = ToNapiValue::to_napi_value(env, *cause_error)
+          let cause = unsafe { into_js_raw(env, *cause_error) }
             .expect("Convert cause Error to napi_value should never error");
           let set_cause_status =
             unsafe { sys::napi_set_named_property(env, js_error, c"cause".as_ptr().cast(), cause) };
@@ -527,9 +454,14 @@ macro_rules! impl_object_methods {
       }
     }
 
-    impl crate::bindgen_prelude::ToNapiValue for $js_value {
-      unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> Result<sys::napi_value> {
-        unsafe { ToNapiValue::to_napi_value(env, val.0) }
+    impl<'scope> crate::bindgen_prelude::IntoJs<'scope> for $js_value {
+      type Output = $crate::Unknown<'scope>;
+
+      fn into_js(
+        self,
+        scope: &mut crate::bindgen_prelude::Scope<'_, 'scope>,
+      ) -> Result<crate::bindgen_prelude::Local<'scope, Self::Output>> {
+        self.0.into_js(scope)
       }
     }
   };
@@ -593,7 +525,7 @@ macro_rules! check_status_and_type {
               $crate::bindgen_prelude::Function::<
                 $crate::bindgen_prelude::Unknown,
                 $crate::bindgen_prelude::Unknown,
-              >::from_napi_value($env, $val)?
+              >::from_raw($env, $val)
               .name()?
             };
             format!(
@@ -609,9 +541,14 @@ macro_rules! check_status_and_type {
             )
           }
           ValueType::Object => {
-            let env_ = $crate::Env::from($env);
-            let json: $crate::JSON = env_.get_global()?.get_named_property_unchecked("JSON")?;
-            let object = json.stringify($crate::bindgen_prelude::Object::from_raw($env, $val))?;
+            let mut env_ = unsafe { $crate::Env::from_raw($env) };
+            let object = env_.with_scope(|scope| {
+              let global = scope.env().get_global()?;
+              let json: $crate::JSON = scope.get_named_property(&global, "JSON")?;
+              json.stringify(scope, unsafe {
+                $crate::bindgen_prelude::Object::from_raw($env, $val)
+              })
+            })?;
             format!($msg, format!("Object {}", object))
           }
           ValueType::Boolean | ValueType::Number => {
@@ -678,18 +615,50 @@ pub(crate) fn extract_error_cause(value: Unknown<'_>) -> Result<Option<Box<Error
     return Ok(None);
   }
 
-  let env = value.0.env;
-  let key = c"cause";
-  let mut raw_cause = ptr::null_mut();
-  check_pending_exception!(
-    env,
-    unsafe { sys::napi_get_named_property(env, value.0.value, key.as_ptr(), &mut raw_cause) },
-    "get_named_property error"
-  )?;
+  unsafe {
+    with_env(value.0.env, |mut env| {
+      env.with_scope(|scope| {
+        let object = Object::from_raw(scope.env().raw(), value.0.value);
+        let cause: Unknown = scope.get_c_named_property(&object, c"cause")?;
+        match cause.get_type()? {
+          ValueType::Undefined | ValueType::Null => Ok(None),
+          _ => Ok(Some(Box::new(cause.into()))),
+        }
+      })
+    })
+  }
+}
 
-  let cause = unsafe { Unknown::from_raw_unchecked(env, raw_cause) };
-  match cause.get_type()? {
-    ValueType::Undefined | ValueType::Null => Ok(None),
-    _ => Ok(Some(Box::new(cause.into()))),
+fn error_message(value: Unknown<'_>) -> Result<String> {
+  if let Some(message) = error_string_property(value, c"message")? {
+    return Ok(message);
+  }
+
+  value
+    .coerce_to_string()
+    .and_then(|value| value.into_utf8())
+    .and_then(|value| value.into_owned())
+}
+
+fn error_string_property(value: Unknown<'_>, key: &CStr) -> Result<Option<String>> {
+  if value.get_type()? != ValueType::Object {
+    return Ok(None);
+  }
+
+  unsafe {
+    with_env(value.0.env, |mut env| {
+      env.with_scope(|scope| {
+        let object = Object::from_raw(scope.env().raw(), value.0.value);
+        let property: Unknown = scope.get_c_named_property(&object, key)?;
+        match property.get_type()? {
+          ValueType::Undefined | ValueType::Null => Ok(None),
+          _ => property
+            .coerce_to_string()
+            .and_then(|value| value.into_utf8())
+            .and_then(|value| value.into_owned())
+            .map(Some),
+        }
+      })
+    })
   }
 }

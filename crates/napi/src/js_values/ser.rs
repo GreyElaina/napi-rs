@@ -3,16 +3,27 @@ use std::{marker::PhantomData, result::Result as StdResult};
 use serde::{ser, Serialize, Serializer};
 
 use crate::{
-  bindgen_runtime::{Array, BufferSlice, JsObjectValue, Null, Object, ToNapiValue},
+  bindgen_runtime::{into_js_raw, Array, BufferSlice, IntoJs, JsObjectValue, Null, Object},
   Env, Error, JsString, JsValue, Result, Unknown, Value, ValueType,
 };
 
-pub struct Ser<'env>(pub(crate) &'env Env);
+pub struct Ser<'env>(pub(crate) &'env Env<'env>);
 
 impl<'env> Ser<'env> {
-  pub fn new(env: &'env Env) -> Self {
+  pub fn new(env: &'env Env<'env>) -> Self {
     Self(env)
   }
+}
+
+fn into_value<T>(env: &Env, value: T, value_type: ValueType) -> Result<Value>
+where
+  for<'scope> T: IntoJs<'scope>,
+{
+  Ok(Value {
+    env: env.raw(),
+    value: unsafe { into_js_raw(env.raw(), value)? },
+    value_type,
+  })
 }
 
 impl<'env> Serializer for Ser<'env> {
@@ -28,11 +39,7 @@ impl<'env> Serializer for Ser<'env> {
   type SerializeStructVariant = StructSerializer<'env>;
 
   fn serialize_bool(self, v: bool) -> Result<Self::Ok> {
-    Ok(Value {
-      env: self.0 .0,
-      value: unsafe { ToNapiValue::to_napi_value(self.0 .0, v)? },
-      value_type: ValueType::Boolean,
-    })
+    into_value(self.0, v, ValueType::Boolean)
   }
 
   fn serialize_bytes(self, v: &[u8]) -> Result<Self::Ok> {
@@ -50,75 +57,39 @@ impl<'env> Serializer for Ser<'env> {
   }
 
   fn serialize_f32(self, v: f32) -> Result<Self::Ok> {
-    Ok(Value {
-      env: self.0.raw(),
-      value: unsafe { ToNapiValue::to_napi_value(self.0 .0, v)? },
-      value_type: ValueType::Number,
-    })
+    into_value(self.0, v, ValueType::Number)
   }
 
   fn serialize_f64(self, v: f64) -> Result<Self::Ok> {
-    Ok(Value {
-      env: self.0.raw(),
-      value: unsafe { ToNapiValue::to_napi_value(self.0 .0, v)? },
-      value_type: ValueType::Number,
-    })
+    into_value(self.0, v, ValueType::Number)
   }
 
   fn serialize_i16(self, v: i16) -> Result<Self::Ok> {
-    Ok(Value {
-      env: self.0.raw(),
-      value: unsafe { ToNapiValue::to_napi_value(self.0 .0, v as i32)? },
-      value_type: ValueType::Number,
-    })
+    into_value(self.0, v as i32, ValueType::Number)
   }
 
   fn serialize_i32(self, v: i32) -> Result<Self::Ok> {
-    Ok(Value {
-      env: self.0.raw(),
-      value: unsafe { ToNapiValue::to_napi_value(self.0 .0, v)? },
-      value_type: ValueType::Number,
-    })
+    into_value(self.0, v, ValueType::Number)
   }
 
   fn serialize_i64(self, v: i64) -> Result<Self::Ok> {
-    Ok(Value {
-      env: self.0.raw(),
-      value: unsafe { ToNapiValue::to_napi_value(self.0 .0, v)? },
-      value_type: ValueType::Number,
-    })
+    into_value(self.0, v, ValueType::Number)
   }
 
   fn serialize_i8(self, v: i8) -> Result<Self::Ok> {
-    Ok(Value {
-      env: self.0.raw(),
-      value: unsafe { ToNapiValue::to_napi_value(self.0 .0, v as i32)? },
-      value_type: ValueType::Number,
-    })
+    into_value(self.0, v as i32, ValueType::Number)
   }
 
   fn serialize_u8(self, v: u8) -> Result<Self::Ok> {
-    Ok(Value {
-      env: self.0.raw(),
-      value: unsafe { ToNapiValue::to_napi_value(self.0 .0, v as u32)? },
-      value_type: ValueType::Number,
-    })
+    into_value(self.0, v as u32, ValueType::Number)
   }
 
   fn serialize_u16(self, v: u16) -> Result<Self::Ok> {
-    Ok(Value {
-      env: self.0.raw(),
-      value: unsafe { ToNapiValue::to_napi_value(self.0 .0, v as u32)? },
-      value_type: ValueType::Number,
-    })
+    into_value(self.0, v as u32, ValueType::Number)
   }
 
   fn serialize_u32(self, v: u32) -> Result<Self::Ok> {
-    Ok(Value {
-      env: self.0.raw(),
-      value: unsafe { ToNapiValue::to_napi_value(self.0 .0, v)? },
-      value_type: ValueType::Number,
-    })
+    into_value(self.0, v, ValueType::Number)
   }
 
   #[cfg(all(
@@ -150,11 +121,7 @@ impl<'env> Serializer for Ser<'env> {
     if v <= u32::MAX.into() {
       self.serialize_u32(v as u32)
     } else {
-      Ok(Value {
-        env: self.0.raw(),
-        value: unsafe { ToNapiValue::to_napi_value(self.0 .0, v)? },
-        value_type: ValueType::Number,
-      })
+      into_value(self.0, v, ValueType::Number)
     }
   }
 
@@ -168,20 +135,12 @@ impl<'env> Serializer for Ser<'env> {
     not(feature = "napi6")
   ))]
   fn serialize_u128(self, v: u128) -> Result<Self::Ok> {
-    Ok(Value {
-      env: self.0.raw(),
-      value: unsafe { ToNapiValue::to_napi_value(self.0 .0, v.to_string())? },
-      value_type: ValueType::Number,
-    })
+    into_value(self.0, v.to_string(), ValueType::Number)
   }
 
   #[cfg(feature = "napi6")]
   fn serialize_u128(self, v: u128) -> Result<Self::Ok> {
-    Ok(Value {
-      env: self.0.raw(),
-      value: unsafe { ToNapiValue::to_napi_value(self.0 .0, v)? },
-      value_type: ValueType::Number,
-    })
+    into_value(self.0, v, ValueType::Number)
   }
 
   #[cfg(all(
@@ -194,36 +153,20 @@ impl<'env> Serializer for Ser<'env> {
     not(feature = "napi6")
   ))]
   fn serialize_i128(self, v: i128) -> Result<Self::Ok> {
-    Ok(Value {
-      env: self.0.raw(),
-      value: unsafe { ToNapiValue::to_napi_value(self.0 .0, v.to_string())? },
-      value_type: ValueType::Number,
-    })
+    into_value(self.0, v.to_string(), ValueType::Number)
   }
 
   #[cfg(feature = "napi6")]
   fn serialize_i128(self, v: i128) -> Result<Self::Ok> {
-    Ok(Value {
-      env: self.0.raw(),
-      value: unsafe { ToNapiValue::to_napi_value(self.0 .0, v)? },
-      value_type: ValueType::Number,
-    })
+    into_value(self.0, v, ValueType::Number)
   }
 
   fn serialize_unit(self) -> Result<Self::Ok> {
-    Ok(Value {
-      env: self.0.raw(),
-      value: unsafe { ToNapiValue::to_napi_value(self.0 .0, Null) }?,
-      value_type: ValueType::Null,
-    })
+    into_value(self.0, Null, ValueType::Null)
   }
 
   fn serialize_none(self) -> Result<Self::Ok> {
-    Ok(Value {
-      env: self.0.raw(),
-      value: unsafe { ToNapiValue::to_napi_value(self.0 .0, Null) }?,
-      value_type: ValueType::Null,
-    })
+    into_value(self.0, Null, ValueType::Null)
   }
 
   fn serialize_str(self, v: &str) -> Result<Self::Ok> {
@@ -280,11 +223,7 @@ impl<'env> Serializer for Ser<'env> {
   }
 
   fn serialize_unit_struct(self, _name: &'static str) -> Result<Self::Ok> {
-    Ok(Value {
-      env: self.0.raw(),
-      value: unsafe { ToNapiValue::to_napi_value(self.0 .0, Null) }?,
-      value_type: ValueType::Null,
-    })
+    into_value(self.0, Null, ValueType::Null)
   }
 
   fn serialize_unit_variant(
@@ -384,7 +323,7 @@ impl ser::SerializeSeq for SeqSerializer<'_> {
   where
     T: ?Sized + Serialize,
   {
-    let env = Env::from_raw(self.array.env);
+    let env = unsafe { Env::from_raw(self.array.env) };
     self.array.set_element(
       self.current_index as _,
       Unknown(value.serialize(Ser::new(&env))?, std::marker::PhantomData),
@@ -407,7 +346,7 @@ impl ser::SerializeTuple for SeqSerializer<'_> {
   where
     T: ?Sized + Serialize,
   {
-    let env = Env::from_raw(self.array.env);
+    let env = unsafe { Env::from_raw(self.array.env) };
     self.array.set_element(
       self.current_index as _,
       Unknown(value.serialize(Ser::new(&env))?, std::marker::PhantomData),
@@ -430,7 +369,7 @@ impl ser::SerializeTupleStruct for SeqSerializer<'_> {
   where
     T: ?Sized + Serialize,
   {
-    let env = Env::from_raw(self.array.env);
+    let env = unsafe { Env::from_raw(self.array.env) };
     self.array.set_element(
       self.current_index as _,
       Unknown(value.serialize(Ser::new(&env))?, std::marker::PhantomData),
@@ -453,7 +392,7 @@ impl ser::SerializeTupleVariant for SeqSerializer<'_> {
   where
     T: ?Sized + Serialize,
   {
-    let env = Env::from_raw(self.array.env);
+    let env = unsafe { Env::from_raw(self.array.env) };
     self.array.set_element(
       self.current_index as _,
       Unknown(value.serialize(Ser::new(&env))?, std::marker::PhantomData),
@@ -481,7 +420,7 @@ impl ser::SerializeMap for MapSerializer<'_> {
   where
     T: ?Sized + Serialize,
   {
-    let env = Env::from_raw(self.obj.0.env);
+    let env = unsafe { Env::from_raw(self.obj.0.env) };
     self.key = JsString(key.serialize(Ser::new(&env))?, std::marker::PhantomData);
     Ok(())
   }
@@ -490,7 +429,7 @@ impl ser::SerializeMap for MapSerializer<'_> {
   where
     T: ?Sized + Serialize,
   {
-    let env = Env::from_raw(self.obj.0.env);
+    let env = unsafe { Env::from_raw(self.obj.0.env) };
     self.obj.set_property(
       JsString::from_raw(self.key.0.env, self.key.0.value),
       Unknown(value.serialize(Ser::new(&env))?, std::marker::PhantomData),
@@ -503,7 +442,7 @@ impl ser::SerializeMap for MapSerializer<'_> {
     K: ?Sized + Serialize,
     V: ?Sized + Serialize,
   {
-    let env = Env::from_raw(self.obj.0.env);
+    let env = unsafe { Env::from_raw(self.obj.0.env) };
     self.obj.set_property(
       JsString(key.serialize(Ser::new(&env))?, std::marker::PhantomData),
       Unknown(value.serialize(Ser::new(&env))?, std::marker::PhantomData),
@@ -529,7 +468,7 @@ impl ser::SerializeStruct for StructSerializer<'_> {
   where
     T: ?Sized + Serialize,
   {
-    let env = Env::from_raw(self.obj.0.env);
+    let env = unsafe { Env::from_raw(self.obj.0.env) };
     self.obj.set_named_property(
       key,
       Unknown(value.serialize(Ser::new(&env))?, std::marker::PhantomData),
@@ -551,7 +490,7 @@ impl ser::SerializeStructVariant for StructSerializer<'_> {
   where
     T: ?Sized + Serialize,
   {
-    let env = Env::from_raw(self.obj.0.env);
+    let env = unsafe { Env::from_raw(self.obj.0.env) };
     self.obj.set_named_property(
       key,
       Unknown(value.serialize(Ser::new(&env))?, std::marker::PhantomData),

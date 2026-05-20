@@ -1,8 +1,13 @@
 #[cfg(feature = "napi10")]
 use std::ffi::c_void;
 
-use crate::{bindgen_prelude::ToNapiValue, sys, JsString, Result};
+use crate::{
+  bindgen_prelude::{IntoJs, Local, Scope},
+  JsString, Result,
+};
 
+#[cfg(feature = "napi10")]
+use crate::sys;
 #[cfg(feature = "napi10")]
 use crate::Env;
 
@@ -142,7 +147,7 @@ impl<'env> JsStringLatin1<'env> {
   ///
   /// The `copied` parameter serves as feedback to understand whether the external string
   /// optimization was successful or if V8 fell back to traditional string creation.
-  pub unsafe fn from_external<T: 'env, F: FnOnce(Env, T) + 'env>(
+  pub unsafe fn from_external<T: 'static, F: FnOnce(T) + 'static>(
     env: &'env Env,
     data: *const u8,
     len: usize,
@@ -182,7 +187,7 @@ impl<'env> JsStringLatin1<'env> {
     if copied {
       unsafe {
         let (hint, finalize) = *Box::from_raw(hint_ptr);
-        finalize(*env, hint);
+        finalize(hint);
       }
     }
 
@@ -279,14 +284,16 @@ impl From<JsStringLatin1<'_>> for Vec<u8> {
   }
 }
 
-impl ToNapiValue for JsStringLatin1<'_> {
-  unsafe fn to_napi_value(_: sys::napi_env, val: JsStringLatin1) -> Result<sys::napi_value> {
-    Ok(val.inner.0.value)
+impl<'scope> IntoJs<'scope> for JsStringLatin1<'_> {
+  type Output = JsString<'scope>;
+
+  fn into_js(self, _: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
+    Ok(unsafe { Local::from_raw(self.inner.0.value) })
   }
 }
 
 #[cfg(feature = "napi10")]
-extern "C" fn drop_latin1_string(
+unsafe extern "C" fn drop_latin1_string(
   _: sys::node_api_basic_env,
   finalize_data: *mut c_void,
   finalize_hint: *mut c_void,
@@ -300,11 +307,11 @@ extern "C" fn drop_latin1_string(
 }
 
 #[cfg(feature = "napi10")]
-extern "C" fn finalize_with_custom_callback<T, F: FnOnce(Env, T)>(
-  env: sys::node_api_basic_env,
+unsafe extern "C" fn finalize_with_custom_callback<T, F: FnOnce(T)>(
+  _env: sys::node_api_basic_env,
   _finalize_data: *mut c_void,
   finalize_hint: *mut c_void,
 ) {
   let (hint, callback) = unsafe { *Box::from_raw(finalize_hint as *mut (T, F)) };
-  callback(Env(env.cast()), hint);
+  callback(hint);
 }

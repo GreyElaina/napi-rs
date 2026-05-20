@@ -1,19 +1,18 @@
-use std::ffi::{c_void, CStr};
+use std::ffi::CStr;
 use std::ptr;
 
-use crate::Value;
-use crate::{bindgen_runtime::Unknown, check_status_or_throw, sys, Env};
+use crate::{bindgen_runtime::Unknown, check_status, check_status_or_throw, sys, Env, JsValue};
 
-use super::{FromNapiValue, ToNapiValue};
+use super::{into_js_raw, with_env, CallbackDecoder, CallbackFrame, FromJs, IntoJs, NapiClass};
 
 const GENERATOR_STATE_KEY: &CStr = c"[[GeneratorState]]";
 
 /// Implement a Iterator for the JavaScript Class.
 /// This feature is an experimental feature and is not yet stable.
 pub trait Generator {
-  type Yield: ToNapiValue;
-  type Next: FromNapiValue;
-  type Return: FromNapiValue;
+  type Yield: for<'scope> IntoJs<'scope>;
+  type Next: for<'env, 'scope> FromJs<'env, 'scope>;
+  type Return: for<'env, 'scope> FromJs<'env, 'scope>;
 
   /// Handle the `Generator.next()`
   /// <https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Generator/next>
@@ -56,14 +55,14 @@ impl<'env, T: Generator + 'env> ScopedGenerator<'env> for T {
     env: &'env Env,
     value: Unknown<'env>,
   ) -> Result<Option<Self::Yield>, Unknown<'env>> {
-    T::catch(self, Env::from_raw(env.0), value)
+    T::catch(self, *env, value)
   }
 }
 
 pub trait ScopedGenerator<'env> {
-  type Yield: ToNapiValue + 'env;
-  type Next: FromNapiValue;
-  type Return: FromNapiValue;
+  type Yield: for<'scope> IntoJs<'scope> + 'env;
+  type Next: for<'value_env, 'value_scope> FromJs<'value_env, 'value_scope>;
+  type Return: for<'value_env, 'value_scope> FromJs<'value_env, 'value_scope>;
 
   /// Handle the `Generator.next()`
   /// <https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Generator/next>
@@ -90,119 +89,9 @@ pub trait ScopedGenerator<'env> {
 
 #[doc(hidden)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub unsafe fn setup_iterator_class(env: sys::napi_env, class_ctor: sys::napi_value) {
-  let mut global = ptr::null_mut();
-  check_status_or_throw!(
-    env,
-    sys::napi_get_global(env, &mut global),
-    "Get global object failed",
-  );
-
-  let mut iterator_ctor = ptr::null_mut();
-  check_status_or_throw!(
-    env,
-    sys::napi_get_named_property(env, global, c"Iterator".as_ptr().cast(), &mut iterator_ctor,),
-    "Get Global.Iterator failed",
-  );
-
-  let mut iterator_ctor_type = 0;
-  check_status_or_throw!(
-    env,
-    sys::napi_typeof(env, iterator_ctor, &mut iterator_ctor_type),
-    "Get Global.Iterator type failed",
-  );
-
-  if iterator_ctor_type != sys::ValueType::napi_function {
-    return;
-  }
-
-  let mut class_proto = ptr::null_mut();
-  check_status_or_throw!(
-    env,
-    sys::napi_get_named_property(
-      env,
-      class_ctor,
-      c"prototype".as_ptr().cast(),
-      &mut class_proto,
-    ),
-    "Failed to get class prototype",
-  );
-
-  let mut iterator_proto = ptr::null_mut();
-  check_status_or_throw!(
-    env,
-    sys::napi_get_named_property(
-      env,
-      iterator_ctor,
-      c"prototype".as_ptr().cast(),
-      &mut iterator_proto,
-    ),
-    "Failed to get Iterator.prototype",
-  );
-
-  let mut class_proto_parent = ptr::null_mut();
-  check_status_or_throw!(
-    env,
-    sys::napi_get_prototype(env, class_proto, &mut class_proto_parent),
-    "Failed to get class prototype parent",
-  );
-
-  let mut already_inherits_iterator = false;
-  check_status_or_throw!(
-    env,
-    sys::napi_strict_equals(
-      env,
-      class_proto_parent,
-      iterator_proto,
-      &mut already_inherits_iterator,
-    ),
-    "Failed to compare class prototype parent",
-  );
-
-  if already_inherits_iterator {
-    return;
-  }
-
-  let mut object_ctor = ptr::null_mut();
-  check_status_or_throw!(
-    env,
-    sys::napi_get_named_property(env, global, c"Object".as_ptr().cast(), &mut object_ctor),
-    "Failed to get Object constructor"
-  );
-
-  let mut set_prototype_function = ptr::null_mut();
-  check_status_or_throw!(
-    env,
-    sys::napi_get_named_property(
-      env,
-      object_ctor,
-      c"setPrototypeOf".as_ptr().cast(),
-      &mut set_prototype_function,
-    ),
-    "Failed to get Object.setPrototypeOf"
-  );
-
-  let mut argv = [class_proto, iterator_proto];
-  check_status_or_throw!(
-    env,
-    sys::napi_call_function(
-      env,
-      object_ctor,
-      set_prototype_function,
-      2,
-      argv.as_mut_ptr(),
-      ptr::null_mut(),
-    ),
-    "Failed to set prototype on object"
-  );
-}
-
-#[doc(hidden)]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub unsafe fn create_iterator<'a, T: ScopedGenerator<'a> + 'a>(
+pub unsafe fn create_iterator<T: for<'a> ScopedGenerator<'a> + NapiClass + 'static>(
   env: sys::napi_env,
   instance: sys::napi_value,
-  generator_ptr: *mut T,
 ) {
   let mut global = ptr::null_mut();
   check_status_or_throw!(
@@ -238,7 +127,7 @@ pub unsafe fn create_iterator<'a, T: ScopedGenerator<'a> + 'a>(
       c"next".as_ptr().cast(),
       4,
       Some(generator_next::<T>),
-      generator_ptr as *mut c_void,
+      ptr::null_mut(),
       &mut next_function,
     ),
     "Create next function failed"
@@ -252,7 +141,7 @@ pub unsafe fn create_iterator<'a, T: ScopedGenerator<'a> + 'a>(
       c"return".as_ptr().cast(),
       6,
       Some(generator_return::<T>),
-      generator_ptr as *mut c_void,
+      ptr::null_mut(),
       &mut return_function,
     ),
     "Create return function failed"
@@ -266,7 +155,7 @@ pub unsafe fn create_iterator<'a, T: ScopedGenerator<'a> + 'a>(
       c"throw".as_ptr().cast(),
       5,
       Some(generator_throw::<T>),
-      generator_ptr as *mut c_void,
+      ptr::null_mut(),
       &mut throw_function,
     ),
     "Create throw function failed"
@@ -322,7 +211,7 @@ pub unsafe fn create_iterator<'a, T: ScopedGenerator<'a> + 'a>(
       c"Iterator".as_ptr().cast(),
       8,
       Some(symbol_generator::<T>),
-      generator_ptr as *mut c_void,
+      ptr::null_mut(),
       &mut generator_function,
     ),
     "Create iterator function failed",
@@ -336,346 +225,292 @@ pub unsafe fn create_iterator<'a, T: ScopedGenerator<'a> + 'a>(
 }
 
 #[doc(hidden)]
-pub unsafe extern "C" fn symbol_generator<'a, T: ScopedGenerator<'a> + 'a>(
+pub unsafe extern "C" fn symbol_generator<T: for<'a> ScopedGenerator<'a> + NapiClass + 'static>(
   env: sys::napi_env,
   info: sys::napi_callback_info,
 ) -> sys::napi_value {
-  let mut this = ptr::null_mut();
-  let mut argv: [sys::napi_value; 1] = [ptr::null_mut()];
-  let mut argc = 0;
-  let mut generator_ptr = ptr::null_mut();
-  check_status_or_throw!(
-    env,
-    unsafe {
-      sys::napi_get_cb_info(
-        env,
-        info,
-        &mut argc,
-        argv.as_mut_ptr(),
-        &mut this,
-        &mut generator_ptr,
-      )
-    },
-    "Get callback info from generator function failed"
-  );
-
-  this
+  match unsafe { with_env(env, |env_wrapper| symbol_generator_impl(env_wrapper, info)) } {
+    Ok(value) => value,
+    Err(e) => {
+      unsafe { crate::JsError::from(e).throw_into(env) };
+      ptr::null_mut()
+    }
+  }
 }
 
-extern "C" fn generator_next<'a, T: ScopedGenerator<'a> + 'a>(
+fn symbol_generator_impl(
+  env_wrapper: Env<'_>,
+  info: sys::napi_callback_info,
+) -> crate::Result<sys::napi_value> {
+  let mut decoder = CallbackDecoder::<0>::new(env_wrapper, info, None)?;
+  decoder.with_frame(|frame| Ok(frame.raw_this()))
+}
+
+unsafe extern "C" fn generator_next<T: for<'a> ScopedGenerator<'a> + NapiClass + 'static>(
   env: sys::napi_env,
   info: sys::napi_callback_info,
 ) -> sys::napi_value {
-  let mut this = ptr::null_mut();
-  let mut argv: [sys::napi_value; 1] = [ptr::null_mut()];
-  let mut argc = 1;
-  let mut generator_ptr = ptr::null_mut();
-  check_status_or_throw!(
-    env,
-    unsafe {
-      sys::napi_get_cb_info(
-        env,
-        info,
-        &mut argc,
-        argv.as_mut_ptr(),
-        &mut this,
-        &mut generator_ptr,
-      )
-    },
-    "Get callback info from generator function failed"
-  );
-  let mut generator_state = ptr::null_mut();
-  check_status_or_throw!(
-    env,
-    unsafe {
-      sys::napi_get_named_property(
-        env,
-        this,
-        GENERATOR_STATE_KEY.as_ptr().cast(),
-        &mut generator_state,
-      )
-    },
-    "Get generator state failed"
-  );
-  let mut completed = false;
-  check_status_or_throw!(
-    env,
-    unsafe { sys::napi_get_value_bool(env, generator_state, &mut completed) },
-    "Get generator state failed"
-  );
-  let mut result = std::ptr::null_mut();
-  check_status_or_throw!(
-    env,
-    unsafe { sys::napi_create_object(env, &mut result) },
-    "Failed to create iterator result object",
-  );
-  if !completed {
-    let g = unsafe { Box::leak(Box::from_raw(generator_ptr as *mut T)) };
-    let item = if argc == 0 {
-      g.next(
-        // SAFETY: `Env` is long lived
-        unsafe { std::mem::transmute::<&Env, &'a Env>(&Env::from_raw(env)) },
-        None,
-      )
-    } else {
-      g.next(
-        // SAFETY: `Env` is long lived
-        unsafe { std::mem::transmute::<&Env, &'a Env>(&Env::from_raw(env)) },
-        match unsafe { T::Next::from_napi_value(env, argv[0]) } {
-          Ok(input) => Some(input),
-          Err(e) => {
-            unsafe {
-              sys::napi_throw_error(
-                env,
-                format!("{}", e.status).as_ptr().cast(),
-                e.reason.as_ptr().cast(),
-              )
-            };
-            None
-          }
-        },
-      )
+  match unsafe {
+    with_env(env, |env_wrapper| {
+      generator_next_impl::<T>(env_wrapper, info)
+    })
+  } {
+    Ok(value) => value,
+    Err(e) => {
+      unsafe { crate::JsError::from(e).throw_into(env) };
+      ptr::null_mut()
+    }
+  }
+}
+
+fn generator_next_impl<T: for<'a> ScopedGenerator<'a> + NapiClass + 'static>(
+  env_wrapper: Env<'_>,
+  info: sys::napi_callback_info,
+) -> crate::Result<sys::napi_value> {
+  let mut decoder = CallbackDecoder::<1>::new(env_wrapper, info, None)?;
+  decoder.with_frame(|mut frame| {
+    let mut result = GeneratorResult::new(&frame)?;
+    let mut completed = result.is_done()?;
+    if !completed {
+      completed = {
+        let input = frame.optional_arg::<T::Next>(0)?;
+        let scope = frame.scope_mut();
+        let (access, storage) = unsafe { T::validate_raw_object(scope, result.this())? };
+        let mut generator =
+          unsafe { T::mut_from_validated_object(result.this(), storage, access)? };
+        let generator_env = *scope.env();
+        let next = <T as ScopedGenerator<'_>>::next(&mut *generator, &generator_env, input);
+        if let Some(value) = next {
+          result.set_value(value);
+          false
+        } else {
+          true
+        }
+      };
+    }
+    result.set_done(completed)?;
+
+    Ok(result.raw())
+  })
+}
+
+unsafe extern "C" fn generator_return<T: for<'a> ScopedGenerator<'a> + NapiClass + 'static>(
+  env: sys::napi_env,
+  info: sys::napi_callback_info,
+) -> sys::napi_value {
+  match unsafe {
+    with_env(env, |env_wrapper| {
+      generator_return_impl::<T>(env_wrapper, info)
+    })
+  } {
+    Ok(value) => value,
+    Err(e) => {
+      unsafe { crate::JsError::from(e).throw_into(env) };
+      ptr::null_mut()
+    }
+  }
+}
+
+fn generator_return_impl<T: for<'a> ScopedGenerator<'a> + NapiClass + 'static>(
+  env_wrapper: Env<'_>,
+  info: sys::napi_callback_info,
+) -> crate::Result<sys::napi_value> {
+  let mut decoder = CallbackDecoder::<1>::new(env_wrapper, info, None)?;
+  decoder.with_frame(|mut frame| {
+    let mut result = GeneratorResult::new(&frame)?;
+
+    let input = frame.optional_arg::<T::Return>(0)?;
+    {
+      let scope = frame.scope_mut();
+      let (access, storage) = unsafe { T::validate_raw_object(scope, result.this())? };
+      let mut generator = unsafe { T::mut_from_validated_object(result.this(), storage, access)? };
+      generator.complete(input);
+    }
+    if let Some(value) = frame.optional_arg::<Unknown>(0)? {
+      result.set_raw_value(value.value().value)?;
+    }
+    result.set_done(true)?;
+
+    Ok(result.raw())
+  })
+}
+
+unsafe extern "C" fn generator_throw<T: for<'a> ScopedGenerator<'a> + NapiClass + 'static>(
+  env: sys::napi_env,
+  info: sys::napi_callback_info,
+) -> sys::napi_value {
+  match unsafe {
+    with_env(env, |env_wrapper| {
+      generator_throw_impl::<T>(env_wrapper, info)
+    })
+  } {
+    Ok(value) => value,
+    Err(e) => {
+      unsafe { crate::JsError::from(e).throw_into(env) };
+      ptr::null_mut()
+    }
+  }
+}
+
+fn generator_throw_impl<T: for<'a> ScopedGenerator<'a> + NapiClass + 'static>(
+  env_wrapper: Env<'_>,
+  info: sys::napi_callback_info,
+) -> crate::Result<sys::napi_value> {
+  let mut decoder = CallbackDecoder::<1>::new(env_wrapper, info, None)?;
+  decoder.with_frame(|mut frame| {
+    let mut result = GeneratorResult::new(&frame)?;
+    let thrown = frame.arg::<Unknown>(0)?;
+
+    let mut thrown_value = ptr::null_mut();
+    let catch_result = {
+      let scope = frame.scope_mut();
+      let (access, storage) = unsafe { T::validate_raw_object(scope, result.this())? };
+      let mut generator = unsafe { T::mut_from_validated_object(result.this(), storage, access)? };
+      let generator_env = *scope.env();
+      let handled = match <T as ScopedGenerator<'_>>::catch(&mut *generator, &generator_env, thrown)
+      {
+        Err(error) => {
+          thrown_value = error.0.value;
+          Ok(None)
+        }
+        Ok(Some(value)) => {
+          result.set_value(value);
+          Ok(Some(false))
+        }
+        Ok(None) => Ok(Some(true)),
+      };
+      handled
     };
 
-    if let Some(value) = item {
-      set_generator_value(env, result, value);
-    } else {
-      completed = true;
-    }
-  }
-  let mut completed_value = ptr::null_mut();
-  check_status_or_throw!(
-    env,
-    unsafe { sys::napi_get_boolean(env, completed, &mut completed_value) },
-    "Failed to create completed value"
-  );
-  check_status_or_throw!(
-    env,
-    unsafe { sys::napi_set_named_property(env, result, c"done".as_ptr().cast(), completed_value,) },
-    "Failed to set iterator result done",
-  );
-
-  result
-}
-
-extern "C" fn generator_return<'a, T: ScopedGenerator<'a> + 'a>(
-  env: sys::napi_env,
-  info: sys::napi_callback_info,
-) -> sys::napi_value {
-  let mut this = ptr::null_mut();
-  let mut argv: [sys::napi_value; 1] = [ptr::null_mut()];
-  let mut argc = 1;
-  let mut generator_ptr = ptr::null_mut();
-  check_status_or_throw!(
-    env,
-    unsafe {
-      sys::napi_get_cb_info(
-        env,
-        info,
-        &mut argc,
-        argv.as_mut_ptr(),
-        &mut this,
-        &mut generator_ptr,
-      )
-    },
-    "Get callback info from generator function failed"
-  );
-
-  let g = unsafe { Box::leak(Box::from_raw(generator_ptr as *mut T)) };
-  if argc == 0 {
-    g.complete(None);
-  } else {
-    g.complete(Some(
-      match unsafe { T::Return::from_napi_value(env, argv[0]) } {
-        Ok(input) => input,
-        Err(e) => {
-          unsafe {
-            sys::napi_throw_error(
-              env,
-              format!("{}", e.status).as_ptr().cast(),
-              e.reason.as_ptr().cast(),
-            )
-          };
-          return ptr::null_mut();
+    match catch_result {
+      Ok(Some(done)) => {
+        result.set_done(done)?;
+      }
+      Ok(None) => {
+        result.set_done(true)?;
+        if !thrown_value.is_null() {
+          let throw_status = unsafe { sys::napi_throw(result.env(), thrown_value) };
+          debug_assert!(
+            throw_status == sys::Status::napi_ok,
+            "Failed to throw error {}",
+            crate::Status::from(throw_status)
+          );
         }
-      },
-    ));
-  }
-  let mut generator_state = ptr::null_mut();
-  check_status_or_throw!(
-    env,
-    unsafe { sys::napi_get_boolean(env, true, &mut generator_state) },
-    "Create generator state failed"
-  );
-  check_status_or_throw!(
-    env,
-    unsafe {
-      sys::napi_set_named_property(
-        env,
-        this,
-        GENERATOR_STATE_KEY.as_ptr().cast(),
-        generator_state,
-      )
-    },
-    "Get generator state failed"
-  );
-  let mut result = std::ptr::null_mut();
-  check_status_or_throw!(
-    env,
-    unsafe { sys::napi_create_object(env, &mut result) },
-    "Failed to create iterator result object",
-  );
-  if argc > 0 {
-    check_status_or_throw!(
-      env,
-      unsafe { sys::napi_set_named_property(env, result, c"value".as_ptr().cast(), argv[0],) },
-      "Failed to set iterator result value",
-    );
-  }
-  check_status_or_throw!(
-    env,
-    unsafe {
-      sys::napi_set_named_property(
-        env,
-        result,
-        c"done".as_ptr() as *const std::os::raw::c_char,
-        generator_state,
-      )
-    },
-    "Failed to set iterator result done",
-  );
+        return Ok(ptr::null_mut());
+      }
+      Err(error) => return Err(error),
+    }
 
-  result
+    Ok(result.raw())
+  })
 }
 
-extern "C" fn generator_throw<'a, T: ScopedGenerator<'a> + 'a>(
+struct GeneratorResult {
   env: sys::napi_env,
-  info: sys::napi_callback_info,
-) -> sys::napi_value {
-  let mut this = ptr::null_mut();
-  let mut argv: [sys::napi_value; 1] = [ptr::null_mut()];
-  let mut argc = 1;
-  let mut generator_ptr = ptr::null_mut();
-  check_status_or_throw!(
-    env,
-    unsafe {
-      sys::napi_get_cb_info(
-        env,
-        info,
-        &mut argc,
-        argv.as_mut_ptr(),
-        &mut this,
-        &mut generator_ptr,
-      )
-    },
-    "Get callback info from generator function failed"
-  );
-
-  let g = unsafe { Box::leak(Box::from_raw(generator_ptr as *mut T)) };
-  let catch_result = if argc == 0 {
-    let mut undefined = ptr::null_mut();
-    check_status_or_throw!(
-      env,
-      unsafe { sys::napi_get_undefined(env, &mut undefined) },
-      "Get undefined failed"
-    );
-    g.catch(
-      // SAFETY: `Env` is long lived
-      unsafe { std::mem::transmute::<&Env, &'a Env>(&Env::from_raw(env)) },
-      Unknown(
-        Value {
-          env,
-          value: undefined,
-          value_type: crate::ValueType::Unknown,
-        },
-        std::marker::PhantomData,
-      ),
-    )
-  } else {
-    g.catch(
-      // SAFETY: `Env` is long lived
-      unsafe { std::mem::transmute::<&Env, &'a Env>(&Env::from_raw(env)) },
-      Unknown(
-        Value {
-          env,
-          value: argv[0],
-          value_type: crate::ValueType::Unknown,
-        },
-        std::marker::PhantomData,
-      ),
-    )
-  };
-  let mut result = ptr::null_mut();
-  check_status_or_throw!(
-    env,
-    unsafe { sys::napi_create_object(env, &mut result) },
-    "Failed to create iterator result object",
-  );
-  let mut generator_state = ptr::null_mut();
-  let mut generator_state_value = false;
-  match catch_result {
-    Err(e) => {
-      generator_state_value = true;
-      check_status_or_throw!(
-        env,
-        unsafe { sys::napi_get_boolean(env, generator_state_value, &mut generator_state) },
-        "Create generator state failed"
-      );
-      check_status_or_throw!(
-        env,
-        unsafe {
-          sys::napi_set_named_property(
-            env,
-            this,
-            GENERATOR_STATE_KEY.as_ptr().cast(),
-            generator_state,
-          )
-        },
-        "Get generator state failed"
-      );
-      let throw_status = unsafe { sys::napi_throw(env, e.0.value) };
-      debug_assert!(
-        throw_status == sys::Status::napi_ok,
-        "Failed to throw error {}",
-        crate::Status::from(throw_status)
-      );
-      return ptr::null_mut();
-    }
-    Ok(Some(v)) => {
-      set_generator_value(env, result, v);
-    }
-    Ok(None) => {
-      generator_state_value = true;
-    }
-  }
-  check_status_or_throw!(
-    env,
-    unsafe { sys::napi_get_boolean(env, generator_state_value, &mut generator_state) },
-    "Create generator state failed"
-  );
-  check_status_or_throw!(
-    env,
-    unsafe {
-      sys::napi_set_named_property(
-        env,
-        this,
-        GENERATOR_STATE_KEY.as_ptr().cast(),
-        generator_state,
-      )
-    },
-    "Get generator state failed"
-  );
-  check_status_or_throw!(
-    env,
-    unsafe { sys::napi_set_named_property(env, result, c"done".as_ptr().cast(), generator_state) },
-    "Get generator state failed"
-  );
-
-  result
+  this: sys::napi_value,
+  raw: sys::napi_value,
 }
 
-fn set_generator_value<V: ToNapiValue>(env: sys::napi_env, result: sys::napi_value, value: V) {
-  match unsafe { ToNapiValue::to_napi_value(env, value) } {
+impl GeneratorResult {
+  fn new(frame: &CallbackFrame<'_, '_>) -> crate::Result<Self> {
+    let env = frame.raw_env();
+    let mut raw = ptr::null_mut();
+    check_status!(
+      unsafe { sys::napi_create_object(env, &mut raw) },
+      "Failed to create iterator result object",
+    )?;
+    Ok(Self {
+      env,
+      this: frame.raw_this(),
+      raw,
+    })
+  }
+
+  fn env(&self) -> sys::napi_env {
+    self.env
+  }
+
+  fn this(&self) -> sys::napi_value {
+    self.this
+  }
+
+  fn raw(&self) -> sys::napi_value {
+    self.raw
+  }
+
+  fn is_done(&self) -> crate::Result<bool> {
+    let mut value = ptr::null_mut();
+    check_status!(
+      unsafe {
+        sys::napi_get_named_property(
+          self.env,
+          self.this,
+          GENERATOR_STATE_KEY.as_ptr().cast(),
+          &mut value,
+        )
+      },
+      "Get generator state failed"
+    )?;
+
+    let mut done = false;
+    check_status!(
+      unsafe { sys::napi_get_value_bool(self.env, value, &mut done) },
+      "Read generator state failed"
+    )?;
+    Ok(done)
+  }
+
+  fn set_done(&mut self, done: bool) -> crate::Result<()> {
+    let mut value = ptr::null_mut();
+    check_status!(
+      unsafe { sys::napi_get_boolean(self.env, done, &mut value) },
+      "Create generator state failed"
+    )?;
+    self.set_state(value)?;
+    self.set_result_done(value)
+  }
+
+  fn set_state(&mut self, value: sys::napi_value) -> crate::Result<()> {
+    check_status!(
+      unsafe {
+        sys::napi_set_named_property(
+          self.env,
+          self.this,
+          GENERATOR_STATE_KEY.as_ptr().cast(),
+          value,
+        )
+      },
+      "Set generator state failed"
+    )
+  }
+
+  fn set_result_done(&mut self, value: sys::napi_value) -> crate::Result<()> {
+    check_status!(
+      unsafe { sys::napi_set_named_property(self.env, self.raw, c"done".as_ptr().cast(), value) },
+      "Set iterator result done failed"
+    )
+  }
+
+  fn set_raw_value(&mut self, value: sys::napi_value) -> crate::Result<()> {
+    check_status!(
+      unsafe { sys::napi_set_named_property(self.env, self.raw, c"value".as_ptr().cast(), value) },
+      "Failed to set iterator result value",
+    )
+  }
+
+  fn set_value<V>(&mut self, value: V)
+  where
+    for<'scope> V: IntoJs<'scope>,
+  {
+    set_generator_value(self.env, self.raw, value);
+  }
+}
+
+fn set_generator_value<V>(env: sys::napi_env, result: sys::napi_value, value: V)
+where
+  for<'scope> V: IntoJs<'scope>,
+{
+  match unsafe { into_js_raw(env, value) } {
     Ok(val) => {
       check_status_or_throw!(
         env,

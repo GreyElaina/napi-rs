@@ -3,8 +3,13 @@ use std::convert::TryFrom;
 use std::ffi::c_void;
 use std::ops::Deref;
 
-use crate::{bindgen_runtime::ToNapiValue, sys, Error, JsString, Result, Status};
+use crate::{
+  bindgen_runtime::{IntoJs, Local, Scope},
+  Error, JsString, Result, Status,
+};
 
+#[cfg(feature = "napi10")]
+use crate::sys;
 #[cfg(feature = "napi10")]
 use crate::Env;
 
@@ -145,7 +150,7 @@ impl<'env> JsStringUtf16<'env> {
   ///
   /// The `copied` parameter serves as feedback to understand whether the external string
   /// optimization was successful or if V8 fell back to traditional string creation.
-  pub unsafe fn from_external<T: 'env, F: FnOnce(Env, T) + 'env>(
+  pub unsafe fn from_external<T: 'static, F: FnOnce(T) + 'static>(
     env: &'env Env,
     data: *const u16,
     len: usize,
@@ -185,7 +190,7 @@ impl<'env> JsStringUtf16<'env> {
     if copied {
       unsafe {
         let (hint, finalize) = *Box::from_raw(hint_ptr);
-        finalize(*env, hint);
+        finalize(hint);
       }
     }
 
@@ -301,14 +306,16 @@ impl From<JsStringUtf16<'_>> for Vec<u16> {
   }
 }
 
-impl ToNapiValue for JsStringUtf16<'_> {
-  unsafe fn to_napi_value(_: sys::napi_env, val: JsStringUtf16) -> Result<sys::napi_value> {
-    Ok(val.inner.0.value)
+impl<'scope> IntoJs<'scope> for JsStringUtf16<'_> {
+  type Output = JsString<'scope>;
+
+  fn into_js(self, _: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
+    Ok(unsafe { Local::from_raw(self.inner.0.value) })
   }
 }
 
 #[cfg(feature = "napi10")]
-extern "C" fn drop_utf16_string(
+unsafe extern "C" fn drop_utf16_string(
   _: sys::node_api_basic_env,
   finalize_data: *mut c_void,
   finalize_hint: *mut c_void,
@@ -322,11 +329,11 @@ extern "C" fn drop_utf16_string(
 }
 
 #[cfg(feature = "napi10")]
-extern "C" fn finalize_with_custom_callback<T, F: FnOnce(Env, T)>(
-  env: sys::node_api_basic_env,
+unsafe extern "C" fn finalize_with_custom_callback<T, F: FnOnce(T)>(
+  _env: sys::node_api_basic_env,
   _finalize_data: *mut c_void,
   finalize_hint: *mut c_void,
 ) {
   let (hint, callback) = unsafe { *Box::from_raw(finalize_hint as *mut (T, F)) };
-  callback(Env(env.cast()), hint);
+  callback(hint);
 }

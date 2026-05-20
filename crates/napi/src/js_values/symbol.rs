@@ -1,8 +1,12 @@
+use std::marker::PhantomData;
 use std::ptr;
+use std::rc::{Rc, Weak};
 
 use crate::{
-  bindgen_runtime::{Env, FromNapiValue, ToNapiValue, TypeName, ValidateNapiValue},
-  check_status, sys, JsValue, Result, Value, ValueType,
+  bindgen_runtime::{
+    Env, EnvRecord, FromJs, IntoJs, Local, Scope, Symbol, TypeName, Unknown, ValidateNapiValue,
+  },
+  check_status, sys, Error, JsValue, Result, Status, Value, ValueType,
 };
 
 #[derive(Clone, Copy)]
@@ -28,30 +32,57 @@ impl<'env> JsValue<'env> for JsSymbol<'env> {
   }
 }
 
-impl FromNapiValue for JsSymbol<'_> {
-  unsafe fn from_napi_value(env: sys::napi_env, napi_val: sys::napi_value) -> Result<Self> {
+impl<'env, 'scope> FromJs<'env, 'scope> for JsSymbol<'scope> {
+  fn from_js(
+    scope: &mut Scope<'env, 'scope>,
+    value: Local<'scope, Unknown<'scope>>,
+  ) -> Result<Self> {
     Ok(JsSymbol(
       Value {
-        env,
-        value: napi_val,
+        env: scope.env().raw(),
+        value: value.raw(),
         value_type: ValueType::Symbol,
       },
-      std::marker::PhantomData,
+      PhantomData,
     ))
   }
 }
 
 impl ValidateNapiValue for JsSymbol<'_> {}
 
-impl JsSymbol<'_> {
-  /// Create a reference to the symbol
-  pub fn create_ref<const LEAK_CHECK: bool>(&self) -> Result<SymbolRef<LEAK_CHECK>> {
+impl<'scope, const LEAK_CHECK: bool>
+  crate::bindgen_runtime::JsRefTarget<'scope, SymbolRef<LEAK_CHECK>> for &JsSymbol<'_>
+{
+  fn create_ref(self, scope: &mut Scope<'_, 'scope>) -> Result<SymbolRef<LEAK_CHECK>> {
+    scope.ensure_value_env(self.0.env, "Symbol")?;
     let mut ref_ = ptr::null_mut();
     check_status!(
-      unsafe { sys::napi_create_reference(self.0.env, self.0.value, 1, &mut ref_) },
+      unsafe { sys::napi_create_reference(scope.env().raw(), self.0.value, 1, &mut ref_) },
       "Failed to create reference"
     )?;
-    Ok(SymbolRef { inner: ref_ })
+    Ok(SymbolRef {
+      inner: ref_,
+      record: Rc::downgrade(scope.required_record()?),
+      not_send: PhantomData,
+    })
+  }
+}
+
+impl<'scope, const LEAK_CHECK: bool>
+  crate::bindgen_runtime::JsRefTarget<'scope, SymbolRef<LEAK_CHECK>> for Symbol
+{
+  fn create_ref(self, scope: &mut Scope<'_, 'scope>) -> Result<SymbolRef<LEAK_CHECK>> {
+    let value = self.into_js(scope)?;
+    let mut ref_ = ptr::null_mut();
+    check_status!(
+      unsafe { sys::napi_create_reference(scope.env().raw(), value.raw(), 1, &mut ref_) },
+      "Failed to create reference"
+    )?;
+    Ok(SymbolRef {
+      inner: ref_,
+      record: Rc::downgrade(scope.required_record()?),
+      not_send: PhantomData,
+    })
   }
 }
 
@@ -62,9 +93,9 @@ impl JsSymbol<'_> {
 /// Set the `LEAK_CHECK` to `false` to disable the leak check during the `Drop`
 pub struct SymbolRef<const LEAK_CHECK: bool = true> {
   pub(crate) inner: sys::napi_ref,
+  record: Weak<EnvRecord>,
+  not_send: PhantomData<Rc<()>>,
 }
-
-unsafe impl<const LEAK_CHECK: bool> Send for SymbolRef<LEAK_CHECK> {}
 
 impl<const LEAK_CHECK: bool> Drop for SymbolRef<LEAK_CHECK> {
   fn drop(&mut self) {
@@ -77,16 +108,25 @@ impl<const LEAK_CHECK: bool> Drop for SymbolRef<LEAK_CHECK> {
 impl<const LEAK_CHECK: bool> SymbolRef<LEAK_CHECK> {
   /// Get the object from the reference
   pub fn get_value<'env>(&self, env: &'env Env) -> Result<JsSymbol<'env>> {
+    ensure_symbol_ref_owner(&self.record, env)?;
     let mut result = ptr::null_mut();
     check_status!(
       unsafe { sys::napi_get_reference_value(env.0, self.inner, &mut result) },
       "Failed to get reference value"
     )?;
-    unsafe { JsSymbol::from_napi_value(env.0, result) }
+    Ok(JsSymbol(
+      Value {
+        env: env.0,
+        value: result,
+        value_type: ValueType::Symbol,
+      },
+      PhantomData,
+    ))
   }
 
   /// Unref the reference
   pub fn unref(mut self, env: &Env) -> Result<()> {
+    ensure_symbol_ref_owner(&self.record, env)?;
     check_status!(
       unsafe { sys::napi_delete_reference(env.0, self.inner) },
       "delete Ref failed"
@@ -96,41 +136,83 @@ impl<const LEAK_CHECK: bool> SymbolRef<LEAK_CHECK> {
   }
 }
 
-impl<const LEAK_CHECK: bool> FromNapiValue for SymbolRef<LEAK_CHECK> {
-  unsafe fn from_napi_value(env: sys::napi_env, napi_val: sys::napi_value) -> Result<Self> {
-    let mut ref_ = ptr::null_mut();
-    check_status!(
-      unsafe { sys::napi_create_reference(env, napi_val, 1, &mut ref_) },
-      "Failed to create reference"
-    )?;
-    Ok(Self { inner: ref_ })
+impl<'env, 'scope, const LEAK_CHECK: bool> FromJs<'env, 'scope> for SymbolRef<LEAK_CHECK> {
+  fn from_js(
+    scope: &mut Scope<'env, 'scope>,
+    value: Local<'scope, Unknown<'scope>>,
+  ) -> Result<Self> {
+    let value = JsSymbol::from_js(scope, value)?;
+    scope.create_ref(&value)
   }
 }
 
-impl<const LEAK_CHECK: bool> ToNapiValue for &SymbolRef<LEAK_CHECK> {
-  unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> Result<sys::napi_value> {
+impl<'scope, const LEAK_CHECK: bool> IntoJs<'scope> for &SymbolRef<LEAK_CHECK> {
+  type Output = JsSymbol<'scope>;
+
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
+    let env = scope.env().raw();
+    ensure_symbol_ref_owner_record(&self.record, scope.required_record()?)?;
     let mut result = ptr::null_mut();
     check_status!(
-      unsafe { sys::napi_get_reference_value(env, val.inner, &mut result) },
+      unsafe { sys::napi_get_reference_value(env, self.inner, &mut result) },
       "Failed to get reference value"
     )?;
-    Ok(result)
+    Ok(unsafe { Local::from_raw(result) })
   }
 }
 
-impl<const LEAK_CHECK: bool> ToNapiValue for SymbolRef<LEAK_CHECK> {
-  unsafe fn to_napi_value(env: sys::napi_env, mut val: Self) -> Result<sys::napi_value> {
+impl<'scope, const LEAK_CHECK: bool> IntoJs<'scope> for SymbolRef<LEAK_CHECK> {
+  type Output = JsSymbol<'scope>;
+
+  fn into_js(mut self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
+    let env = scope.env().raw();
+    ensure_symbol_ref_owner_record(&self.record, scope.required_record()?)?;
     let mut result = ptr::null_mut();
     check_status!(
-      unsafe { sys::napi_get_reference_value(env, val.inner, &mut result) },
+      unsafe { sys::napi_get_reference_value(env, self.inner, &mut result) },
       "Failed to get reference value"
     )?;
     check_status!(
-      unsafe { sys::napi_delete_reference(env, val.inner) },
+      unsafe { sys::napi_delete_reference(env, self.inner) },
       "delete Ref failed"
     )?;
-    val.inner = ptr::null_mut();
-    drop(val);
-    Ok(result)
+    self.inner = ptr::null_mut();
+    drop(self);
+    Ok(unsafe { Local::from_raw(result) })
+  }
+}
+
+fn ensure_symbol_ref_owner(record: &Weak<EnvRecord>, env: &Env) -> Result<()> {
+  let owner = record.upgrade().ok_or_else(|| {
+    Error::new(
+      Status::InvalidArg,
+      "SymbolRef owner environment is no longer available",
+    )
+  })?;
+  let current = env.record();
+  if Rc::ptr_eq(&owner, &current) {
+    Ok(())
+  } else {
+    Err(Error::new(
+      Status::InvalidArg,
+      "SymbolRef owner environment does not match the current environment",
+    ))
+  }
+}
+
+fn ensure_symbol_ref_owner_record(record: &Weak<EnvRecord>, current: &Rc<EnvRecord>) -> Result<()> {
+  let owner = record.upgrade().ok_or_else(|| {
+    Error::new(
+      Status::InvalidArg,
+      "SymbolRef owner environment is no longer available",
+    )
+  })?;
+  if Rc::ptr_eq(&owner, current) {
+    Ok(())
+  } else {
+    Err(Error::new(
+      Status::InvalidArg,
+      "SymbolRef owner environment does not match the current environment",
+    ))
   }
 }

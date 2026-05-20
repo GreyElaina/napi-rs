@@ -3,7 +3,7 @@ use std::fmt::Display;
 use std::ops::Deref;
 use std::ptr;
 
-use crate::{bindgen_prelude::*, check_status, check_status_and_type, sys};
+use crate::{bindgen_prelude::*, check_status, sys};
 
 impl TypeName for String {
   fn type_name() -> &'static str {
@@ -17,87 +17,93 @@ impl TypeName for String {
 
 impl ValidateNapiValue for String {}
 
-impl ToNapiValue for &String {
-  unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> Result<sys::napi_value> {
+impl<'scope> IntoJs<'scope> for &String {
+  type Output = crate::JsString<'scope>;
+
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
+    let env = scope.env().raw();
     let mut ptr = ptr::null_mut();
 
     check_status!(
       unsafe {
-        sys::napi_create_string_utf8(env, val.as_ptr().cast(), val.len() as isize, &mut ptr)
+        sys::napi_create_string_utf8(env, self.as_ptr().cast(), self.len() as isize, &mut ptr)
       },
       "Failed to convert rust `String` into napi `string`"
     )?;
 
-    Ok(ptr)
+    Ok(unsafe { Local::from_raw(ptr) })
   }
 }
 
-impl ToNapiValue for &mut String {
-  unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> Result<sys::napi_value> {
-    ToNapiValue::to_napi_value(env, &*val)
+impl<'scope> IntoJs<'scope> for &mut String {
+  type Output = crate::JsString<'scope>;
+
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
+    self.as_str().into_js(scope)
   }
 }
 
-impl ToNapiValue for String {
+impl<'scope> IntoJs<'scope> for String {
+  type Output = crate::JsString<'scope>;
+
   #[inline]
-  unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> Result<sys::napi_value> {
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
     #[allow(clippy::needless_borrows_for_generic_args)]
-    unsafe {
-      ToNapiValue::to_napi_value(env, &val)
-    }
+    (&self).into_js(scope)
   }
 }
 
-impl FromNapiValue for String {
-  unsafe fn from_napi_value(env: sys::napi_env, napi_val: sys::napi_value) -> Result<Self> {
+impl<'env, 'scope> FromJs<'env, 'scope> for String {
+  fn from_js(
+    scope: &mut Scope<'env, 'scope>,
+    value: Local<'scope, Unknown<'scope>>,
+  ) -> Result<Self> {
+    let env = scope.env().raw();
+    let raw = value.raw();
     let mut len = 0;
 
-    check_status_and_type!(
-      unsafe { sys::napi_get_value_string_utf8(env, napi_val, ptr::null_mut(), 0, &mut len) },
-      env,
-      napi_val,
-      "Failed to convert JavaScript value `{}` into rust type `String`"
+    check_status!(
+      unsafe { sys::napi_get_value_string_utf8(env, raw, ptr::null_mut(), 0, &mut len) },
+      "Failed to convert JavaScript value into rust type `String`"
     )?;
 
-    // end char len in C
     len += 1;
     let mut ret: Vec<u8> = vec![0; len];
-
     let mut written_char_count = 0;
 
-    check_status_and_type!(
+    check_status!(
       unsafe {
         sys::napi_get_value_string_utf8(
           env,
-          napi_val,
+          raw,
           ret.as_mut_ptr().cast(),
           len,
           &mut written_char_count,
         )
       },
-      env,
-      napi_val,
-      "Failed to convert napi `{}` into rust type `String`"
+      "Failed to convert JavaScript value into rust type `String`"
     )?;
 
     ret.truncate(written_char_count);
-
     Ok(unsafe { String::from_utf8_unchecked(ret) })
   }
 }
 
-impl ToNapiValue for &str {
-  unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> Result<sys::napi_value> {
+impl<'scope> IntoJs<'scope> for &str {
+  type Output = crate::JsString<'scope>;
+
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
+    let env = scope.env().raw();
     let mut ptr = ptr::null_mut();
 
     check_status!(
       unsafe {
-        sys::napi_create_string_utf8(env, val.as_ptr().cast(), val.len() as isize, &mut ptr)
+        sys::napi_create_string_utf8(env, self.as_ptr().cast(), self.len() as isize, &mut ptr)
       },
       "Failed to convert rust `&str` into napi `string`"
     )?;
 
-    Ok(ptr)
+    Ok(unsafe { Local::from_raw(ptr) })
   }
 }
 
@@ -136,51 +142,45 @@ impl TypeName for Utf16String {
   }
 }
 
-impl FromNapiValue for Utf16String {
-  unsafe fn from_napi_value(env: sys::napi_env, napi_val: sys::napi_value) -> Result<Self> {
-    let mut len = 0;
+impl<'env, 'scope> FromJs<'env, 'scope> for Utf16String {
+  fn from_js(
+    scope: &mut Scope<'env, 'scope>,
+    value: Local<'scope, Unknown<'scope>>,
+  ) -> Result<Self> {
+    let env = scope.env().raw();
+    let mut str_len = 0;
 
-    check_status!(
-      unsafe { sys::napi_get_value_string_utf16(env, napi_val, ptr::null_mut(), 0, &mut len) },
-      "Failed to convert napi `utf16 string` into rust type `String`",
-    )?;
+    check_status!(unsafe {
+      sys::napi_get_value_string_utf16(env, value.raw(), std::ptr::null_mut(), 0, &mut str_len)
+    })?;
 
-    // end char len in C
-    len += 1;
-    let mut ret = vec![0; len];
-    let mut written_char_count = 0;
+    str_len += 1;
+    let mut ret = Vec::with_capacity(str_len);
 
-    check_status!(
-      unsafe {
-        sys::napi_get_value_string_utf16(
-          env,
-          napi_val,
-          ret.as_mut_ptr(),
-          len,
-          &mut written_char_count,
-        )
-      },
-      "Failed to convert napi `utf16 string` into rust type `String`",
-    )?;
+    check_status!(unsafe {
+      sys::napi_get_value_string_utf16(env, value.raw(), ret.as_mut_ptr(), str_len, &mut str_len)
+    })?;
 
-    ret.truncate(written_char_count);
-
+    unsafe { ret.set_len(str_len) };
     Ok(Utf16String(ret))
   }
 }
 
-impl ToNapiValue for Utf16String {
-  unsafe fn to_napi_value(env: sys::napi_env, val: Utf16String) -> Result<sys::napi_value> {
+impl<'scope> IntoJs<'scope> for Utf16String {
+  type Output = crate::JsString<'scope>;
+
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
+    let env = scope.env().raw();
     let mut ptr = ptr::null_mut();
 
     check_status!(
       unsafe {
-        sys::napi_create_string_utf16(env, val.0.as_ptr().cast(), val.len() as isize, &mut ptr)
+        sys::napi_create_string_utf16(env, self.0.as_ptr().cast(), self.len() as isize, &mut ptr)
       },
       "Failed to convert napi `string` into rust type `String`"
     )?;
 
-    Ok(ptr)
+    Ok(unsafe { Local::from_raw(ptr) })
   }
 }
 
@@ -224,50 +224,51 @@ impl TypeName for Latin1String {
   }
 }
 
-impl FromNapiValue for Latin1String {
-  unsafe fn from_napi_value(env: sys::napi_env, napi_val: sys::napi_value) -> Result<Self> {
-    let mut len = 0;
+impl<'env, 'scope> FromJs<'env, 'scope> for Latin1String {
+  fn from_js(
+    scope: &mut Scope<'env, 'scope>,
+    value: Local<'scope, Unknown<'scope>>,
+  ) -> Result<Self> {
+    let env = scope.env().raw();
+    let mut str_len = 0;
 
-    check_status!(
-      unsafe { sys::napi_get_value_string_latin1(env, napi_val, ptr::null_mut(), 0, &mut len) },
-      "Failed to convert napi `latin1 string` into rust type `String`",
-    )?;
+    check_status!(unsafe {
+      sys::napi_get_value_string_latin1(env, value.raw(), std::ptr::null_mut(), 0, &mut str_len)
+    })?;
 
-    // end char len in C
-    len += 1;
-    let mut buf: Vec<u8> = vec![0; len];
+    str_len += 1;
+    let mut ret: Vec<u8> = Vec::with_capacity(str_len);
 
-    let mut written_char_count = 0;
+    check_status!(unsafe {
+      sys::napi_get_value_string_latin1(
+        env,
+        value.raw(),
+        ret.as_mut_ptr().cast(),
+        str_len,
+        &mut str_len,
+      )
+    })?;
 
-    check_status!(
-      unsafe {
-        sys::napi_get_value_string_latin1(
-          env,
-          napi_val,
-          buf.as_mut_ptr().cast(),
-          len,
-          &mut written_char_count,
-        )
-      },
-      "Failed to convert napi `latin1 string` into rust type `String`"
-    )?;
-    buf.truncate(written_char_count);
-    Ok(Latin1String(buf))
+    unsafe { ret.set_len(str_len) };
+    Ok(Latin1String(ret))
   }
 }
 
-impl ToNapiValue for Latin1String {
-  unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> Result<sys::napi_value> {
+impl<'scope> IntoJs<'scope> for Latin1String {
+  type Output = crate::JsString<'scope>;
+
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
+    let env = scope.env().raw();
     let mut ptr = ptr::null_mut();
 
     check_status!(
       unsafe {
-        sys::napi_create_string_latin1(env, val.0.as_ptr().cast(), val.len() as isize, &mut ptr)
+        sys::napi_create_string_latin1(env, self.0.as_ptr().cast(), self.len() as isize, &mut ptr)
       },
       "Failed to convert rust type `String` into napi `latin1 string`"
     )?;
 
-    Ok(ptr)
+    Ok(unsafe { Local::from_raw(ptr) })
   }
 }
 
@@ -278,7 +279,7 @@ pub const NAPI_AUTO_LENGTH: isize = -1;
 ///
 /// This is useful when you want to return a C string to JavaScript directly via NAPI-RS function without converting it to Rust string or performing any memory allocation.
 ///
-/// The `RawCString` doesn't implement `FromNapiValue`, so you can't convert a JavaScript String to it.
+/// The `RawCString` doesn't implement `FromJs`, so you can't convert a JavaScript String to it.
 pub struct RawCString {
   length: isize,
   inner: *const c_char,
@@ -293,15 +294,18 @@ impl RawCString {
   }
 }
 
-impl ToNapiValue for RawCString {
-  unsafe fn to_napi_value(env: napi_sys::napi_env, val: Self) -> Result<napi_sys::napi_value> {
+impl<'scope> IntoJs<'scope> for RawCString {
+  type Output = crate::JsString<'scope>;
+
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
+    let env = scope.env().raw();
     let mut ptr = ptr::null_mut();
 
     check_status!(
-      napi_sys::napi_create_string_utf8(env, val.inner, val.length, &mut ptr),
+      unsafe { napi_sys::napi_create_string_utf8(env, self.inner, self.length, &mut ptr) },
       "Failed to convert rust `&str` into napi `string`"
     )?;
 
-    Ok(ptr)
+    Ok(unsafe { Local::from_raw(ptr) })
   }
 }

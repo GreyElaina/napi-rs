@@ -1,7 +1,7 @@
-use super::{FromNapiValue, ToNapiValue, TypeName, ValidateNapiValue};
+use super::{FromJs, IntoJs, Local, Scope, TypeName, ValidateNapiValue};
 use crate::{
   bindgen_runtime::{Null, Undefined, Unknown},
-  check_status, sys, Error, JsValue, Status, ValueType,
+  check_status, sys, JsValue, Status, ValueType,
 };
 
 impl<T> From<Option<T>> for Either<T, Undefined> {
@@ -41,50 +41,40 @@ macro_rules! either_n {
       }
     }
 
-    impl< $( $parameter ),+ > FromNapiValue for $either_name < $( $parameter ),+ >
-      where $( $parameter: TypeName + FromNapiValue + ValidateNapiValue ),+
+    impl<'env, 'scope, $( $parameter ),+ > FromJs<'env, 'scope> for $either_name < $( $parameter ),+ >
+      where $( $parameter: TypeName + FromJs<'env, 'scope> ),+
     {
-      unsafe fn from_napi_value(env: sys::napi_env, napi_val: sys::napi_value) -> crate::Result<Self> {
-        #[allow(unused_assignments)]
-        let mut ret = Err(Error::new(Status::InvalidArg, "Invalid value".to_owned()));
+      fn from_js(
+        scope: &mut Scope<'env, 'scope>,
+        value: Local<'scope, Unknown<'scope>>,
+      ) -> crate::Result<Self> {
         $(
-          if unsafe {
-            match $parameter::validate(env, napi_val) {
-              Ok(maybe_rejected_promise) => {
-                if maybe_rejected_promise.is_null() {
-                  true
-                } else {
-                  silence_rejected_promise(env, maybe_rejected_promise)?;
-                  false
-                }
-              },
-              Err(_) => false
-            }
-          } && unsafe { { ret = $parameter ::from_napi_value(env, napi_val).map(Self:: $parameter ); ret.is_ok() } } {
-            ret
-          } else
+          if let Ok(value) = $parameter::from_js(scope, value) {
+            return Ok(Self:: $parameter(value));
+          }
         )+
-        {
-          Err(crate::Error::new(
-            Status::InvalidArg,
-            format!(
-              concat!("Value is none of these types ", $( "`{", stringify!( $parameter ), "}`, " ),+ ),
-              $( $parameter = $parameter::type_name(), )+
-            ),
-          ))
-        }
+
+        Err(crate::Error::new(
+          Status::InvalidArg,
+          format!(
+            concat!("Value is none of these types ", $( "`{", stringify!( $parameter ), "}`, " ),+ ),
+            $( $parameter = $parameter::type_name(), )+
+          ),
+        ))
       }
     }
 
-    impl< $( $parameter ),+ > ToNapiValue for $either_name < $( $parameter ),+ >
-      where $( $parameter: ToNapiValue ),+
+    impl<'scope, $( $parameter ),+ > IntoJs<'scope> for $either_name < $( $parameter ),+ >
+      where $( $parameter: IntoJs<'scope> + 'scope ),+
     {
-      unsafe fn to_napi_value(
-        env: sys::napi_env,
-        value: Self
-      ) -> crate::Result<crate::sys::napi_value> {
-        match value {
-          $( Self:: $parameter (v) => unsafe { $parameter ::to_napi_value(env, v) } ),+
+      type Output = Unknown<'scope>;
+
+      fn into_js(
+        self,
+        scope: &mut Scope<'_, 'scope>,
+      ) -> crate::Result<Local<'scope, Self::Output>> {
+        match self {
+          $( Self:: $parameter (v) => v.into_js(scope).map(|local| unsafe { Local::from_raw(local.raw()) }) ),+
         }
       }
     }
@@ -209,6 +199,6 @@ fn silence_rejected_promise(env: sys::napi_env, promise: sys::napi_value) -> cra
   Ok(())
 }
 
-unsafe extern "C" fn noop(_env: sys::napi_env, _info: sys::napi_callback_info) -> sys::napi_value {
+unsafe extern "C" fn noop(_: sys::napi_env, _: sys::napi_callback_info) -> sys::napi_value {
   std::ptr::null_mut()
 }

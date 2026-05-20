@@ -1,4 +1,9 @@
+use std::marker::PhantomData;
+
 use crate::{bindgen_prelude::*, check_status, sys, ValueType};
+
+#[derive(Clone, Copy)]
+pub struct Boolean<'scope>(PhantomData<&'scope ()>);
 
 impl TypeName for bool {
   fn type_name() -> &'static str {
@@ -12,40 +17,48 @@ impl TypeName for bool {
 
 impl ValidateNapiValue for bool {}
 
-impl ToNapiValue for bool {
-  unsafe fn to_napi_value(env: sys::napi_env, val: bool) -> Result<sys::napi_value> {
+impl<'scope> IntoJs<'scope> for bool {
+  type Output = Boolean<'scope>;
+
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
+    let env = scope.env().raw();
     let mut ptr = std::ptr::null_mut();
 
     check_status!(
-      unsafe { sys::napi_get_boolean(env, val, &mut ptr) },
+      unsafe { sys::napi_get_boolean(env, self, &mut ptr) },
       "Failed to convert rust type `bool` into napi value",
     )?;
 
-    Ok(ptr)
+    Ok(unsafe { Local::from_raw(ptr) })
   }
 }
 
-impl ToNapiValue for &bool {
-  unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> Result<sys::napi_value> {
-    ToNapiValue::to_napi_value(env, *val)
+impl<'scope> IntoJs<'scope> for &bool {
+  type Output = Boolean<'scope>;
+
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
+    self.to_owned().into_js(scope)
   }
 }
 
-impl ToNapiValue for &mut bool {
-  unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> Result<sys::napi_value> {
-    ToNapiValue::to_napi_value(env, *val)
+impl<'scope> IntoJs<'scope> for &mut bool {
+  type Output = Boolean<'scope>;
+
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
+    self.to_owned().into_js(scope)
   }
 }
 
-impl FromNapiValue for bool {
-  unsafe fn from_napi_value(env: sys::napi_env, napi_val: sys::napi_value) -> Result<Self> {
+impl<'env, 'scope> FromJs<'env, 'scope> for bool {
+  fn from_js(
+    scope: &mut Scope<'env, 'scope>,
+    value: Local<'scope, Unknown<'scope>>,
+  ) -> Result<Self> {
     let mut ret = false;
-
     check_status!(
-      unsafe { sys::napi_get_value_bool(env, napi_val, &mut ret) },
-      "Failed to convert napi value into rust type `bool`",
+      unsafe { sys::napi_get_value_bool(scope.env().raw(), value.raw(), &mut ret) },
+      "Failed to convert JavaScript value into rust type `bool`",
     )?;
-
     Ok(ret)
   }
 }

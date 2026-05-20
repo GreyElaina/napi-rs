@@ -1,74 +1,69 @@
-use std::marker::PhantomData;
 #[cfg(feature = "napi6")]
 use std::ptr;
 
+use serde::Serialize;
 use serde_json::{Map, Number, Value};
 
 use crate::{
-  bindgen_runtime::{Null, Object},
-  check_status, sys, type_of, Env, Error, Result, Status, ValueType,
+  bindgen_runtime::{with_env, Object},
+  check_status, sys, type_of, Error, Result, Ser, Status, ValueType,
 };
 
 #[cfg(feature = "napi6")]
 use super::BigInt;
-use super::{FromNapiValue, ToNapiValue};
+use super::{FromJs, IntoJs, Local, Scope, Unknown};
 
-impl ToNapiValue for &Value {
-  unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> Result<sys::napi_value> {
-    match val {
-      Value::Null => unsafe { Null::to_napi_value(env, Null) },
-      Value::Bool(b) => unsafe { ToNapiValue::to_napi_value(env, b) },
-      Value::Number(n) => unsafe { ToNapiValue::to_napi_value(env, n) },
-      Value::String(s) => unsafe { ToNapiValue::to_napi_value(env, s) },
-      Value::Array(arr) => unsafe { ToNapiValue::to_napi_value(env, arr) },
-      Value::Object(obj) => unsafe { ToNapiValue::to_napi_value(env, obj) },
-    }
-  }
+fn serialize_to_unknown<'scope, T>(
+  scope: &mut Scope<'_, 'scope>,
+  value: &T,
+) -> Result<Local<'scope, Unknown<'scope>>>
+where
+  T: ?Sized + Serialize,
+{
+  let value = value.serialize(Ser::new(scope.env()))?;
+  Ok(unsafe { Unknown::from_raw_unchecked(value.env, value.value) }.into_local())
 }
 
-impl ToNapiValue for Value {
-  unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> Result<sys::napi_value> {
-    ToNapiValue::to_napi_value(env, &val)
-  }
-}
-
-impl FromNapiValue for Value {
-  unsafe fn from_napi_value(env: sys::napi_env, napi_val: sys::napi_value) -> Result<Self> {
-    let ty = type_of!(env, napi_val)?;
+impl<'env, 'scope> FromJs<'env, 'scope> for Value {
+  fn from_js(
+    scope: &mut Scope<'env, 'scope>,
+    value: Local<'scope, Unknown<'scope>>,
+  ) -> Result<Self> {
+    let env = scope.env().raw();
+    let ty = type_of!(env, value.raw())?;
     let val = match ty {
-      ValueType::Boolean => Value::Bool(unsafe { bool::from_napi_value(env, napi_val)? }),
-      ValueType::Number => Value::Number(unsafe { Number::from_napi_value(env, napi_val)? }),
-      ValueType::String => Value::String(unsafe { String::from_napi_value(env, napi_val)? }),
+      ValueType::Boolean => Value::Bool(bool::from_js(scope, value)?),
+      ValueType::Number => Value::Number(Number::from_js(scope, value)?),
+      ValueType::String => Value::String(String::from_js(scope, value)?),
       ValueType::Object => {
         let mut is_arr = false;
         check_status!(
-          unsafe { sys::napi_is_array(env, napi_val, &mut is_arr) },
+          unsafe { sys::napi_is_array(env, value.raw(), &mut is_arr) },
           "Failed to detect whether given js is an array"
         )?;
 
         if is_arr {
-          Value::Array(unsafe { Vec::<Value>::from_napi_value(env, napi_val)? })
+          Value::Array(Vec::<Value>::from_js(scope, value)?)
         } else {
-          Value::Object(unsafe { Map::<String, Value>::from_napi_value(env, napi_val)? })
+          Value::Object(Map::<String, Value>::from_js(scope, value)?)
         }
       }
       #[cfg(feature = "napi6")]
       ValueType::BigInt => {
-        let n = unsafe { BigInt::from_napi_value(env, napi_val)? };
-        // negative
+        let n = BigInt::from_js(scope, value)?;
         if n.sign_bit {
           let (v, lossless) = n.get_i64();
           if lossless {
             Value::Number(v.into())
           } else {
-            Value::String(to_string(env, napi_val)?)
+            Value::String(to_string(env, value.raw())?)
           }
         } else {
           let (_, v, lossless) = n.get_u64();
           if lossless {
             Value::Number(v.into())
           } else {
-            Value::String(to_string(env, napi_val)?)
+            Value::String(to_string(env, value.raw())?)
           }
         }
       }
@@ -116,42 +111,22 @@ fn to_string(env: sys::napi_env, napi_val: sys::napi_value) -> Result<String> {
     unsafe { sys::napi_coerce_to_string(env, napi_val, &mut string) },
     "Failed to coerce to string"
   )?;
-  let s = unsafe { String::from_napi_value(env, string) }?;
-  Ok(s)
-}
-
-impl ToNapiValue for &Map<String, Value> {
-  unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> Result<sys::napi_value> {
-    let mut obj = Object::new(&Env::from(env))?;
-
-    for (k, v) in val.into_iter() {
-      obj.set(k, v)?;
-    }
-
-    unsafe { Object::to_napi_value(env, obj) }
+  unsafe {
+    with_env(env, |mut env| {
+      env.with_scope(|scope| String::from_js(scope, Local::from_raw(string)))
+    })
   }
 }
 
-impl ToNapiValue for Map<String, Value> {
-  unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> Result<sys::napi_value> {
-    ToNapiValue::to_napi_value(env, &val)
-  }
-}
-
-impl FromNapiValue for Map<String, Value> {
-  unsafe fn from_napi_value(env: sys::napi_env, napi_val: sys::napi_value) -> Result<Self> {
-    let obj = Object(
-      crate::Value {
-        env,
-        value: napi_val,
-        value_type: ValueType::Object,
-      },
-      PhantomData,
-    );
-
+impl<'env, 'scope> FromJs<'env, 'scope> for Map<String, Value> {
+  fn from_js(
+    scope: &mut Scope<'env, 'scope>,
+    value: Local<'scope, Unknown<'scope>>,
+  ) -> Result<Self> {
+    let obj = unsafe { Object::from_raw(scope.env().raw(), value.raw()) };
     let mut map = Map::new();
-    for key in Object::keys(&obj)?.into_iter() {
-      if let Some(val) = obj.get(&key)? {
+    for key in scope.keys(&obj)?.into_iter() {
+      if let Some(val) = scope.get_optional_named_property::<Value, _>(&obj, &key)? {
         map.insert(key, val);
       }
     }
@@ -160,61 +135,69 @@ impl FromNapiValue for Map<String, Value> {
   }
 }
 
-impl ToNapiValue for &Number {
-  unsafe fn to_napi_value(env: sys::napi_env, n: Self) -> Result<sys::napi_value> {
-    #[cfg(feature = "napi6")]
-    const MAX_SAFE_INT: i64 = 9007199254740991i64; // 2 ^ 53 - 1
-    if n.is_i64() {
-      let n = n.as_i64().unwrap();
-      #[cfg(feature = "napi6")]
-      {
-        if !(-MAX_SAFE_INT..=MAX_SAFE_INT).contains(&n) {
-          return unsafe { BigInt::to_napi_value(env, BigInt::from(n)) };
-        }
-      }
+impl<'scope> IntoJs<'scope> for &'scope Value {
+  type Output = Unknown<'scope>;
 
-      unsafe { i64::to_napi_value(env, n) }
-    } else if n.is_f64() {
-      unsafe { f64::to_napi_value(env, n.as_f64().unwrap()) }
-    } else {
-      let n = n.as_u64().unwrap();
-      if n > u32::MAX as u64 {
-        #[cfg(feature = "napi6")]
-        {
-          unsafe { BigInt::to_napi_value(env, BigInt::from(n)) }
-        }
-
-        #[cfg(not(feature = "napi6"))]
-        return unsafe { String::to_napi_value(env, n.to_string()) };
-      } else {
-        unsafe { u32::to_napi_value(env, n as u32) }
-      }
-    }
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
+    serialize_to_unknown(scope, self)
   }
 }
 
-impl ToNapiValue for Number {
-  unsafe fn to_napi_value(env: sys::napi_env, n: Self) -> Result<sys::napi_value> {
-    ToNapiValue::to_napi_value(env, &n)
+impl<'scope> IntoJs<'scope> for Value {
+  type Output = Unknown<'scope>;
+
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
+    serialize_to_unknown(scope, &self)
   }
 }
 
-impl FromNapiValue for Number {
-  unsafe fn from_napi_value(env: sys::napi_env, napi_val: sys::napi_value) -> Result<Self> {
-    let n = unsafe { f64::from_napi_value(env, napi_val)? };
-    // Try to auto-convert to integers
+impl<'scope> IntoJs<'scope> for &'scope Map<String, Value> {
+  type Output = Unknown<'scope>;
+
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
+    serialize_to_unknown(scope, self)
+  }
+}
+
+impl<'scope> IntoJs<'scope> for Map<String, Value> {
+  type Output = Unknown<'scope>;
+
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
+    serialize_to_unknown(scope, &self)
+  }
+}
+
+impl<'scope> IntoJs<'scope> for &'scope Number {
+  type Output = Unknown<'scope>;
+
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
+    serialize_to_unknown(scope, self)
+  }
+}
+
+impl<'scope> IntoJs<'scope> for Number {
+  type Output = Unknown<'scope>;
+
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
+    serialize_to_unknown(scope, &self)
+  }
+}
+
+impl<'env, 'scope> FromJs<'env, 'scope> for Number {
+  fn from_js(
+    scope: &mut Scope<'env, 'scope>,
+    value: Local<'scope, Unknown<'scope>>,
+  ) -> Result<Self> {
+    let n = f64::from_js(scope, value)?;
     let n = if n.trunc() == n {
       if n >= 0.0f64 && n <= u32::MAX as f64 {
-        // This can be represented as u32
         Some(Number::from(n as u32))
       } else if n < 0.0f64 && n >= i32::MIN as f64 {
         Some(Number::from(n as i32))
       } else {
-        // must be a float
         Number::from_f64(n)
       }
     } else {
-      // must be a float
       Number::from_f64(n)
     };
 

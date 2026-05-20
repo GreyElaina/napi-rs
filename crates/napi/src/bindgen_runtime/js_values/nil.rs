@@ -18,14 +18,17 @@ impl TypeName for Null {
 
 impl ValidateNapiValue for Null {}
 
-impl FromNapiValue for Null {
-  unsafe fn from_napi_value(_env: sys::napi_env, _napi_val: sys::napi_value) -> Result<Self> {
+impl<'env, 'scope> FromJs<'env, 'scope> for Null {
+  fn from_js(_: &mut Scope<'env, 'scope>, _: Local<'scope, Unknown<'scope>>) -> Result<Self> {
     Ok(Null)
   }
 }
 
-impl ToNapiValue for Null {
-  unsafe fn to_napi_value(env: sys::napi_env, _val: Self) -> Result<sys::napi_value> {
+impl<'scope> IntoJs<'scope> for Null {
+  type Output = Null;
+
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
+    let env = scope.env().raw();
     let mut ret = ptr::null_mut();
 
     check_status!(
@@ -33,19 +36,23 @@ impl ToNapiValue for Null {
       "Failed to create napi null value"
     )?;
 
-    Ok(ret)
+    Ok(unsafe { Local::from_raw(ret) })
   }
 }
 
-impl ToNapiValue for &Null {
-  unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> Result<sys::napi_value> {
-    ToNapiValue::to_napi_value(env, *val)
+impl<'scope> IntoJs<'scope> for &Null {
+  type Output = Null;
+
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
+    self.to_owned().into_js(scope)
   }
 }
 
-impl ToNapiValue for &mut Null {
-  unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> Result<sys::napi_value> {
-    ToNapiValue::to_napi_value(env, *val)
+impl<'scope> IntoJs<'scope> for &mut Null {
+  type Output = Null;
+
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
+    self.to_owned().into_js(scope)
   }
 }
 
@@ -61,14 +68,17 @@ impl TypeName for Undefined {
 
 impl ValidateNapiValue for Undefined {}
 
-impl FromNapiValue for Undefined {
-  unsafe fn from_napi_value(_env: sys::napi_env, _napi_val: sys::napi_value) -> Result<Self> {
+impl<'env, 'scope> FromJs<'env, 'scope> for Undefined {
+  fn from_js(_: &mut Scope<'env, 'scope>, _: Local<'scope, Unknown<'scope>>) -> Result<Self> {
     Ok(())
   }
 }
 
-impl ToNapiValue for Undefined {
-  unsafe fn to_napi_value(env: sys::napi_env, _val: Self) -> Result<sys::napi_value> {
+impl<'scope> IntoJs<'scope> for Undefined {
+  type Output = Undefined;
+
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
+    let env = scope.env().raw();
     let mut ret = ptr::null_mut();
 
     check_status!(
@@ -76,18 +86,22 @@ impl ToNapiValue for Undefined {
       "Failed to create napi undefined value"
     )?;
 
-    Ok(ret)
+    Ok(unsafe { Local::from_raw(ret) })
   }
 }
 
-impl ToNapiValue for &Undefined {
-  unsafe fn to_napi_value(env: sys::napi_env, _: Self) -> Result<sys::napi_value> {
-    ToNapiValue::to_napi_value(env, ())
+impl<'scope> IntoJs<'scope> for &Undefined {
+  type Output = Undefined;
+
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
+    ().into_js(scope)
   }
 }
 
-impl ToNapiValue for &mut Undefined {
-  unsafe fn to_napi_value(env: sys::napi_env, _: Self) -> Result<sys::napi_value> {
-    ToNapiValue::to_napi_value(env, ())
+impl<'scope> IntoJs<'scope> for &mut Undefined {
+  type Output = Undefined;
+
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
+    ().into_js(scope)
   }
 }

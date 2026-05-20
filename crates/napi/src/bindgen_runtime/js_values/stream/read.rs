@@ -18,9 +18,10 @@ use tokio_stream::StreamExt;
 
 use crate::{
   bindgen_prelude::{
-    BufferSlice, CallbackContext, FromNapiValue, Function, JsObjectValue, Object, PromiseRaw,
-    ToNapiValue, TypeName, Unknown, ValidateNapiValue, NAPI_AUTO_LENGTH,
+    BufferSlice, FnArgs, FromJs, Function, IntoJsArgs, JsObjectValue, Local, Object, Promise,
+    PromiseFuture, Scope, TypeName, Unknown, ValidateNapiValue, NAPI_AUTO_LENGTH,
   },
+  bindgen_runtime::{with_env, CallbackDecoder, IntoJs},
   check_status, sys,
   threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode},
   Env, Error, JsError, JsValue, Result, Status, Value, ValueType,
@@ -59,153 +60,95 @@ impl<T> ValidateNapiValue for ReadableStream<'_, T> {
     env: napi_sys::napi_env,
     napi_val: napi_sys::napi_value,
   ) -> Result<napi_sys::napi_value> {
-    let constructor = Env::from(env)
-      .get_global()?
-      .get_named_property_unchecked::<Function>("ReadableStream")?;
-    let mut is_instance = false;
-    check_status!(
-      unsafe { sys::napi_instanceof(env, napi_val, constructor.value, &mut is_instance) },
-      "Check ReadableStream instance failed"
-    )?;
-    if !is_instance {
-      return Err(Error::new(
-        Status::InvalidArg,
-        "Value is not a ReadableStream",
-      ));
+    unsafe {
+      with_env(env, |mut env_wrapper| {
+        env_wrapper.with_scope(|scope| {
+          let global = scope.env().get_global()?;
+          let constructor: Function<'_, (), ()> =
+            scope.get_named_property(&global, "ReadableStream")?;
+          let mut is_instance = false;
+          check_status!(
+            sys::napi_instanceof(env, napi_val, constructor.value, &mut is_instance),
+            "Check ReadableStream instance failed"
+          )?;
+          if !is_instance {
+            return Err(Error::new(
+              Status::InvalidArg,
+              "Value is not a ReadableStream",
+            ));
+          }
+          Ok(ptr::null_mut())
+        })
+      })
     }
-    Ok(ptr::null_mut())
   }
 }
 
-impl<T> FromNapiValue for ReadableStream<'_, T> {
-  unsafe fn from_napi_value(env: sys::napi_env, napi_val: sys::napi_value) -> Result<Self> {
+impl<'env, 'scope, T> FromJs<'env, 'scope> for ReadableStream<'scope, T> {
+  fn from_js(
+    scope: &mut Scope<'env, 'scope>,
+    value: Local<'scope, Unknown<'scope>>,
+  ) -> Result<Self> {
     Ok(Self {
-      value: napi_val,
-      env,
+      value: value.raw(),
+      env: scope.env().raw(),
       _marker: PhantomData,
     })
   }
 }
 
 impl<T> ReadableStream<'_, T> {
+  fn with_stream_object<R>(
+    &self,
+    f: impl for<'env, 'scope> FnOnce(
+      &mut Scope<'env, 'scope>,
+      Local<'scope, Unknown<'scope>>,
+      Object<'scope>,
+    ) -> Result<R>,
+  ) -> Result<R> {
+    unsafe {
+      with_env(self.env, |mut env| {
+        env.with_scope(|scope| {
+          let stream = Local::from_value(scope, self, "ReadableStream")?;
+          let stream_object = Object::from_js(scope, stream)?;
+          f(scope, stream, stream_object)
+        })
+      })
+    }
+  }
+
   /// Returns a boolean indicating whether the readable stream is locked to a reader.
   pub fn locked(&self) -> Result<bool> {
-    let mut locked = ptr::null_mut();
-    check_status!(
-      unsafe {
-        sys::napi_get_named_property(self.env, self.value, c"locked".as_ptr().cast(), &mut locked)
-      },
-      "Get locked property failed"
-    )?;
-    unsafe { FromNapiValue::from_napi_value(self.env, locked) }
+    self.with_stream_object(|scope, _, stream| scope.get_named_property(&stream, "locked"))
   }
 
   /// The `cancel()` method of the `ReadableStream` interface returns a Promise that resolves when the stream is canceled.
-  pub fn cancel(&mut self, reason: Option<String>) -> Result<PromiseRaw<'_, ()>> {
-    let mut cancel_fn = ptr::null_mut();
-    check_status!(
-      unsafe {
-        sys::napi_get_named_property(
-          self.env,
-          self.value,
-          c"abort".as_ptr().cast(),
-          &mut cancel_fn,
-        )
-      },
-      "Get abort property failed"
-    )?;
-    let reason_value = unsafe { ToNapiValue::to_napi_value(self.env, reason)? };
-    let mut promise = ptr::null_mut();
-    check_status!(
-      unsafe {
-        sys::napi_call_function(
-          self.env,
-          self.value,
-          cancel_fn,
-          1,
-          [reason_value].as_ptr(),
-          &mut promise,
-        )
-      },
-      "Call abort function failed"
-    )?;
-    Ok(PromiseRaw::new(self.env, promise))
+  pub fn cancel(&mut self, reason: Option<String>) -> Result<Promise<'_, ()>> {
+    let promise = self.with_stream_object(|scope, stream, stream_object| {
+      let cancel: Function<'_, FnArgs<(Option<String>,)>, Promise<'_, ()>> =
+        scope.get_named_property(&stream_object, "cancel")?;
+      let promise = scope.apply(&cancel, stream, FnArgs::from((reason,)))?;
+      Ok(promise.value().value)
+    })?;
+    Ok(unsafe { Promise::from_raw(self.env, promise) })
   }
 }
 
-impl<T: FromNapiValue> ReadableStream<'_, T> {
+impl<T: Send + Sync + 'static + for<'env, 'scope> FromJs<'env, 'scope>> ReadableStream<'_, T> {
   pub fn read(&self) -> Result<Reader<T>> {
-    let mut reader_function = ptr::null_mut();
-    check_status!(
-      unsafe {
-        sys::napi_get_named_property(
-          self.env,
-          self.value,
-          c"getReader".as_ptr().cast(),
-          &mut reader_function,
-        )
-      },
-      "Get getReader on ReadableStream failed"
-    )?;
-    let mut reader = ptr::null_mut();
-    check_status!(
-      unsafe {
-        sys::napi_call_function(
-          self.env,
-          self.value,
-          reader_function,
-          0,
-          ptr::null_mut(),
-          &mut reader,
-        )
-      },
-      "Call getReader on ReadableStreamReader failed"
-    )?;
-    let mut read_function = ptr::null_mut();
-    check_status!(
-      unsafe {
-        sys::napi_get_named_property(
-          self.env,
-          reader,
-          c"read".as_ptr().cast(),
-          &mut read_function,
-        )
-      },
-      "Get read from ReadableStreamDefaultReader failed"
-    )?;
-    let mut bind_function = ptr::null_mut();
-    check_status!(
-      unsafe {
-        sys::napi_get_named_property(
-          self.env,
-          read_function,
-          c"bind".as_ptr().cast(),
-          &mut bind_function,
-        )
-      },
-      "Get bind from ReadableStreamDefaultReader::read failed"
-    )?;
-    let mut bind_read = ptr::null_mut();
-    check_status!(
-      unsafe {
-        sys::napi_call_function(
-          self.env,
-          read_function,
-          bind_function,
-          1,
-          [reader].as_ptr(),
-          &mut bind_read,
-        )
-      },
-      "Call bind from ReadableStreamDefaultReader::read failed"
-    )?;
-    let read_function = unsafe {
-      Function::<(), PromiseRaw<IteratorValue<T>>>::from_napi_value(self.env, bind_read)?
-    }
-    .build_threadsafe_function()
-    .callee_handled::<true>()
-    .weak::<true>()
-    .build()?;
+    let read_function = self.with_stream_object(|scope, stream, stream_object| {
+      let get_reader: Function<'_, (), Object<'_>> =
+        scope.get_named_property(&stream_object, "getReader")?;
+      let reader = scope.apply(&get_reader, stream, ())?;
+      let read: Function<'_, (), PromiseFuture<IteratorValue<T>>> =
+        scope.get_named_property(&reader, "read")?;
+      scope
+        .bind_function(&read, reader)?
+        .build_threadsafe_function()
+        .callee_handled::<true>()
+        .weak::<true>()
+        .build()
+    })?;
     Ok(Reader {
       inner: read_function,
       state: Arc::new((RwLock::new(Ok(None)), AtomicBool::new(false))),
@@ -213,20 +156,11 @@ impl<T: FromNapiValue> ReadableStream<'_, T> {
   }
 }
 
-impl<T: ToNapiValue + Send + 'static> ReadableStream<'_, T> {
+impl<T: for<'scope> IntoJs<'scope> + Send + 'static> ReadableStream<'_, T> {
   pub fn new<S: Stream<Item = Result<T>> + Unpin + Send + 'static>(
     env: &Env,
     inner: S,
   ) -> Result<Self> {
-    let global = env.get_global()?;
-    let constructor = global.get_named_property_unchecked::<Unknown>("ReadableStream")?;
-    if constructor.get_type()? == ValueType::Undefined {
-      return Err(Error::new(
-        Status::GenericFailure,
-        "ReadableStream is not supported in this Node.js version",
-      ));
-    }
-
     // Create shared state for the stream
     let state = StreamState::new(inner);
     let state_ptr = Arc::into_raw(state) as *mut c_void;
@@ -248,7 +182,7 @@ impl<T: ToNapiValue + Send + 'static> ReadableStream<'_, T> {
       },
       "Failed to create pull function"
     )?;
-    underlying_source.set_named_property("pull", pull_fn)?;
+    unsafe { underlying_source.set_inner("pull", pull_fn)? };
 
     // Create cancel callback for cleanup
     let mut cancel_fn = ptr::null_mut();
@@ -265,29 +199,34 @@ impl<T: ToNapiValue + Send + 'static> ReadableStream<'_, T> {
       },
       "Failed to create cancel function"
     )?;
-    underlying_source.set_named_property("cancel", cancel_fn)?;
+    unsafe { underlying_source.set_inner("cancel", cancel_fn)? };
 
     // Register invoke to free the Arc when underlying_source is GC'd
     register_invoke::<S>(env.raw(), underlying_source.0.value, state_ptr)?;
 
-    let mut stream = ptr::null_mut();
-    check_status!(
-      unsafe {
-        sys::napi_new_instance(
-          env.0,
-          constructor.0.value,
-          1,
-          [underlying_source.0.value].as_ptr(),
-          &mut stream,
-        )
-      },
-      "Create ReadableStream instance failed"
-    )?;
-    Ok(Self {
-      value: stream,
-      env: env.0,
-      _marker: PhantomData,
-    })
+    unsafe {
+      with_env(env.raw(), |mut env| {
+        env.with_scope(|scope| {
+          let global = scope.env().get_global()?;
+          let constructor: Unknown = scope.get_named_property(&global, "ReadableStream")?;
+          if constructor.get_type()? == ValueType::Undefined {
+            return Err(Error::new(
+              Status::GenericFailure,
+              "ReadableStream is not supported in this Node.js version",
+            ));
+          }
+          let constructor = Local::from_value(scope, &constructor, "ReadableStream")?;
+          let constructor: Function<'_, FnArgs<(Object<'_>,)>, Unknown<'_>> =
+            Function::from_js(scope, constructor)?;
+          let stream = scope.new_instance(&constructor, FnArgs::from((underlying_source,)))?;
+          Ok(Self {
+            value: stream.value().value,
+            env: scope.env().raw(),
+            _marker: PhantomData,
+          })
+        })
+      })
+    }
   }
 
   /// Creates a new `ReadableStream` with the given `stream` and `ReadableStream` class.
@@ -328,7 +267,7 @@ impl<T: ToNapiValue + Send + 'static> ReadableStream<'_, T> {
       },
       "Failed to create pull function"
     )?;
-    underlying_source.set_named_property("pull", pull_fn)?;
+    unsafe { underlying_source.set_inner("pull", pull_fn)? };
 
     // Create cancel callback for cleanup
     let mut cancel_fn = ptr::null_mut();
@@ -345,29 +284,27 @@ impl<T: ToNapiValue + Send + 'static> ReadableStream<'_, T> {
       },
       "Failed to create cancel function"
     )?;
-    underlying_source.set_named_property("cancel", cancel_fn)?;
+    unsafe { underlying_source.set_inner("cancel", cancel_fn)? };
 
     // Register invoke to free the Arc when underlying_source is GC'd
     register_invoke::<S>(env.raw(), underlying_source.0.value, state_ptr)?;
 
-    let mut stream = ptr::null_mut();
-    check_status!(
-      unsafe {
-        sys::napi_new_instance(
-          env.0,
-          readable_stream_class.0.value,
-          1,
-          [underlying_source.0.value].as_ptr(),
-          &mut stream,
-        )
-      },
-      "Create ReadableStream instance failed"
-    )?;
-    Ok(Self {
-      value: stream,
-      env: env.0,
-      _marker: PhantomData,
-    })
+    unsafe {
+      with_env(env.raw(), |mut env| {
+        env.with_scope(|scope| {
+          let readable_stream_class =
+            Local::from_value(scope, readable_stream_class, "ReadableStream")?;
+          let constructor: Function<'_, FnArgs<(Object<'_>,)>, Unknown<'_>> =
+            Function::from_js(scope, readable_stream_class)?;
+          let stream = scope.new_instance(&constructor, FnArgs::from((underlying_source,)))?;
+          Ok(Self {
+            value: stream.value().value,
+            env: scope.env().raw(),
+            _marker: PhantomData,
+          })
+        })
+      })
+    }
   }
 }
 
@@ -380,9 +317,6 @@ impl<'env> ReadableStream<'env, BufferSlice<'env>> {
     env: &Env,
     inner: S,
   ) -> Result<Self> {
-    let global = env.get_global()?;
-    let constructor = global.get_named_property_unchecked::<Function>("ReadableStream")?;
-
     // Create shared state for the stream
     let state = StreamState::new(inner);
     let state_ptr = Arc::into_raw(state) as *mut c_void;
@@ -404,7 +338,7 @@ impl<'env> ReadableStream<'env, BufferSlice<'env>> {
       },
       "Failed to create pull function"
     )?;
-    underlying_source.set_named_property("pull", pull_fn)?;
+    unsafe { underlying_source.set_inner("pull", pull_fn)? };
 
     // Create cancel callback for cleanup
     let mut cancel_fn = ptr::null_mut();
@@ -421,30 +355,27 @@ impl<'env> ReadableStream<'env, BufferSlice<'env>> {
       },
       "Failed to create cancel function"
     )?;
-    underlying_source.set_named_property("cancel", cancel_fn)?;
+    unsafe { underlying_source.set_inner("cancel", cancel_fn)? };
 
     // Register invoke to free the Arc when underlying_source is GC'd
     register_invoke::<S>(env.raw(), underlying_source.0.value, state_ptr)?;
 
     underlying_source.set("type", "bytes")?;
-    let mut stream = ptr::null_mut();
-    check_status!(
-      unsafe {
-        sys::napi_new_instance(
-          env.0,
-          constructor.value,
-          1,
-          [underlying_source.0.value].as_ptr(),
-          &mut stream,
-        )
-      },
-      "Create ReadableStream instance failed"
-    )?;
-    Ok(Self {
-      value: stream,
-      env: env.0,
-      _marker: PhantomData,
-    })
+    unsafe {
+      with_env(env.raw(), |mut env| {
+        env.with_scope(|scope| {
+          let global = scope.env().get_global()?;
+          let constructor: Function<'_, FnArgs<(Object<'_>,)>, Unknown<'_>> =
+            scope.get_named_property(&global, "ReadableStream")?;
+          let stream = scope.new_instance(&constructor, FnArgs::from((underlying_source,)))?;
+          Ok(Self {
+            value: stream.value().value,
+            env: scope.env().raw(),
+            _marker: PhantomData,
+          })
+        })
+      })
+    }
   }
 
   /// create a new `ReadableStream` with the given `stream` that emits bytes and `ReadableStream` class.
@@ -484,7 +415,7 @@ impl<'env> ReadableStream<'env, BufferSlice<'env>> {
       },
       "Failed to create pull function"
     )?;
-    underlying_source.set_named_property("pull", pull_fn)?;
+    unsafe { underlying_source.set_inner("pull", pull_fn)? };
 
     // Create cancel callback for cleanup
     let mut cancel_fn = ptr::null_mut();
@@ -501,68 +432,59 @@ impl<'env> ReadableStream<'env, BufferSlice<'env>> {
       },
       "Failed to create cancel function"
     )?;
-    underlying_source.set_named_property("cancel", cancel_fn)?;
+    unsafe { underlying_source.set_inner("cancel", cancel_fn)? };
 
     // Register invoke to free the Arc when underlying_source is GC'd
     register_invoke::<S>(env.raw(), underlying_source.0.value, state_ptr)?;
 
     underlying_source.set("type", "bytes")?;
-    let mut stream = ptr::null_mut();
-    check_status!(
-      unsafe {
-        sys::napi_new_instance(
-          env.0,
-          readable_stream_class.0.value,
-          1,
-          [underlying_source.0.value].as_ptr(),
-          &mut stream,
-        )
-      },
-      "Create ReadableStream instance failed"
-    )?;
-    Ok(Self {
-      value: stream,
-      env: env.0,
-      _marker: PhantomData,
-    })
+    unsafe {
+      with_env(env.raw(), |mut env| {
+        env.with_scope(|scope| {
+          let readable_stream_class =
+            Local::from_value(scope, readable_stream_class, "ReadableStream")?;
+          let constructor: Function<'_, FnArgs<(Object<'_>,)>, Unknown<'_>> =
+            Function::from_js(scope, readable_stream_class)?;
+          let stream = scope.new_instance(&constructor, FnArgs::from((underlying_source,)))?;
+          Ok(Self {
+            value: stream.value().value,
+            env: scope.env().raw(),
+            _marker: PhantomData,
+          })
+        })
+      })
+    }
   }
 }
 
-pub struct IteratorValue<'env, T: FromNapiValue> {
-  _marker: PhantomData<&'env ()>,
+pub struct IteratorValue<T> {
   value: Option<T>,
   done: bool,
 }
 
-impl<T: FromNapiValue> FromNapiValue for IteratorValue<'_, T> {
-  unsafe fn from_napi_value(env: sys::napi_env, napi_val: sys::napi_value) -> Result<Self> {
-    let mut done = ptr::null_mut();
-    check_status!(
-      unsafe { sys::napi_get_named_property(env, napi_val, c"done".as_ptr().cast(), &mut done) },
-      "Get done property failed"
-    )?;
-    let done = unsafe { FromNapiValue::from_napi_value(env, done)? };
-    let mut value = ptr::null_mut();
-    check_status!(
-      unsafe { sys::napi_get_named_property(env, napi_val, c"value".as_ptr().cast(), &mut value) },
-      "Get value property failed"
-    )?;
-    let value = unsafe { FromNapiValue::from_napi_value(env, value)? };
-    Ok(Self {
-      value,
-      done,
-      _marker: PhantomData,
-    })
+impl<'env, 'scope, T> FromJs<'env, 'scope> for IteratorValue<T>
+where
+  T: FromJs<'env, 'scope>,
+{
+  fn from_js(
+    scope: &mut Scope<'env, 'scope>,
+    value: Local<'scope, Unknown<'scope>>,
+  ) -> Result<Self> {
+    let value = Object::from_js(scope, value)?;
+    let done = scope.get_named_property(&value, "done")?;
+    let value = scope.get_named_property(&value, "value")?;
+    Ok(Self { value, done })
   }
 }
 
-pub struct Reader<T: FromNapiValue + 'static> {
-  inner:
-    ThreadsafeFunction<(), PromiseRaw<'static, IteratorValue<'static, T>>, (), Status, true, true>,
+pub struct Reader<T: Send + Sync + 'static + for<'env, 'scope> FromJs<'env, 'scope>> {
+  inner: ThreadsafeFunction<(), PromiseFuture<IteratorValue<T>>, (), Status, true, true>,
   state: Arc<(RwLock<Result<Option<T>>>, AtomicBool)>,
 }
 
-impl<T: FromNapiValue + 'static> futures_core::Stream for Reader<T> {
+impl<T: Send + Sync + 'static + for<'env, 'scope> FromJs<'env, 'scope>> futures_core::Stream
+  for Reader<T>
+{
   type Item = Result<T>;
 
   fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
@@ -586,42 +508,40 @@ impl<T: FromNapiValue + 'static> futures_core::Stream for Reader<T> {
       ThreadsafeFunctionCallMode::NonBlocking,
       move |iterator, _| {
         let iterator = iterator?;
-        iterator
-          .then(move |cx| {
-            if cx.value.done {
-              state.1.store(true, Ordering::Relaxed);
+        crate::spawn(async move {
+          let result = iterator.await;
+          let update_result = match result {
+            Ok(iterator) => {
+              if iterator.done {
+                state.1.store(true, Ordering::Relaxed);
+              }
+              if let Some(val) = iterator.value {
+                state
+                  .0
+                  .write()
+                  .map(|mut chunk| {
+                    *chunk = Ok(Some(val));
+                  })
+                  .map_err(|_| Error::new(Status::InvalidArg, "Poisoned lock in Reader::poll_next"))
+              } else {
+                Ok(())
+              }
             }
-            if let Some(val) = cx.value.value {
-              let mut chunk = state.0.write().map_err(|_| {
-                Error::new(Status::InvalidArg, "Poisoned lock in Reader::poll_next")
-              })?;
-              *chunk = Ok(Some(val));
-            };
-            Ok(())
-          })?
-          .catch(move |cx: CallbackContext<Unknown>| {
-            let mut chunk = state_in_catch
+            Err(error) => state_in_catch
               .0
               .write()
-              .map_err(|_| Error::new(Status::InvalidArg, "Poisoned lock in Reader::poll_next"))?;
-            let mut error_ref = ptr::null_mut();
-            check_status!(
-              unsafe { sys::napi_create_reference(cx.env.0, cx.value.0.value, 0, &mut error_ref) },
-              "Create error reference failed"
-            )?;
-            *chunk = Err(Error {
-              status: Status::GenericFailure,
-              reason: "".to_string(),
-              cause: None,
-              maybe_raw: error_ref,
-              maybe_env: cx.env.0,
-            });
-            Ok(())
-          })?
-          .finally(move |_| {
-            waker.wake();
-            Ok(())
-          })?;
+              .map(|mut chunk| {
+                *chunk = Err(error);
+              })
+              .map_err(|_| Error::new(Status::InvalidArg, "Poisoned lock in Reader::poll_next")),
+          };
+          if let Err(error) = update_result {
+            if let Ok(mut chunk) = state_in_catch.0.write() {
+              *chunk = Err(error);
+            }
+          }
+          waker.wake();
+        });
         Ok(())
       },
     );
@@ -664,7 +584,7 @@ impl<S> StreamState<S> {
 /// invoke callback that frees the Arc<StreamState> when the underlying_source
 /// object is garbage collected. This is the only place where the Arc is freed,
 /// ensuring that callbacks can safely borrow without risk of use-after-free.
-extern "C" fn invoke<S>(
+unsafe extern "C" fn invoke<S>(
   _env: sys::napi_env,
   finalize_data: *mut c_void,
   _finalize_hint: *mut c_void,
@@ -698,93 +618,135 @@ fn register_invoke<S>(
 }
 
 /// Helper struct to extract and bind controller methods from callback info.
-struct PullController<T: ToNapiValue> {
-  enqueue: crate::bindgen_prelude::FunctionRef<T, ()>,
-  close: crate::bindgen_prelude::FunctionRef<(), ()>,
+struct PullController<T: for<'scope> IntoJs<'scope>> {
+  enqueue: ControllerFunctionRef<T, ()>,
+  close: ControllerFunctionRef<(), ()>,
 }
 
-impl<T: ToNapiValue> PullController<T> {
-  fn from_callback_info(
-    env: sys::napi_env,
-    info: sys::napi_callback_info,
-  ) -> Result<(Self, *mut c_void)> {
-    let mut data = ptr::null_mut();
-    let mut argc = 1;
-    let mut args = [ptr::null_mut(); 1];
+struct ControllerFunctionRef<Args, Return> {
+  raw: sys::napi_ref,
+  marker: PhantomData<fn(Args) -> Return>,
+}
+
+unsafe impl<Args, Return> Send for ControllerFunctionRef<Args, Return> {}
+
+impl<Args, Return> ControllerFunctionRef<Args, Return> {
+  fn new(scope: &mut Scope<'_, '_>, function: &Function<'_, Args, Return>) -> Result<Self> {
+    let mut raw = ptr::null_mut();
     check_status!(
-      unsafe {
-        sys::napi_get_cb_info(
-          env,
-          info,
-          &mut argc,
-          args.as_mut_ptr(),
-          ptr::null_mut(),
-          &mut data,
-        )
-      },
-      "Get ReadableStream.pull callback info failed"
+      unsafe { sys::napi_create_reference(scope.env().raw(), function.value, 1, &mut raw) },
+      "Create stream controller function reference failed"
     )?;
+    Ok(Self {
+      raw,
+      marker: PhantomData,
+    })
+  }
 
-    let controller = unsafe { Object::from_napi_value(env, args[0])? };
-    let enqueue = controller
-      .get_named_property_unchecked::<Function<T, ()>>("enqueue")?
-      .bind(controller)?
-      .create_ref()?;
-    let close = controller
-      .get_named_property_unchecked::<Function<(), ()>>("close")?
-      .bind(controller)?
-      .create_ref()?;
+  fn borrow<'env, 'scope>(
+    &self,
+    scope: &mut Scope<'env, 'scope>,
+  ) -> Result<Function<'scope, Args, Return>> {
+    let mut value = ptr::null_mut();
+    check_status!(
+      unsafe { sys::napi_get_reference_value(scope.env().raw(), self.raw, &mut value) },
+      "Get stream controller function reference failed"
+    )?;
+    Function::from_js(scope, unsafe { Local::from_raw(value) })
+  }
 
-    Ok((Self { enqueue, close }, data))
+  fn close(mut self, env: &Env) -> Result<()> {
+    let raw = std::mem::replace(&mut self.raw, ptr::null_mut());
+    check_status!(
+      unsafe { sys::napi_delete_reference(env.raw(), raw) },
+      "Delete stream controller function reference failed"
+    )
   }
 }
 
-extern "C" fn cancel_callback<S>(
+impl<T: for<'scope> IntoJs<'scope>> PullController<T> {
+  fn from_callback_info(
+    env: Env<'_>,
+    info: sys::napi_callback_info,
+  ) -> Result<(Self, *mut c_void)> {
+    let mut decoder = CallbackDecoder::<1>::new(env, info, Some(1))?;
+    decoder.with_frame(|mut frame| {
+      let data = frame.raw_data();
+      let controller = frame.arg::<Object>(0)?;
+      let scope = frame.scope_mut();
+      let enqueue_function: Function<'_, T, ()> =
+        scope.get_named_property(&controller, "enqueue")?;
+      let enqueue_function = scope.bind_function(&enqueue_function, controller)?;
+      let enqueue = ControllerFunctionRef::new(scope, &enqueue_function)?;
+      let close_function: Function<'_, (), ()> = scope.get_named_property(&controller, "close")?;
+      let close_function = scope.bind_function(&close_function, controller)?;
+      let close = ControllerFunctionRef::new(scope, &close_function)?;
+      Ok((Self { enqueue, close }, data))
+    })
+  }
+
+  fn close(self, env: &Env) -> Result<()> {
+    let close_enqueue = self.enqueue.close(env);
+    let close_close = self.close.close(env);
+    close_enqueue.and(close_close)
+  }
+}
+
+unsafe extern "C" fn cancel_callback<S>(
   env: sys::napi_env,
   info: sys::napi_callback_info,
 ) -> sys::napi_value {
-  let mut data = ptr::null_mut();
-  unsafe {
-    sys::napi_get_cb_info(
-      env,
-      info,
-      ptr::null_mut(),
-      ptr::null_mut(),
-      ptr::null_mut(),
-      &mut data,
-    );
-  }
-  if !data.is_null() {
-    // Borrow the Arc using increment+from_raw pattern.
-    // The invoke registered on underlying_source will free the Arc when GC'd.
-    // This prevents use-after-free if cancel is called after stream has closed.
-    let state = unsafe {
-      Arc::increment_strong_count(data.cast::<StreamState<S>>());
-      Arc::from_raw(data.cast::<StreamState<S>>())
-    };
-
-    // Mark as cancelled so pull callback knows to stop
-    state.cancelled.store(true, Ordering::SeqCst);
-
-    // Try to take the stream - use try_lock to avoid blocking the event loop.
-    // If we can't get the lock (pull is in progress), that's fine - pull will
-    // see the cancelled flag and handle cleanup.
-    if let Ok(mut guard) = state.stream.try_lock() {
-      let _ = guard.take();
-    };
-    // Borrowed Arc drops here, decrementing ref count (but not freeing - invoke handles that)
+  let result = unsafe { with_env(env, |env| cancel_callback_impl::<S>(env, info)) };
+  if let Err(err) = result {
+    unsafe {
+      let js_error: JsError = err.into();
+      js_error.throw_into(env);
+    }
   }
   ptr::null_mut()
 }
 
-extern "C" fn pull_callback<
-  T: ToNapiValue + Send + 'static,
+fn cancel_callback_impl<S>(env: Env<'_>, info: sys::napi_callback_info) -> Result<()> {
+  let mut decoder = CallbackDecoder::<0>::new(env, info, None)?;
+  decoder.with_frame(|frame| {
+    let data = frame.raw_data();
+    if !data.is_null() {
+      // Borrow the Arc using increment+from_raw pattern.
+      // The invoke registered on underlying_source will free the Arc when GC'd.
+      // This prevents use-after-free if cancel is called after stream has closed.
+      let state = unsafe {
+        Arc::increment_strong_count(data.cast::<StreamState<S>>());
+        Arc::from_raw(data.cast::<StreamState<S>>())
+      };
+
+      // Mark as cancelled so pull callback knows to stop
+      state.cancelled.store(true, Ordering::SeqCst);
+
+      // Try to take the stream - use try_lock to avoid blocking the event loop.
+      // If we can't get the lock (pull is in progress), that's fine - pull will
+      // see the cancelled flag and handle cleanup.
+      if let Ok(mut guard) = state.stream.try_lock() {
+        drop(guard.take());
+      };
+      // Borrowed Arc drops here, decrementing ref count (but not freeing - invoke handles that)
+    }
+    Ok(())
+  })
+}
+
+unsafe extern "C" fn pull_callback<
+  T: for<'scope> IntoJs<'scope> + Send + 'static,
   S: Stream<Item = Result<T>> + Unpin + Send + 'static,
 >(
   env: sys::napi_env,
   info: sys::napi_callback_info,
 ) -> sys::napi_value {
-  match pull_callback_impl::<T, S>(env, info) {
+  let result = unsafe {
+    with_env(env, |env_wrapper| {
+      pull_callback_impl::<T, S>(env_wrapper, info)
+    })
+  };
+  match result {
     Ok(val) => val,
     Err(err) => unsafe {
       let js_error: JsError = err.into();
@@ -795,13 +757,13 @@ extern "C" fn pull_callback<
 }
 
 fn pull_callback_impl<
-  T: ToNapiValue + Send + 'static,
+  T: for<'scope> IntoJs<'scope> + for<'scope> IntoJsArgs<'scope> + Send + 'static,
   S: Stream<Item = Result<T>> + Unpin + Send + 'static,
 >(
-  env: sys::napi_env,
+  env_wrapper: Env<'_>,
   info: sys::napi_callback_info,
 ) -> Result<sys::napi_value> {
-  let (controller, data) = PullController::<T>::from_callback_info(env, info)?;
+  let (controller, data) = PullController::<T>::from_callback_info(env_wrapper, info)?;
 
   // Borrow the Arc<StreamState> using the increment+from_raw pattern.
   // The invoke registered on underlying_source will free the Arc when GC'd.
@@ -813,10 +775,10 @@ fn pull_callback_impl<
 
   // Check if stream was cancelled
   if state.cancelled.load(Ordering::SeqCst) {
+    controller.close(&env_wrapper)?;
     return Ok(ptr::null_mut());
   }
 
-  let env_wrapper = Env::from_raw(env);
   let state_for_async = state.clone();
 
   let promise = env_wrapper.spawn_future_with_callback(
@@ -828,19 +790,19 @@ fn pull_callback_impl<
         Ok(None)
       }
     },
-    move |env, val| {
-      // Use inner closure to ensure FunctionRef cleanup on all paths (including errors)
+    move |scope, val| {
+      // Use inner closure to ensure controller refs close on all paths.
       let result = {
         // Re-check cancelled flag after async work completes to prevent
         // enqueueing if cancel was called while waiting for the next item
         if state.cancelled.load(Ordering::SeqCst) {
           // Stream was cancelled while waiting - skip enqueue and close
         } else if let Some(val) = val {
-          let enqueue_fn = controller.enqueue.borrow_back(env)?;
-          enqueue_fn.call(val)?;
+          let enqueue_fn = controller.enqueue.borrow(scope)?;
+          scope.call(&enqueue_fn, val)?;
         } else {
-          let close_fn = controller.close.borrow_back(env)?;
-          close_fn.call(())?;
+          let close_fn = controller.close.borrow(scope)?;
+          scope.call(&close_fn, ())?;
           // Stream ended - take the inner stream to free resources early
           // (the Arc itself is freed by the invoke when underlying_source is GC'd)
           if let Ok(mut guard) = state.stream.try_lock() {
@@ -849,23 +811,27 @@ fn pull_callback_impl<
         }
         Ok::<(), Error>(())
       };
-      // Always clean up FunctionRefs regardless of success/failure
-      drop(controller.enqueue);
-      drop(controller.close);
-      result
+      let close_result = controller.close(scope.env());
+      result.and(close_result)?;
+      Ok(())
     },
   )?;
   Ok(promise.inner)
 }
 
-extern "C" fn pull_callback_bytes<
+unsafe extern "C" fn pull_callback_bytes<
   B: Into<Vec<u8>>,
   S: Stream<Item = Result<B>> + Unpin + Send + 'static,
 >(
   env: sys::napi_env,
   info: sys::napi_callback_info,
 ) -> sys::napi_value {
-  match pull_callback_impl_bytes::<B, S>(env, info) {
+  let result = unsafe {
+    with_env(env, |env_wrapper| {
+      pull_callback_impl_bytes::<B, S>(env_wrapper, info)
+    })
+  };
+  match result {
     Ok(val) => val,
     Err(err) => unsafe {
       let js_error: JsError = err.into();
@@ -879,10 +845,10 @@ fn pull_callback_impl_bytes<
   B: Into<Vec<u8>>,
   S: Stream<Item = Result<B>> + Unpin + Send + 'static,
 >(
-  env: sys::napi_env,
+  env_wrapper: Env<'_>,
   info: sys::napi_callback_info,
 ) -> Result<sys::napi_value> {
-  let (controller, data) = PullController::<BufferSlice>::from_callback_info(env, info)?;
+  let (controller, data) = PullController::<BufferSlice>::from_callback_info(env_wrapper, info)?;
 
   // Borrow the Arc<StreamState> using the increment+from_raw pattern.
   // The invoke registered on underlying_source will free the Arc when GC'd.
@@ -894,10 +860,10 @@ fn pull_callback_impl_bytes<
 
   // Check if stream was cancelled
   if state.cancelled.load(Ordering::SeqCst) {
+    controller.close(&env_wrapper)?;
     return Ok(ptr::null_mut());
   }
 
-  let env_wrapper = Env::from_raw(env);
   let state_for_async = state.clone();
 
   let promise = env_wrapper.spawn_future_with_callback(
@@ -913,19 +879,21 @@ fn pull_callback_impl_bytes<
         Ok(None)
       }
     },
-    move |env, val| {
-      // Use inner closure to ensure FunctionRef cleanup on all paths (including errors)
+    move |scope, val| {
+      // Use inner closure to ensure controller refs close on all paths.
       let result = {
         // Re-check cancelled flag after async work completes to prevent
         // enqueueing if cancel was called while waiting for the next item
         if state.cancelled.load(Ordering::SeqCst) {
           // Stream was cancelled while waiting - skip enqueue and close
         } else if let Some(val) = val {
-          let enqueue_fn = controller.enqueue.borrow_back(env)?;
-          enqueue_fn.call(BufferSlice::from_data(env, val)?)?;
+          let env = *scope.env();
+          let chunk = BufferSlice::from_data(&env, val)?;
+          let enqueue_fn = controller.enqueue.borrow(scope)?;
+          scope.call(&enqueue_fn, chunk)?;
         } else {
-          let close_fn = controller.close.borrow_back(env)?;
-          close_fn.call(())?;
+          let close_fn = controller.close.borrow(scope)?;
+          scope.call(&close_fn, ())?;
           // Stream ended - take the inner stream to free resources early
           // (the Arc itself is freed by the invoke when underlying_source is GC'd)
           if let Ok(mut guard) = state.stream.try_lock() {
@@ -934,10 +902,9 @@ fn pull_callback_impl_bytes<
         }
         Ok::<(), Error>(())
       };
-      // Always clean up FunctionRefs regardless of success/failure
-      drop(controller.enqueue);
-      drop(controller.close);
-      result
+      let close_result = controller.close(scope.env());
+      result.and(close_result)?;
+      Ok(())
     },
   )?;
   Ok(promise.inner)

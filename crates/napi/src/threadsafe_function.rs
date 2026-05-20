@@ -12,18 +12,17 @@ use std::sync::{
 use futures::channel::oneshot::channel;
 
 use crate::{
-  bindgen_runtime::{FromNapiValue, JsValuesTupleIntoVec, TypeName, Unknown, ValidateNapiValue},
-  check_status, extract_error_cause, get_error_message_and_stack_trace, sys, Env, Error, JsError,
-  Result, Status,
+  bindgen_runtime::{FromJs, IntoJsArgs, Local, Scope, TypeName, Unknown, ValidateNapiValue},
+  check_status, sys, Env, Error, JsError, Result, Status,
 };
 
 #[deprecated(since = "2.17.0", note = "Please use `ThreadsafeFunction` instead")]
-pub type ThreadSafeCallContext<T> = ThreadsafeCallContext<T>;
+pub type ThreadSafeCallContext<'env, T> = ThreadsafeCallContext<'env, T>;
 
 /// ThreadSafeFunction Context object
 /// the `value` is the value passed to `call` method
-pub struct ThreadsafeCallContext<T: 'static> {
-  pub env: Env,
+pub struct ThreadsafeCallContext<'env, T: 'static> {
+  pub env: Env<'env>,
   pub value: T,
 }
 
@@ -51,7 +50,12 @@ pub struct ThreadsafeFunctionHandle {
 
 impl ThreadsafeFunctionHandle {
   /// create a Arc to hold the `ThreadsafeFunctionHandle`
-  pub fn new(raw: sys::napi_threadsafe_function) -> Arc<Self> {
+  ///
+  /// # Safety
+  ///
+  /// `raw` must be either null or a valid `napi_threadsafe_function` handle
+  /// whose release is owned by the returned `ThreadsafeFunctionHandle`.
+  pub(crate) unsafe fn from_handle(raw: sys::napi_threadsafe_function) -> Arc<Self> {
     Arc::new(Self {
       raw: AtomicPtr::new(raw),
       aborted: RwLock::new(false),
@@ -60,7 +64,7 @@ impl ThreadsafeFunctionHandle {
   }
 
   /// Lock `aborted` with read access, call `f` with the value of `aborted`, then unlock it
-  pub fn with_read_aborted<RT, F>(&self, f: F) -> RT
+  pub(crate) fn with_read_aborted<RT, F>(&self, f: F) -> RT
   where
     F: FnOnce(bool) -> RT,
   {
@@ -72,7 +76,7 @@ impl ThreadsafeFunctionHandle {
   }
 
   /// Lock `aborted` with write access, call `f` with the `RwLockWriteGuard`, then unlock it
-  pub fn with_write_aborted<RT, F>(&self, f: F) -> RT
+  pub(crate) fn with_write_aborted<RT, F>(&self, f: F) -> RT
   where
     F: FnOnce(RwLockWriteGuard<bool>) -> RT,
   {
@@ -84,15 +88,16 @@ impl ThreadsafeFunctionHandle {
   }
 
   #[allow(clippy::arc_with_non_send_sync)]
-  pub fn null() -> Arc<Self> {
-    Self::new(null_mut())
+  pub(crate) fn null() -> Arc<Self> {
+    // SAFETY: a null handle represents the pre-initialized state and is never released.
+    unsafe { Self::from_handle(null_mut()) }
   }
 
-  pub fn get_raw(&self) -> sys::napi_threadsafe_function {
+  pub(crate) fn native_handle(&self) -> sys::napi_threadsafe_function {
     self.raw.load(Ordering::SeqCst)
   }
 
-  pub fn set_raw(&self, raw: sys::napi_threadsafe_function) {
+  pub(crate) fn set_handle(&self, raw: sys::napi_threadsafe_function) {
     self.raw.store(raw, Ordering::SeqCst)
   }
 }
@@ -101,12 +106,12 @@ impl Drop for ThreadsafeFunctionHandle {
   fn drop(&mut self) {
     self.with_read_aborted(|aborted| {
       if !aborted {
-        let raw = self.get_raw();
+        let raw = self.native_handle();
         // if ThreadsafeFunction::create failed, the raw will be null and we don't need to release it
         if !raw.is_null() {
           let release_status = unsafe {
             sys::napi_release_threadsafe_function(
-              self.get_raw(),
+              self.native_handle(),
               sys::ThreadsafeFunctionReleaseMode::release,
             )
           };
@@ -127,10 +132,13 @@ pub enum ThreadsafeFunctionCallVariant {
   WithCallback,
 }
 
+type ThreadsafeFunctionJsCallback<Return> =
+  Box<dyn for<'env> FnOnce(Result<Return>, Env<'env>) -> Result<()> + Send>;
+
 pub struct ThreadsafeFunctionCallJsBackData<T, Return = Unknown<'static>> {
   pub data: T,
   pub call_variant: ThreadsafeFunctionCallVariant,
-  pub callback: Box<dyn FnOnce(Result<Return>, Env) -> Result<()>>,
+  pub callback: ThreadsafeFunctionJsCallback<Return>,
 }
 
 /// Communicate with the addon's main thread by invoking a JavaScript function from other threads.
@@ -167,22 +175,22 @@ pub struct ThreadsafeFunctionCallJsBackData<T, Return = Unknown<'static>> {
 /// ```
 pub struct ThreadsafeFunction<
   T: 'static,
-  Return: 'static + FromNapiValue = Unknown<'static>,
-  CallJsBackArgs: 'static + JsValuesTupleIntoVec = T,
-  ErrorStatus: AsRef<str> + From<Status> = Status,
+  Return: 'static + for<'env, 'scope> FromJs<'env, 'scope> = UnknownReturnValue,
+  CallJsBackArgs: 'static = T,
+  ErrorStatus: AsRef<str> + From<Status> + Send + 'static = Status,
   const CalleeHandled: bool = true,
   const Weak: bool = false,
   const MaxQueueSize: usize = 0,
 > {
-  pub handle: Arc<ThreadsafeFunctionHandle>,
+  handle: Arc<ThreadsafeFunctionHandle>,
   _phantom: PhantomData<(T, CallJsBackArgs, Return, ErrorStatus)>,
 }
 
 unsafe impl<
-    T: 'static,
-    Return: FromNapiValue,
-    CallJsBackArgs: 'static + JsValuesTupleIntoVec,
-    ErrorStatus: AsRef<str> + From<Status>,
+    T: Send + 'static,
+    Return: for<'env, 'scope> FromJs<'env, 'scope>,
+    CallJsBackArgs: 'static,
+    ErrorStatus: AsRef<str> + From<Status> + Send + 'static,
     const CalleeHandled: bool,
     const Weak: bool,
     const MaxQueueSize: usize,
@@ -200,10 +208,10 @@ unsafe impl<
 }
 
 unsafe impl<
-    T: 'static,
-    Return: FromNapiValue,
-    CallJsBackArgs: 'static + JsValuesTupleIntoVec,
-    ErrorStatus: AsRef<str> + From<Status>,
+    T: Send + 'static,
+    Return: for<'env, 'scope> FromJs<'env, 'scope>,
+    CallJsBackArgs: 'static,
+    ErrorStatus: AsRef<str> + From<Status> + Send + 'static,
     const CalleeHandled: bool,
     const Weak: bool,
     const MaxQueueSize: usize,
@@ -221,24 +229,31 @@ unsafe impl<
 }
 
 impl<
-    T: 'static + JsValuesTupleIntoVec,
-    Return: FromNapiValue,
-    ErrorStatus: AsRef<str> + From<Status>,
+    'env,
+    'scope,
+    T: 'static,
+    Return: for<'value_env, 'value_scope> FromJs<'value_env, 'value_scope>,
+    ErrorStatus: AsRef<str> + From<Status> + Send + 'static,
     const CalleeHandled: bool,
     const Weak: bool,
     const MaxQueueSize: usize,
-  > FromNapiValue
+  > FromJs<'env, 'scope>
   for ThreadsafeFunction<T, Return, T, ErrorStatus, { CalleeHandled }, { Weak }, { MaxQueueSize }>
+where
+  for<'value_scope> T: IntoJsArgs<'value_scope>,
 {
-  unsafe fn from_napi_value(env: sys::napi_env, napi_val: sys::napi_value) -> Result<Self> {
-    Self::create(env, napi_val, |ctx| Ok(ctx.value))
+  fn from_js(
+    scope: &mut Scope<'env, 'scope>,
+    value: Local<'scope, Unknown<'scope>>,
+  ) -> Result<Self> {
+    Self::create(scope.env().raw(), value.raw(), |ctx| Ok(ctx.value))
   }
 }
 
 impl<
-    T: 'static + JsValuesTupleIntoVec,
-    Return: FromNapiValue,
-    ErrorStatus: AsRef<str> + From<Status>,
+    T: 'static,
+    Return: for<'value_env, 'value_scope> FromJs<'value_env, 'value_scope>,
+    ErrorStatus: AsRef<str> + From<Status> + Send + 'static,
     const CalleeHandled: bool,
     const Weak: bool,
     const MaxQueueSize: usize,
@@ -255,9 +270,9 @@ impl<
 }
 
 impl<
-    T: 'static + JsValuesTupleIntoVec,
-    Return: FromNapiValue,
-    ErrorStatus: AsRef<str> + From<Status>,
+    T: 'static,
+    Return: for<'env, 'scope> FromJs<'env, 'scope>,
+    ErrorStatus: AsRef<str> + From<Status> + Send + 'static,
     const CalleeHandled: bool,
     const Weak: bool,
     const MaxQueueSize: usize,
@@ -268,9 +283,9 @@ impl<
 
 impl<
     T: 'static,
-    Return: FromNapiValue,
-    CallJsBackArgs: 'static + JsValuesTupleIntoVec,
-    ErrorStatus: AsRef<str> + From<Status>,
+    Return: for<'env, 'scope> FromJs<'env, 'scope>,
+    CallJsBackArgs: 'static,
+    ErrorStatus: AsRef<str> + From<Status> + Send + 'static,
     const CalleeHandled: bool,
     const Weak: bool,
     const MaxQueueSize: usize,
@@ -288,8 +303,8 @@ impl<
   // See [napi_create_threadsafe_function](https://nodejs.org/api/n-api.html#n_api_napi_create_threadsafe_function)
   // for more information.
   pub(crate) fn create<
-    NewArgs: 'static + JsValuesTupleIntoVec,
-    R: 'static + FnMut(ThreadsafeCallContext<T>) -> Result<NewArgs>,
+    NewArgs: 'static,
+    R: Send + 'static + for<'scope> FnMut(ThreadsafeCallContext<'scope, T>) -> Result<NewArgs>,
   >(
     env: sys::napi_env,
     func: sys::napi_value,
@@ -304,7 +319,10 @@ impl<
       { Weak },
       { MaxQueueSize },
     >,
-  > {
+  >
+  where
+    for<'scope> NewArgs: IntoJsArgs<'scope>,
+  {
     let mut async_resource_name = ptr::null_mut();
     static THREAD_SAFE_FUNCTION_ASYNC_RESOURCE_NAME: &str = "napi_rs_threadsafe_function";
 
@@ -363,7 +381,7 @@ impl<
       },
       "Create threadsafe function in ThreadsafeFunction::create failed"
     )?;
-    handle.set_raw(raw_tsfn);
+    handle.set_handle(raw_tsfn);
 
     // Weak ThreadsafeFunction will not prevent the event loop from exiting
     if Weak {
@@ -390,7 +408,9 @@ impl<
   pub fn refer(&mut self, env: &Env) -> Result<()> {
     self.handle.with_read_aborted(|aborted| {
       if !aborted && !self.handle.referred.load(Ordering::Relaxed) {
-        check_status!(unsafe { sys::napi_ref_threadsafe_function(env.0, self.handle.get_raw()) })?;
+        check_status!(unsafe {
+          sys::napi_ref_threadsafe_function(env.0, self.handle.native_handle())
+        })?;
         self.handle.referred.store(true, Ordering::Relaxed);
       }
       Ok(())
@@ -407,7 +427,7 @@ impl<
     self.handle.with_read_aborted(|aborted| {
       if !aborted && self.handle.referred.load(Ordering::Relaxed) {
         check_status!(unsafe {
-          sys::napi_unref_threadsafe_function(env.0, self.handle.get_raw())
+          sys::napi_unref_threadsafe_function(env.0, self.handle.native_handle())
         })?;
         self.handle.referred.store(false, Ordering::Relaxed);
       }
@@ -428,7 +448,7 @@ impl<
       if !*aborted_guard {
         check_status!(unsafe {
           sys::napi_release_threadsafe_function(
-            self.handle.get_raw(),
+            self.handle.native_handle(),
             sys::ThreadsafeFunctionReleaseMode::abort,
           )
         })?;
@@ -437,18 +457,13 @@ impl<
       Ok(())
     })
   }
-
-  /// Get the raw `ThreadSafeFunction` pointer
-  pub fn raw(&self) -> sys::napi_threadsafe_function {
-    self.handle.get_raw()
-  }
 }
 
 impl<
     T: 'static,
-    Return: FromNapiValue,
-    CallJsBackArgs: 'static + JsValuesTupleIntoVec,
-    ErrorStatus: AsRef<str> + From<Status>,
+    Return: for<'env, 'scope> FromJs<'env, 'scope>,
+    CallJsBackArgs: 'static,
+    ErrorStatus: AsRef<str> + From<Status> + Send + 'static,
     const Weak: bool,
     const MaxQueueSize: usize,
   > ThreadsafeFunction<T, Return, CallJsBackArgs, ErrorStatus, true, { Weak }, { MaxQueueSize }>
@@ -463,7 +478,7 @@ impl<
 
       unsafe {
         sys::napi_call_threadsafe_function(
-          self.handle.get_raw(),
+          self.handle.native_handle(),
           Box::into_raw(Box::new(value.map(|data| {
             ThreadsafeFunctionCallJsBackData {
               data,
@@ -480,7 +495,9 @@ impl<
   }
 
   /// Call the ThreadsafeFunction, and handle the return value with a callback
-  pub fn call_with_return_value<F: 'static + FnOnce(Result<Return>, Env) -> Result<()>>(
+  pub fn call_with_return_value<
+    F: Send + 'static + for<'env> FnOnce(Result<Return>, Env<'env>) -> Result<()>,
+  >(
     &self,
     value: Result<T, ErrorStatus>,
     mode: ThreadsafeFunctionCallMode,
@@ -493,7 +510,7 @@ impl<
 
       unsafe {
         sys::napi_call_threadsafe_function(
-          self.handle.get_raw(),
+          self.handle.native_handle(),
           Box::into_raw(Box::new(value.map(|data| {
             ThreadsafeFunctionCallJsBackData {
               data,
@@ -510,7 +527,10 @@ impl<
   }
 
   /// Call the ThreadsafeFunction, and handle the return value with in `async` way
-  pub async fn call_async(&self, value: Result<T, ErrorStatus>) -> Result<Return> {
+  pub async fn call_async(&self, value: Result<T, ErrorStatus>) -> Result<Return>
+  where
+    Return: Send,
+  {
     let (sender, receiver) = channel::<Result<Return>>();
 
     self.handle.with_read_aborted(|aborted| {
@@ -521,7 +541,7 @@ impl<
       check_status!(
         unsafe {
           sys::napi_call_threadsafe_function(
-            self.handle.get_raw(),
+            self.handle.native_handle(),
             Box::into_raw(Box::new(value.map(|data| {
               ThreadsafeFunctionCallJsBackData {
                 data,
@@ -554,16 +574,19 @@ impl<
   /// "catch the JavaScript throw" semantics.
   ///
   /// Provided so callers can use the same method name regardless of the `CalleeHandled` value.
-  pub async fn call_async_catch(&self, value: Result<T, ErrorStatus>) -> Result<Return> {
+  pub async fn call_async_catch(&self, value: Result<T, ErrorStatus>) -> Result<Return>
+  where
+    Return: Send,
+  {
     self.call_async(value).await
   }
 }
 
 impl<
     T: 'static,
-    Return: FromNapiValue,
-    CallJsBackArgs: 'static + JsValuesTupleIntoVec,
-    ErrorStatus: AsRef<str> + From<Status>,
+    Return: for<'env, 'scope> FromJs<'env, 'scope>,
+    CallJsBackArgs: 'static,
+    ErrorStatus: AsRef<str> + From<Status> + Send + 'static,
     const Weak: bool,
     const MaxQueueSize: usize,
   > ThreadsafeFunction<T, Return, CallJsBackArgs, ErrorStatus, false, { Weak }, { MaxQueueSize }>
@@ -578,7 +601,7 @@ impl<
 
       unsafe {
         sys::napi_call_threadsafe_function(
-          self.handle.get_raw(),
+          self.handle.native_handle(),
           Box::into_raw(Box::new(ThreadsafeFunctionCallJsBackData {
             data: value,
             call_variant: ThreadsafeFunctionCallVariant::Direct,
@@ -593,7 +616,9 @@ impl<
   }
 
   /// Call the ThreadsafeFunction, and handle the return value with a callback
-  pub fn call_with_return_value<F: 'static + FnOnce(Result<Return>, Env) -> Result<()>>(
+  pub fn call_with_return_value<
+    F: Send + 'static + for<'env> FnOnce(Result<Return>, Env<'env>) -> Result<()>,
+  >(
     &self,
     value: T,
     mode: ThreadsafeFunctionCallMode,
@@ -606,7 +631,7 @@ impl<
 
       unsafe {
         sys::napi_call_threadsafe_function(
-          self.handle.get_raw(),
+          self.handle.native_handle(),
           Box::into_raw(Box::new(ThreadsafeFunctionCallJsBackData {
             data: value,
             call_variant: ThreadsafeFunctionCallVariant::WithCallback,
@@ -627,7 +652,10 @@ impl<
   /// the captured exception through `napi_fatal_exception`, which terminates
   /// the host process. Use [`call_async_catch`](Self::call_async_catch)
   /// if you need to handle JavaScript-thrown errors as `Err(napi::Error)`.
-  pub async fn call_async(&self, value: T) -> Result<Return> {
+  pub async fn call_async(&self, value: T) -> Result<Return>
+  where
+    Return: Send,
+  {
     let (sender, receiver) = channel::<Return>();
 
     self.handle.with_read_aborted(|aborted| {
@@ -637,7 +665,7 @@ impl<
 
       check_status!(unsafe {
         sys::napi_call_threadsafe_function(
-          self.handle.get_raw(),
+          self.handle.native_handle(),
           Box::into_raw(Box::new(ThreadsafeFunctionCallJsBackData {
             data: value,
             call_variant: ThreadsafeFunctionCallVariant::WithCallback,
@@ -666,14 +694,12 @@ impl<
   /// errors as `Err(napi::Error)` instead of crashing the host process.
   ///
   /// The returned `Err` carries `status == Status::PendingException` when it
-  /// originated from a JS throw. The original JS exception object is preserved
-  /// via `error.maybe_raw` (a `napi_ref`); callers that need to inspect the
-  /// typed JS value can recover it via:
-  ///
-  /// ```ignore
-  /// let js_value: Unknown = JsError::from(err).into_unknown(env);
-  /// ```
-  pub async fn call_async_catch(&self, value: T) -> Result<Return> {
+  /// originated from a JS throw. The error is copied into Rust-owned status,
+  /// message, and cause data before it leaves the callback frame.
+  pub async fn call_async_catch(&self, value: T) -> Result<Return>
+  where
+    Return: Send,
+  {
     let (sender, receiver) = channel::<Result<Return>>();
 
     self.handle.with_read_aborted(|aborted| {
@@ -684,7 +710,7 @@ impl<
       check_status!(
         unsafe {
           sys::napi_call_threadsafe_function(
-            self.handle.get_raw(),
+            self.handle.native_handle(),
             Box::into_raw(Box::new(ThreadsafeFunctionCallJsBackData {
               data: value,
               call_variant: ThreadsafeFunctionCallVariant::WithCallback,
@@ -712,12 +738,13 @@ impl<
   }
 }
 
-unsafe extern "C" fn thread_finalize_cb<T: 'static, V: 'static + JsValuesTupleIntoVec, R>(
+unsafe extern "C" fn thread_finalize_cb<T: 'static, V: 'static, R>(
   #[allow(unused_variables)] env: sys::napi_env,
   finalize_data: *mut c_void,
   finalize_hint: *mut c_void,
 ) where
-  R: 'static + FnMut(ThreadsafeCallContext<T>) -> Result<V>,
+  for<'scope> V: IntoJsArgs<'scope>,
+  R: 'static + for<'scope> FnMut(ThreadsafeCallContext<'scope, T>) -> Result<V>,
 {
   let handle_option: Option<Arc<ThreadsafeFunctionHandle>> =
     unsafe { sync::Weak::from_raw(finalize_data.cast()).upgrade() };
@@ -730,15 +757,16 @@ unsafe extern "C" fn thread_finalize_cb<T: 'static, V: 'static + JsValuesTupleIn
     });
   }
 
-  // cleanup
-  drop(unsafe { Box::<R>::from_raw(finalize_hint.cast()) });
+  crate::run_unwind_boundary("dropping threadsafe function callback", || {
+    drop(unsafe { Box::<R>::from_raw(finalize_hint.cast()) });
+  });
 }
 
 unsafe extern "C" fn call_js_cb<
   T: 'static,
-  Return: FromNapiValue,
-  V: 'static + JsValuesTupleIntoVec,
-  ErrorStatus: AsRef<str> + From<Status>,
+  Return: 'static + for<'env, 'scope> FromJs<'env, 'scope>,
+  V: 'static,
+  ErrorStatus: AsRef<str> + From<Status> + Send + 'static,
   R,
   const CalleeHandled: bool,
 >(
@@ -747,107 +775,175 @@ unsafe extern "C" fn call_js_cb<
   context: *mut c_void,
   data: *mut c_void,
 ) where
-  R: 'static + FnMut(ThreadsafeCallContext<T>) -> Result<V>,
+  for<'scope> V: IntoJsArgs<'scope>,
+  R: 'static + for<'scope> FnMut(ThreadsafeCallContext<'scope, T>) -> Result<V>,
 {
-  // env and/or callback can be null when shutting down
-  if raw_env.is_null() || js_callback.is_null() {
+  if data.is_null() {
     return;
   }
 
-  let callback: &mut R = unsafe { Box::leak(Box::from_raw(context.cast())) };
-  let val = unsafe {
-    if CalleeHandled {
-      *Box::<Result<ThreadsafeFunctionCallJsBackData<T, Return>, ErrorStatus>>::from_raw(
-        data.cast(),
-      )
-    } else {
-      Ok(*Box::<ThreadsafeFunctionCallJsBackData<T, Return>>::from_raw(data.cast()))
+  // env and/or callback can be null when shutting down
+  if raw_env.is_null() || js_callback.is_null() {
+    unsafe {
+      drop_call_js_cb_data::<T, Return, ErrorStatus, CalleeHandled>(data);
     }
-  };
+    return;
+  }
 
-  let mut recv = ptr::null_mut();
-  unsafe { sys::napi_get_undefined(raw_env, &mut recv) };
+  let result = crate::catch_unwind_boundary("running threadsafe function callback", || unsafe {
+    crate::bindgen_prelude::with_env(raw_env, |mut env_wrapper| {
+      let callback: &mut R = Box::leak(Box::from_raw(context.cast()));
+      let val = if CalleeHandled {
+        *Box::<Result<ThreadsafeFunctionCallJsBackData<T, Return>, ErrorStatus>>::from_raw(
+          data.cast(),
+        )
+      } else {
+        Ok(*Box::<ThreadsafeFunctionCallJsBackData<T, Return>>::from_raw(data.cast()))
+      };
 
-  let ret = val.and_then(|v| {
-    (callback)(ThreadsafeCallContext {
-      env: Env::from_raw(raw_env),
-      value: v.data,
+      let mut recv = ptr::null_mut();
+      sys::napi_get_undefined(raw_env, &mut recv);
+
+      // Follow async callback conventions: https://nodejs.org/en/knowledge/errors/what-are-the-error-conventions/
+      // Check if the Result is okay, if so, pass a null as the first (error) argument automatically.
+      // If the Result is an error, pass that as the first argument.
+      let ret = val.and_then(|v| {
+        (callback)(ThreadsafeCallContext {
+          env: env_wrapper,
+          value: v.data,
+        })
+        .and_then(|ret| {
+          env_wrapper.with_scope(|scope| {
+            let mut args = ret.into_js_args(scope)?;
+            if CalleeHandled {
+              let mut js_null = ptr::null_mut();
+              sys::napi_get_null(raw_env, &mut js_null);
+              args.insert_front(js_null);
+            }
+            let mut return_value = ptr::null_mut();
+            let mut status = sys::napi_call_function(
+              raw_env,
+              recv,
+              js_callback,
+              args.len(),
+              args.as_slice().as_ptr(),
+              &mut return_value,
+            );
+            if let ThreadsafeFunctionCallVariant::WithCallback = v.call_variant {
+              // throw Error in JavaScript callback
+              let callback_arg =
+                threadsafe_callback_return(scope, raw_env, &mut status, return_value);
+              let callback_env = *scope.env();
+              if let Err(err) = (v.callback)(callback_arg, callback_env) {
+                sys::napi_fatal_exception(raw_env, JsError::from(err).into_value(raw_env));
+              }
+            }
+            Ok(status)
+          })
+        })
+        .map_err(|err| {
+          let status = err.status.into();
+          err.with_status(status)
+        })
+      });
+
+      let status = match ret {
+        Ok(status) => status,
+        Err(e) if !CalleeHandled => {
+          sys::napi_fatal_exception(raw_env, JsError::from(e).into_value(raw_env))
+        }
+        Err(e) => sys::napi_call_function(
+          raw_env,
+          recv,
+          js_callback,
+          1,
+          [JsError::from(e).into_value(raw_env)].as_mut_ptr(),
+          ptr::null_mut(),
+        ),
+      };
+      handle_call_js_cb_status(status, raw_env);
+      Ok(())
     })
-    .and_then(|ret| Ok((ret.into_vec(raw_env)?, v.call_variant, v.callback)))
-    .map_err(|err| Error::new(err.status.into(), err.reason.clone()))
   });
 
-  // Follow async callback conventions: https://nodejs.org/en/knowledge/errors/what-are-the-error-conventions/
-  // Check if the Result is okay, if so, pass a null as the first (error) argument automatically.
-  // If the Result is an error, pass that as the first argument.
-  let status = match ret {
-    Ok((values, call_variant, callback)) => {
-      let args: Vec<sys::napi_value> = if CalleeHandled {
-        let mut js_null = ptr::null_mut();
-        unsafe { sys::napi_get_null(raw_env, &mut js_null) };
-        core::iter::once(js_null).chain(values).collect()
-      } else {
-        values
-      };
-      let mut return_value = ptr::null_mut();
-      #[allow(unused_mut)]
-      let mut status = sys::napi_call_function(
-        raw_env,
-        recv,
-        js_callback,
-        args.len(),
-        args.as_ptr(),
-        &mut return_value,
-      );
-      if let ThreadsafeFunctionCallVariant::WithCallback = call_variant {
-        // throw Error in JavaScript callback
-        let callback_arg = if status == sys::Status::napi_pending_exception {
-          let mut exception = ptr::null_mut();
-          unsafe { sys::napi_get_and_clear_last_exception(raw_env, &mut exception) };
-          let mut error_reference = ptr::null_mut();
-          let raw_status = status;
-          status =
-            unsafe { sys::napi_create_reference(raw_env, exception, 1, &mut error_reference) };
-
-          get_error_message_and_stack_trace(raw_env, exception).and_then(|reason| {
-            Err(Error {
-              maybe_raw: error_reference,
-              maybe_env: raw_env,
-              // SAFETY: `raw_env` and `exception` are valid pointers obtained from
-              // `napi_get_and_clear_last_exception` above, which guarantees they are
-              // non-null and live for the duration of this callback.
-              cause: extract_error_cause(unsafe {
-                Unknown::from_raw_unchecked(raw_env, exception)
-              })
-              .unwrap_or(None),
-              status: Status::from(raw_status),
-              reason,
-            })
-          })
-        } else {
-          unsafe { Return::from_napi_value(raw_env, return_value) }
-        };
-        if let Err(err) = callback(callback_arg, Env::from_raw(raw_env)) {
-          unsafe { sys::napi_fatal_exception(raw_env, JsError::from(err).into_value(raw_env)) };
-        }
-      }
-      status
+  match result {
+    Some(Ok(())) => {}
+    Some(Err(error)) => {
+      unsafe { sys::napi_fatal_exception(raw_env, JsError::from(error).into_value(raw_env)) };
     }
-    Err(e) if !CalleeHandled => unsafe {
-      sys::napi_fatal_exception(raw_env, JsError::from(e).into_value(raw_env))
-    },
-    Err(e) => unsafe {
-      sys::napi_call_function(
-        raw_env,
-        recv,
-        js_callback,
-        1,
-        [JsError::from(e).into_value(raw_env)].as_mut_ptr(),
-        ptr::null_mut(),
-      )
-    },
-  };
-  handle_call_js_cb_status(status, raw_env)
+    None => {}
+  }
+}
+
+fn threadsafe_callback_return<'env, 'scope, Return>(
+  scope: &mut Scope<'env, 'scope>,
+  raw_env: sys::napi_env,
+  status: &mut sys::napi_status,
+  return_value: sys::napi_value,
+) -> Result<Return>
+where
+  Return: FromJs<'env, 'scope>,
+{
+  if *status == sys::Status::napi_pending_exception {
+    let mut exception = ptr::null_mut();
+    check_status!(
+      unsafe { sys::napi_get_and_clear_last_exception(raw_env, &mut exception) },
+      "Get pending exception from threadsafe function callback failed"
+    )?;
+    let raw_status = *status;
+    *status = sys::Status::napi_ok;
+
+    let mut error = callback_error_from_exception(scope, exception)?;
+    error.status = Status::from(raw_status);
+    Err(error)
+  } else if *status == sys::Status::napi_ok {
+    callback_value_from_return(scope, return_value)
+  } else {
+    Err(Error::new(
+      Status::from(*status),
+      "Call JavaScript callback failed in threadsafe function".to_owned(),
+    ))
+  }
+}
+
+fn callback_error_from_exception<'env, 'scope>(
+  scope: &mut Scope<'env, 'scope>,
+  exception: sys::napi_value,
+) -> Result<Error> {
+  let value = unsafe { Local::from_raw(exception) };
+  Error::from_js(scope, value)
+}
+
+fn callback_value_from_return<'env, 'scope, Return>(
+  scope: &mut Scope<'env, 'scope>,
+  return_value: sys::napi_value,
+) -> Result<Return>
+where
+  Return: FromJs<'env, 'scope>,
+{
+  let value = unsafe { Local::from_raw(return_value) };
+  Return::from_js(scope, value)
+}
+
+unsafe fn drop_call_js_cb_data<
+  T: 'static,
+  Return: 'static,
+  ErrorStatus: AsRef<str> + From<Status> + Send + 'static,
+  const CalleeHandled: bool,
+>(
+  data: *mut c_void,
+) {
+  if CalleeHandled {
+    unsafe {
+      drop(Box::<
+        Result<ThreadsafeFunctionCallJsBackData<T, Return>, ErrorStatus>,
+      >::from_raw(data.cast()));
+    }
+  } else {
+    unsafe {
+      drop(Box::<ThreadsafeFunctionCallJsBackData<T, Return>>::from_raw(data.cast()));
+    }
+  }
 }
 
 fn handle_call_js_cb_status(status: sys::napi_status, raw_env: sys::napi_env) {
@@ -856,14 +952,18 @@ fn handle_call_js_cb_status(status: sys::napi_status, raw_env: sys::napi_env) {
   }
   if status == sys::Status::napi_pending_exception {
     let mut error_result = ptr::null_mut();
-    assert_eq!(
-      unsafe { sys::napi_get_and_clear_last_exception(raw_env, &mut error_result) },
-      sys::Status::napi_ok
-    );
+    if unsafe { sys::napi_get_and_clear_last_exception(raw_env, &mut error_result) }
+      != sys::Status::napi_ok
+    {
+      eprintln!("napi-rs: failed to clear pending exception in threadsafe function callback");
+      return;
+    }
 
     // When shutting down, napi_fatal_exception sometimes returns another exception
     let stat = unsafe { sys::napi_fatal_exception(raw_env, error_result) };
-    assert!(stat == sys::Status::napi_ok || stat == sys::Status::napi_pending_exception);
+    if stat != sys::Status::napi_ok && stat != sys::Status::napi_pending_exception {
+      eprintln!("napi-rs: failed to raise fatal exception in threadsafe function callback");
+    }
   } else {
     // During environment shutdown (e.g. Ctrl+C in a worker thread), any NAPI call
     // can fail. Bail out gracefully instead of panicking if we can't construct the
@@ -925,8 +1025,8 @@ impl TypeName for UnknownReturnValue {
 
 impl ValidateNapiValue for UnknownReturnValue {}
 
-impl FromNapiValue for UnknownReturnValue {
-  unsafe fn from_napi_value(_env: sys::napi_env, _napi_val: sys::napi_value) -> Result<Self> {
+impl<'env, 'scope> FromJs<'env, 'scope> for UnknownReturnValue {
+  fn from_js(_: &mut Scope<'env, 'scope>, _: Local<'scope, Unknown<'scope>>) -> Result<Self> {
     Ok(UnknownReturnValue)
   }
 }

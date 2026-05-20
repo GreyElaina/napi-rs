@@ -23,8 +23,6 @@ independent = true
 [features]
 async = ["tokio_rt"]
 chrono_date = ["chrono", "napi5"]
-# Enable deprecated types and traits for compatibility
-compat-mode = []
 default = ["napi4", "dyn-symbols"]
 deferred_trace = ["napi4"]
 error_anyhow = ["anyhow"]
@@ -34,7 +32,6 @@ full = [
   "napi10",
   "async",
   "serde-json",
-  "experimental",
   "chrono_date",
 ]
 object_indexmap = ["indexmap"]

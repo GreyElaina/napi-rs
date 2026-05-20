@@ -2,13 +2,16 @@ use std::os::raw::c_void;
 use std::ptr;
 use std::{
   marker::PhantomData,
-  sync::{Arc, RwLock},
+  sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
+  },
 };
 
 #[cfg(feature = "deferred_trace")]
 use crate::{bindgen_runtime::JsObjectValue, JsValue};
 use crate::{
-  bindgen_runtime::{Object, ToNapiValue},
+  bindgen_runtime::{with_env, IntoJs, Object, Scope},
   check_status, sys, Env, Error, Result,
 };
 
@@ -27,7 +30,7 @@ struct DeferredTrace(sys::napi_ref);
 #[cfg(feature = "deferred_trace")]
 impl DeferredTrace {
   fn new(raw_env: sys::napi_env) -> Result<Self> {
-    let env = Env::from_raw(raw_env);
+    let env = unsafe { Env::from_raw(raw_env) };
     let reason = env.create_string("none")?;
 
     let mut js_error = ptr::null_mut();
@@ -46,53 +49,31 @@ impl DeferredTrace {
   }
 
   fn into_rejected(self, raw_env: sys::napi_env, mut err: Error) -> Result<sys::napi_value> {
-    let env = Env::from_raw(raw_env);
+    let env = unsafe { Env::from_raw(raw_env) };
     let mut raw = ptr::null_mut();
     check_status!(
       unsafe { sys::napi_get_reference_value(raw_env, self.0, &mut raw) },
       "Failed to get referenced value in DeferredTrace"
     )?;
 
-    let mut obj = Object::from_raw(raw_env, raw);
-    let err_value = if !err.maybe_raw.is_null() {
-      let mut err_raw_value = std::ptr::null_mut();
-      check_status!(
-        unsafe { sys::napi_get_reference_value(raw_env, err.maybe_raw, &mut err_raw_value) },
-        "Get error reference in `to_napi_value` failed"
-      )?;
-      let err_obj = Object::from_raw(raw_env, err_raw_value);
-
-      let err_value = if err_obj.has_named_property("message")? {
-        // The error was already created inside the JS engine, just return it
-        Ok(err_obj.raw())
-      } else {
-        obj.set_named_property("message", "")?;
-        obj.set_named_property("code", "")?;
-        Ok(raw)
-      };
-      let mut ref_count = 0;
-      check_status!(
-        unsafe { sys::napi_reference_unref(raw_env, err.maybe_raw, &mut ref_count) },
-        "Unref error reference in `to_napi_value` failed"
-      )?;
-      if ref_count == 0 {
-        check_status!(
-          unsafe { sys::napi_delete_reference(raw_env, err.maybe_raw) },
-          "Delete error reference in `to_napi_value` failed"
-        )?;
-      }
-      // already unref, skip the logic in `Drop`
-      err.maybe_env = ptr::null_mut();
-      err.maybe_raw = ptr::null_mut();
-      err_value
-    } else {
-      obj.set_named_property("message", &err.reason)?;
-      obj.set_named_property(
-        "code",
-        env.create_string_from_std(format!("{}", err.status))?,
-      )?;
-      Ok(raw)
-    };
+    let mut obj = unsafe { Object::from_raw(raw_env, raw) };
+    obj.set_named_property("message", &err.reason)?;
+    if let Some(name) = err.js_name.as_ref() {
+      obj.set_named_property("name", name)?;
+    }
+    obj.set_named_property(
+      "code",
+      env.create_string_from_std(
+        err
+          .js_code
+          .clone()
+          .unwrap_or_else(|| format!("{}", err.status)),
+      )?,
+    )?;
+    if let Some(cause) = err.cause.take() {
+      obj.set_named_property("cause", *cause)?;
+    }
+    let err_value = Ok(raw);
     check_status!(
       unsafe { sys::napi_delete_reference(raw_env, self.0) },
       "Failed to get referenced value in DeferredTrace"
@@ -101,18 +82,74 @@ impl DeferredTrace {
   }
 }
 
-type FinalizeCallback = Arc<RwLock<Option<Box<dyn FnOnce(sys::napi_env)>>>>;
+pub(crate) type EnvFinalizeCallback = Box<dyn for<'env> FnOnce(Env<'env>) + Send>;
+type FinalizeCallback = Arc<Mutex<Option<EnvFinalizeCallback>>>;
 
-struct DeferredData<Data: ToNapiValue, Resolver: FnOnce(Env) -> Result<Data>> {
+struct DeferredThreadsafeFunction {
+  raw: sys::napi_threadsafe_function,
+  called: AtomicBool,
+  released: AtomicBool,
+}
+
+// SAFETY: N-API threadsafe function handles are safe to share across threads.
+unsafe impl Send for DeferredThreadsafeFunction {}
+unsafe impl Sync for DeferredThreadsafeFunction {}
+
+impl DeferredThreadsafeFunction {
+  fn new(raw: sys::napi_threadsafe_function) -> Arc<Self> {
+    Arc::new(Self {
+      raw,
+      called: AtomicBool::new(false),
+      released: AtomicBool::new(false),
+    })
+  }
+
+  fn raw(&self) -> sys::napi_threadsafe_function {
+    self.raw
+  }
+
+  fn mark_called(&self) -> bool {
+    !self.called.swap(true, Ordering::AcqRel)
+  }
+
+  fn release(&self) -> Result<()> {
+    if self.released.swap(true, Ordering::AcqRel) {
+      return Ok(());
+    }
+    check_status!(
+      unsafe {
+        sys::napi_release_threadsafe_function(self.raw, sys::ThreadsafeFunctionReleaseMode::release)
+      },
+      "Release threadsafe function in JsDeferred failed"
+    )
+  }
+}
+
+impl Drop for DeferredThreadsafeFunction {
+  fn drop(&mut self) {
+    if !self.called.load(Ordering::Acquire) {
+      let status = unsafe {
+        sys::napi_release_threadsafe_function(self.raw, sys::ThreadsafeFunctionReleaseMode::release)
+      };
+      debug_assert!(
+        status == sys::Status::napi_ok,
+        "Release unused threadsafe function in JsDeferred failed: {}",
+        crate::Status::from(status)
+      );
+    }
+  }
+}
+
+struct DeferredData<Resolver: Send> {
   resolver: Result<Resolver>,
   #[cfg(feature = "deferred_trace")]
   trace: DeferredTrace,
-  tsfn: sys::napi_threadsafe_function,
+  tsfn: Arc<DeferredThreadsafeFunction>,
   finalize_callback: FinalizeCallback,
 }
 
-pub struct JsDeferred<Data: ToNapiValue, Resolver: FnOnce(Env) -> Result<Data>> {
-  pub(crate) tsfn: sys::napi_threadsafe_function,
+pub struct JsDeferred<Data, Resolver: Send> {
+  tsfn: Arc<DeferredThreadsafeFunction>,
   #[cfg(feature = "deferred_trace")]
   trace: DeferredTrace,
   finalize_callback: FinalizeCallback,
@@ -120,14 +157,10 @@ pub struct JsDeferred<Data: ToNapiValue, Resolver: FnOnce(Env) -> Result<Data>> 
   _resolver: PhantomData<Resolver>,
 }
 
-// A trick to send the resolver into the `panic` handler
-// Do not use clone in the other place besides the `fn execute_tokio_future`
-impl<Data: ToNapiValue, Resolver: FnOnce(Env) -> Result<Data>> Clone
-  for JsDeferred<Data, Resolver>
-{
+impl<Data, Resolver: Send> Clone for JsDeferred<Data, Resolver> {
   fn clone(&self) -> Self {
     Self {
-      tsfn: self.tsfn,
+      tsfn: self.tsfn.clone(),
       #[cfg(feature = "deferred_trace")]
       trace: self.trace.clone(),
       finalize_callback: self.finalize_callback.clone(),
@@ -137,17 +170,19 @@ impl<Data: ToNapiValue, Resolver: FnOnce(Env) -> Result<Data>> Clone
   }
 }
 
-unsafe impl<Data: ToNapiValue, Resolver: FnOnce(Env) -> Result<Data>> Send
-  for JsDeferred<Data, Resolver>
-{
-}
+unsafe impl<Data, Resolver: Send> Send for JsDeferred<Data, Resolver> {}
 
-impl<Data: ToNapiValue, Resolver: FnOnce(Env) -> Result<Data>> JsDeferred<Data, Resolver> {
-  pub(crate) fn new(env: &Env) -> Result<(Self, Object<'_>)> {
+impl<Data, Resolver> JsDeferred<Data, Resolver>
+where
+  Data: 'static,
+  for<'scope> Data: IntoJs<'scope>,
+  Resolver: for<'callback, 'scope> FnOnce(&mut Scope<'callback, 'scope>) -> Result<Data> + Send,
+{
+  pub(crate) fn new<'env>(env: &'env Env<'env>) -> Result<(Self, Object<'env>)> {
     let (tsfn, promise) = js_deferred_new_raw(env, Some(napi_resolve_deferred::<Data, Resolver>))?;
 
     let deferred = Self {
-      tsfn,
+      tsfn: DeferredThreadsafeFunction::new(tsfn),
       #[cfg(feature = "deferred_trace")]
       trace: DeferredTrace::new(env.0)?,
       finalize_callback: Default::default(),
@@ -168,32 +203,44 @@ impl<Data: ToNapiValue, Resolver: FnOnce(Env) -> Result<Data>> JsDeferred<Data, 
   pub fn reject(self, error: Error) {
     self.call_tsfn(Err(error))
   }
+}
 
-  #[allow(clippy::arc_with_non_send_sync)]
-  pub fn set_finalize_callback(
-    &mut self,
-    finalize_callback: Option<Box<dyn FnOnce(sys::napi_env)>>,
-  ) {
-    self.finalize_callback = Arc::new(RwLock::new(finalize_callback));
+impl<Data, Resolver> JsDeferred<Data, Resolver>
+where
+  Resolver: Send,
+{
+  pub fn set_finalize_callback(&mut self, finalize_callback: Option<EnvFinalizeCallback>) {
+    self.finalize_callback = Arc::new(Mutex::new(finalize_callback));
   }
 
   fn call_tsfn(self, result: Result<Resolver>) {
+    let tsfn = self.tsfn.clone();
+    if !tsfn.mark_called() {
+      return;
+    }
     let data = DeferredData {
       resolver: result,
       #[cfg(feature = "deferred_trace")]
       trace: self.trace,
-      tsfn: self.tsfn,
+      tsfn: tsfn.clone(),
       finalize_callback: self.finalize_callback.clone(),
     };
 
     // Call back into the JS thread via a threadsafe function. This results in napi_resolve_deferred being called.
+    let raw_data = Box::into_raw(Box::from(data));
     let status = unsafe {
       sys::napi_call_threadsafe_function(
-        self.tsfn,
-        Box::into_raw(Box::from(data)).cast(),
+        tsfn.raw(),
+        raw_data.cast(),
         sys::ThreadsafeFunctionCallMode::blocking,
       )
     };
+    if status != sys::Status::napi_ok {
+      unsafe { drop(Box::from_raw(raw_data)) };
+      if let Err(err) = tsfn.release() {
+        eprintln!("napi-rs: failed to release JsDeferred threadsafe function: {err:?}");
+      }
+    }
     debug_assert!(
       status == sys::Status::napi_ok,
       "Call threadsafe function in JsDeferred failed"
@@ -201,10 +248,10 @@ impl<Data: ToNapiValue, Resolver: FnOnce(Env) -> Result<Data>> JsDeferred<Data, 
   }
 }
 
-fn js_deferred_new_raw(
-  env: &Env,
+fn js_deferred_new_raw<'env>(
+  env: &'env Env<'env>,
   resolve_deferred: sys::napi_threadsafe_function_call_js,
-) -> Result<(sys::napi_threadsafe_function, Object<'_>)> {
+) -> Result<(sys::napi_threadsafe_function, Object<'env>)> {
   let mut raw_promise = ptr::null_mut();
   let mut raw_deferred = ptr::null_mut();
   check_status!(
@@ -246,34 +293,64 @@ fn js_deferred_new_raw(
     "Create threadsafe function in JsDeferred failed"
   )?;
 
-  let promise = Object::from_raw(env.0, raw_promise);
+  let promise = unsafe { Object::from_raw(env.0, raw_promise) };
 
   Ok((tsfn, promise))
 }
 
-extern "C" fn napi_resolve_deferred<Data: ToNapiValue, Resolver: FnOnce(Env) -> Result<Data>>(
+unsafe extern "C" fn napi_resolve_deferred<Data, Resolver>(
   env: sys::napi_env,
   _js_callback: sys::napi_value,
   context: *mut c_void,
   data: *mut c_void,
-) {
-  let deferred = context.cast();
-  let deferred_data: Box<DeferredData<Data, Resolver>> = unsafe { Box::from_raw(data.cast()) };
-  let tsfn: *mut napi_sys::napi_threadsafe_function__ = deferred_data.tsfn;
-  let finalize_callback = RwLock::write(&deferred_data.finalize_callback)
-    .expect("RwLock Poison")
-    .take();
-  let result = deferred_data
-    .resolver
-    .and_then(|resolver| resolver(Env::from_raw(env)))
-    .and_then(|res| unsafe { ToNapiValue::to_napi_value(env, res) });
+) where
+  Data: 'static,
+  for<'scope> Data: IntoJs<'scope>,
+  Resolver: for<'callback, 'scope> FnOnce(&mut Scope<'callback, 'scope>) -> Result<Data> + Send,
+{
+  if data.is_null() {
+    return;
+  }
 
-  let release_tsfn_result = check_status!(
-    unsafe {
-      sys::napi_release_threadsafe_function(tsfn, sys::ThreadsafeFunctionReleaseMode::release)
-    },
-    "Release threadsafe function in JsDeferred failed"
-  );
+  let deferred_data: Box<DeferredData<Resolver>> = unsafe { Box::from_raw(data.cast()) };
+  if env.is_null() {
+    return;
+  }
+
+  let deferred = context.cast();
+  if let Err(error) = unsafe {
+    with_env(env, |env_wrapper| {
+      resolve_deferred_with_env(env_wrapper, deferred, *deferred_data)
+    })
+  } {
+    eprintln!("napi-rs: failed to resolve deferred callback: {error:?}");
+  }
+}
+
+fn resolve_deferred_with_env<Data, Resolver>(
+  mut env_wrapper: Env<'_>,
+  deferred: sys::napi_deferred,
+  deferred_data: DeferredData<Resolver>,
+) -> Result<()>
+where
+  Data: 'static,
+  for<'scope> Data: IntoJs<'scope>,
+  Resolver: for<'callback, 'scope> FnOnce(&mut Scope<'callback, 'scope>) -> Result<Data> + Send,
+{
+  let env = env_wrapper.raw();
+  let finalize_callback = deferred_data
+    .finalize_callback
+    .lock()
+    .expect("Mutex poisoned")
+    .take();
+  let result = deferred_data.resolver.and_then(|resolver| {
+    env_wrapper.with_scope(|scope| {
+      let value = resolver(scope)?;
+      value.into_js(scope).map(|local| local.raw())
+    })
+  });
+
+  let release_tsfn_result = deferred_data.tsfn.release();
 
   if let Err(e) = release_tsfn_result.and(result).and_then(|res| {
     check_status!(
@@ -283,11 +360,11 @@ extern "C" fn napi_resolve_deferred<Data: ToNapiValue, Resolver: FnOnce(Env) -> 
     .map(|_| {
       #[cfg(feature = "deferred_trace")]
       {
-        let _status = unsafe { sys::napi_delete_reference(env, deferred_data.trace.0) };
-        if _status != sys::Status::napi_ok && cfg!(debug_assertions) {
+        let status = unsafe { sys::napi_delete_reference(env, deferred_data.trace.0) };
+        if status != sys::Status::napi_ok && cfg!(debug_assertions) {
           eprintln!(
             "Failed to delete reference in deferred {}",
-            crate::Status::from(_status)
+            crate::Status::from(status)
           );
         }
       }
@@ -302,12 +379,12 @@ extern "C" fn napi_resolve_deferred<Data: ToNapiValue, Resolver: FnOnce(Env) -> 
       Ok(error) => {
         unsafe { sys::napi_reject_deferred(env, deferred, error) };
         if let Some(finalize_callback) = finalize_callback {
-          finalize_callback(env);
+          finalize_callback(env_wrapper);
         }
       }
       Err(err) => {
         if let Some(finalize_callback) = finalize_callback {
-          finalize_callback(env);
+          finalize_callback(env_wrapper);
         }
         if cfg!(debug_assertions) {
           eprintln!("Failed to reject deferred: {err:?}");
@@ -322,6 +399,7 @@ extern "C" fn napi_resolve_deferred<Data: ToNapiValue, Resolver: FnOnce(Env) -> 
       }
     }
   } else if let Some(finalize_callback) = finalize_callback {
-    finalize_callback(env);
+    finalize_callback(env_wrapper);
   }
+  Ok(())
 }

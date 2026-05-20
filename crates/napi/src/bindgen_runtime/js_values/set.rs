@@ -1,5 +1,6 @@
 use std::collections::{BTreeSet, HashSet};
 use std::hash::{BuildHasher, Hash};
+use std::ptr;
 
 #[cfg(feature = "object_indexmap")]
 use indexmap::IndexSet;
@@ -16,43 +17,29 @@ impl<V, S> TypeName for HashSet<V, S> {
   }
 }
 
-impl<V: FromNapiValue, S> ValidateNapiValue for HashSet<V, S> {}
+impl<V, S> ValidateNapiValue for HashSet<V, S> {}
 
-impl<V, S> ToNapiValue for HashSet<V, S>
+impl<'scope, V, S> IntoJs<'scope> for HashSet<V, S>
 where
-  V: ToNapiValue,
+  V: IntoJs<'scope> + 'scope,
 {
-  unsafe fn to_napi_value(raw_env: sys::napi_env, val: Self) -> Result<sys::napi_value> {
-    let env = Env::from(raw_env);
-    let obj = env.get_global()?;
-    let set_class = obj.get_named_property_unchecked::<Function<'_, Array, ()>>("Set")?;
-    let set = set_class.new_instance(Array::from_vec(&env, val.into_iter().collect())?)?;
+  type Output = Object<'scope>;
 
-    Ok(set.0.value)
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
+    set_from_iter(scope, self)
   }
 }
 
-impl<V, S> FromNapiValue for HashSet<V, S>
+impl<'env, 'scope, V, S> FromJs<'env, 'scope> for HashSet<V, S>
 where
-  V: FromNapiValue + PartialEq + Eq + Hash,
+  V: FromJs<'env, 'scope> + PartialEq + Eq + Hash,
   S: Default + BuildHasher,
 {
-  unsafe fn from_napi_value(env: sys::napi_env, napi_val: sys::napi_value) -> Result<Self> {
-    let obj = Object::from_raw(env, napi_val);
-    let mut set = HashSet::default();
-    let iter_creator: Function<'_, (), Object> = obj.get_named_property("values")?;
-    let iter = iter_creator.apply(obj, ())?;
-    let next: Function<'_, (), Object> = iter.get_named_property("next")?;
-    while {
-      let o: Object = next.apply(iter, ())?;
-      let done: bool = o.get_named_property("done")?;
-      if !done {
-        let v = o.get_named_property_unchecked::<V>("value")?;
-        set.insert(v);
-      }
-      !done
-    } {}
-    Ok(set)
+  fn from_js(
+    scope: &mut Scope<'env, 'scope>,
+    value: Local<'scope, Unknown<'scope>>,
+  ) -> Result<Self> {
+    set_to_hash_collection(scope, value.raw())
   }
 }
 
@@ -66,42 +53,28 @@ impl<V> TypeName for BTreeSet<V> {
   }
 }
 
-impl<V: FromNapiValue> ValidateNapiValue for BTreeSet<V> {}
+impl<V> ValidateNapiValue for BTreeSet<V> {}
 
-impl<V> ToNapiValue for BTreeSet<V>
+impl<'scope, V> IntoJs<'scope> for BTreeSet<V>
 where
-  V: ToNapiValue,
+  V: IntoJs<'scope> + 'scope,
 {
-  unsafe fn to_napi_value(raw_env: sys::napi_env, val: Self) -> Result<sys::napi_value> {
-    let env = Env::from(raw_env);
-    let obj = env.get_global()?;
-    let set_class = obj.get_named_property_unchecked::<Function<'_, Array, ()>>("Set")?;
-    let set = set_class.new_instance(Array::from_vec(&env, val.into_iter().collect())?)?;
+  type Output = Object<'scope>;
 
-    Ok(set.0.value)
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
+    set_from_iter(scope, self)
   }
 }
 
-impl<V> FromNapiValue for BTreeSet<V>
+impl<'env, 'scope, V> FromJs<'env, 'scope> for BTreeSet<V>
 where
-  V: FromNapiValue + Ord,
+  V: FromJs<'env, 'scope> + Ord,
 {
-  unsafe fn from_napi_value(env: sys::napi_env, napi_val: sys::napi_value) -> Result<Self> {
-    let obj = unsafe { Object::from_napi_value(env, napi_val)? };
-    let mut set = BTreeSet::default();
-    let iter_creator: Function<'_, (), Object> = obj.get_named_property("values")?;
-    let iter = iter_creator.apply(obj, ())?;
-    let next: Function<'_, (), Object> = iter.get_named_property("next")?;
-    while {
-      let o: Object = next.apply(iter, ())?;
-      let done: bool = o.get_named_property("done")?;
-      if !done {
-        let v = o.get_named_property_unchecked::<V>("value")?;
-        set.insert(v);
-      }
-      !done
-    } {}
-    Ok(set)
+  fn from_js(
+    scope: &mut Scope<'env, 'scope>,
+    value: Local<'scope, Unknown<'scope>>,
+  ) -> Result<Self> {
+    set_to_ordered_collection(scope, value.raw())
   }
 }
 
@@ -116,42 +89,139 @@ impl<V, S> TypeName for IndexSet<V, S> {
   }
 }
 #[cfg(feature = "object_indexmap")]
-impl<V: FromNapiValue, S> ValidateNapiValue for IndexSet<V, S> {}
+impl<V, S> ValidateNapiValue for IndexSet<V, S> {}
 #[cfg(feature = "object_indexmap")]
-impl<V, S> ToNapiValue for IndexSet<V, S>
+impl<'scope, V, S> IntoJs<'scope> for IndexSet<V, S>
 where
-  V: ToNapiValue,
+  V: IntoJs<'scope> + 'scope,
 {
-  unsafe fn to_napi_value(raw_env: sys::napi_env, val: Self) -> Result<sys::napi_value> {
-    let env = Env::from(raw_env);
-    let obj = env.get_global()?;
-    let set_class = obj.get_named_property_unchecked::<Function<'_, Array, ()>>("Set")?;
-    let set = set_class.new_instance(Array::from_vec(&env, val.into_iter().collect())?)?;
+  type Output = Object<'scope>;
 
-    Ok(set.0.value)
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
+    set_from_iter(scope, self)
   }
 }
 #[cfg(feature = "object_indexmap")]
-impl<V, S> FromNapiValue for IndexSet<V, S>
+#[cfg(feature = "object_indexmap")]
+impl<'env, 'scope, V, S> FromJs<'env, 'scope> for IndexSet<V, S>
 where
-  V: FromNapiValue + PartialEq + Eq + Hash,
+  V: FromJs<'env, 'scope> + PartialEq + Eq + Hash,
   S: Default + BuildHasher,
 {
-  unsafe fn from_napi_value(env: sys::napi_env, napi_val: sys::napi_value) -> Result<Self> {
-    let obj = Object::from_raw(env, napi_val);
-    let mut set = IndexSet::default();
-    let iter_creator: Function<'_, (), Object> = obj.get_named_property("values")?;
-    let iter = iter_creator.apply(obj, ())?;
-    let next: Function<'_, (), Object> = iter.get_named_property("next")?;
-    while {
-      let o: Object = next.apply(iter, ())?;
-      let done: bool = o.get_named_property("done")?;
-      if !done {
-        let v = o.get_named_property_unchecked::<V>("value")?;
-        set.insert(v);
-      }
-      !done
-    } {}
-    Ok(set)
+  fn from_js(
+    scope: &mut Scope<'env, 'scope>,
+    value: Local<'scope, Unknown<'scope>>,
+  ) -> Result<Self> {
+    set_to_hash_collection(scope, value.raw())
   }
+}
+
+fn set_to_hash_collection<'env, 'scope, V, C>(
+  scope: &mut Scope<'env, 'scope>,
+  raw_set: sys::napi_value,
+) -> Result<C>
+where
+  V: FromJs<'env, 'scope> + PartialEq + Eq + Hash,
+  C: Default + Extend<V>,
+{
+  let mut collection = C::default();
+  extend_from_set_iterator::<V, C>(scope, raw_set, &mut collection)?;
+  Ok(collection)
+}
+
+fn set_to_ordered_collection<'env, 'scope, V, C>(
+  scope: &mut Scope<'env, 'scope>,
+  raw_set: sys::napi_value,
+) -> Result<C>
+where
+  V: FromJs<'env, 'scope> + Ord,
+  C: Default + Extend<V>,
+{
+  let mut collection = C::default();
+  extend_from_set_iterator::<V, C>(scope, raw_set, &mut collection)?;
+  Ok(collection)
+}
+
+fn extend_from_set_iterator<'env, 'scope, V, C>(
+  scope: &mut Scope<'env, 'scope>,
+  raw_set: sys::napi_value,
+  collection: &mut C,
+) -> Result<()>
+where
+  V: FromJs<'env, 'scope>,
+  C: Extend<V>,
+{
+  let env = scope.env().raw();
+  let mut values_fn = ptr::null_mut();
+  check_status!(
+    unsafe { sys::napi_get_named_property(env, raw_set, c"values".as_ptr(), &mut values_fn) },
+    "Get Set values method failed"
+  )?;
+  let mut iterator = ptr::null_mut();
+  check_status!(
+    unsafe { sys::napi_call_function(env, raw_set, values_fn, 0, ptr::null(), &mut iterator) },
+    "Call Set values method failed"
+  )?;
+  let mut next_fn = ptr::null_mut();
+  check_status!(
+    unsafe { sys::napi_get_named_property(env, iterator, c"next".as_ptr(), &mut next_fn) },
+    "Get Set iterator next method failed"
+  )?;
+
+  loop {
+    let mut iteration = ptr::null_mut();
+    check_status!(
+      unsafe { sys::napi_call_function(env, iterator, next_fn, 0, ptr::null(), &mut iteration) },
+      "Call Set iterator next method failed"
+    )?;
+    let iteration = unsafe { Object::from_raw(env, iteration) };
+    let done = scope
+      .get_optional_named_property::<bool, _>(&iteration, "done")?
+      .ok_or_else(|| {
+        Error::new(
+          Status::InvalidArg,
+          "Set iterator result is missing `done`".to_owned(),
+        )
+      })?;
+    if done {
+      return Ok(());
+    }
+    let value = scope
+      .get_optional_named_property::<V, _>(&iteration, "value")?
+      .ok_or_else(|| {
+        Error::new(
+          Status::InvalidArg,
+          "Set iterator result is missing `value`".to_owned(),
+        )
+      })?;
+    collection.extend([value]);
+  }
+}
+
+fn set_from_iter<'scope, V>(
+  scope: &mut Scope<'_, 'scope>,
+  values: impl IntoIterator<Item = V>,
+) -> Result<Local<'scope, Object<'scope>>>
+where
+  V: IntoJs<'scope> + 'scope,
+{
+  let env = scope.env().raw();
+  let obj = scope.env().get_global()?;
+  let set_class: Function<'scope, (), ()> = scope.get_named_property(&obj, "Set")?;
+  let values = values.into_iter().collect::<Vec<_>>().into_js(scope)?;
+  let mut args = [values.raw()];
+  let mut raw_set = std::ptr::null_mut();
+  check_status!(
+    unsafe {
+      sys::napi_new_instance(
+        env,
+        set_class.value,
+        args.len(),
+        args.as_mut_ptr(),
+        &mut raw_set,
+      )
+    },
+    "Create Set instance failed"
+  )?;
+  Ok(unsafe { Local::from_raw(raw_set) })
 }

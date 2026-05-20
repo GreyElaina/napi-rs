@@ -3,7 +3,7 @@ use std::mem;
 use std::ptr;
 
 use crate::{
-  bindgen_runtime::{FromNapiValue, ToNapiValue, TypeName, ValidateNapiValue},
+  bindgen_runtime::{FromJs, IntoJs, Local, Scope, TypeName, Unknown, ValidateNapiValue},
   check_status, sys, Result, Value, ValueType,
 };
 
@@ -38,12 +38,15 @@ impl<'env> JsValue<'env> for JsString<'env> {
   }
 }
 
-impl FromNapiValue for JsString<'_> {
-  unsafe fn from_napi_value(env: sys::napi_env, napi_val: sys::napi_value) -> Result<Self> {
+impl<'env, 'scope> FromJs<'env, 'scope> for JsString<'scope> {
+  fn from_js(
+    scope: &mut Scope<'env, 'scope>,
+    value: Local<'scope, Unknown<'scope>>,
+  ) -> Result<Self> {
     Ok(JsString(
       Value {
-        env,
-        value: napi_val,
+        env: scope.env().raw(),
+        value: value.raw(),
         value_type: ValueType::String,
       },
       PhantomData,
@@ -51,14 +54,15 @@ impl FromNapiValue for JsString<'_> {
   }
 }
 
-impl ToNapiValue for &JsString<'_> {
-  unsafe fn to_napi_value(_env: sys::napi_env, val: Self) -> Result<sys::napi_value> {
-    Ok(val.raw())
+impl<'scope> IntoJs<'scope> for &JsString<'_> {
+  type Output = JsString<'scope>;
+
+  fn into_js(self, _: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
+    Ok(unsafe { Local::from_raw(self.raw()) })
   }
 }
 
 impl<'env> JsString<'env> {
-  #[cfg(feature = "serde-json")]
   pub(crate) fn from_raw(env: sys::napi_env, value: sys::napi_value) -> Self {
     JsString(
       Value {

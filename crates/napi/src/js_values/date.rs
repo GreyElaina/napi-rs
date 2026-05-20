@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 use std::ptr;
 
 use crate::{
-  bindgen_runtime::{FromNapiValue, JsObjectValue, TypeName, ValidateNapiValue},
+  bindgen_runtime::{JsObjectValue, TypeName, ValidateNapiValue},
   check_status, sys, Error, JsValue, Result, Status, Value, ValueType,
 };
 
@@ -31,19 +31,6 @@ impl ValidateNapiValue for JsDate<'_> {
     }
 
     Ok(ptr::null_mut())
-  }
-}
-
-impl FromNapiValue for JsDate<'_> {
-  unsafe fn from_napi_value(env: sys::napi_env, napi_val: sys::napi_value) -> Result<Self> {
-    Ok(Self(
-      Value {
-        env,
-        value: napi_val,
-        value_type: ValueType::Object,
-      },
-      PhantomData,
-    ))
   }
 }
 
