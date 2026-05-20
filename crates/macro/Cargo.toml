@@ -14,9 +14,8 @@ version = "3.5.6"
 independent = true
 
 [features]
-compat-mode = []
 default = ["type-def", "strict"]
-full = ["type-def", "strict", "compat-mode"]
+full = ["type-def", "strict"]
 noop = ["napi-derive-backend/noop"]
 strict = ["napi-derive-backend/strict"]
 tracing = ["napi-derive-backend/tracing"]

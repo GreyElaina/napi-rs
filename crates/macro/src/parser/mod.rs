@@ -1,9 +1,9 @@
 #[macro_use]
 pub mod attrs;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::str::Chars;
-use std::sync::{atomic::AtomicUsize, LazyLock, Mutex, OnceLock};
+use std::sync::{atomic::AtomicUsize, Mutex, OnceLock};
 
 use attrs::BindgenAttrs;
 
@@ -12,7 +12,7 @@ use napi_derive_backend::{
   rm_raw_prefix, to_case, BindgenResult, CallbackArg, Diagnostic, FnKind, FnSelf, Napi, NapiArray,
   NapiClass, NapiConst, NapiEnum, NapiEnumValue, NapiEnumVariant, NapiFn, NapiFnArg, NapiFnArgKind,
   NapiImpl, NapiItem, NapiObject, NapiStruct, NapiStructField, NapiStructKind, NapiStructuredEnum,
-  NapiStructuredEnumVariant, NapiTransparent, NapiType,
+  NapiStructuredEnumVariant, NapiTransparent, NapiType, NativeParentSpec,
 };
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::ToTokens;
@@ -24,33 +24,14 @@ use syn::{
   PathArguments, PathSegment, Signature, Token, Type, Visibility,
 };
 
-use crate::parser::attrs::{check_recorded_struct_for_impl, record_struct};
+use crate::parser::attrs::{
+  check_recorded_struct_for_impl, record_struct, recorded_struct_js_name,
+};
 
 /// Stores (is_sync_generator, is_async_generator) for each struct
 static GENERATOR_STRUCT: OnceLock<Mutex<HashMap<String, (bool, bool)>>> = OnceLock::new();
 
 static REGISTER_INDEX: AtomicUsize = AtomicUsize::new(0);
-
-static KNOWN_JS_VALUE_TYPES_WITH_LIFETIME: LazyLock<HashSet<&str>> = LazyLock::new(|| {
-  [
-    "Array",
-    "Function",
-    "JsDate",
-    "JsGlobal",
-    "JsNumber",
-    "JsString",
-    "JsSymbol",
-    "JsTimeout",
-    "JSON",
-    "Object",
-    "PromiseRaw",
-    "ReadableStream",
-    "This",
-    "Unknown",
-    "WriteableStream",
-  ]
-  .into()
-});
 
 fn get_register_ident(name: &str) -> Ident {
   let new_name = format!(
@@ -246,26 +227,6 @@ fn get_ty(mut ty: &mut syn::Type) -> &mut syn::Type {
   }
 
   ty
-}
-
-fn replace_self(mut ty: syn::Type, self_ty: Option<&Ident>) -> syn::Type {
-  let self_ty = match self_ty {
-    Some(i) => i,
-    None => return ty,
-  };
-  let path = match get_ty(&mut ty) {
-    syn::Type::Path(syn::TypePath { qself: None, path }) => path.clone(),
-    other => return other.clone(),
-  };
-  let new_path = if path.segments.len() == 1 && path.segments[0].ident == "Self" {
-    self_ty.clone().into()
-  } else {
-    path
-  };
-  syn::Type::Path(syn::TypePath {
-    qself: None,
-    path: new_path,
-  })
 }
 
 /// Extracts the last ident from the path
@@ -620,8 +581,6 @@ fn napi_fn_from_decl(
             }
           }
         } else {
-          let ty = replace_self(p.ty.as_ref().clone(), parent);
-          *p.ty = ty;
           Some(NapiFnArg {
             kind: NapiFnArgKind::PatType(Box::new(p.clone())),
             ts_arg_type,
@@ -649,14 +608,28 @@ fn napi_fn_from_decl(
     })
     .collect::<Vec<_>>();
 
+  for arg in &args {
+    if let NapiFnArgKind::PatType(pat) = &arg.kind {
+      if let Some((ident, message)) = forbidden_js_visible_type(&pat.ty) {
+        errors.push(Diagnostic::spanned_error(&ident, message));
+      }
+    }
+  }
+
+  if let syn::ReturnType::Type(_, ty) = &output {
+    if let Some((ident, message)) = forbidden_js_visible_type(ty) {
+      errors.push(Diagnostic::spanned_error(&ident, message));
+    }
+  }
+
   let (ret, is_ret_result) = match output {
     syn::ReturnType::Default => (None, false),
     syn::ReturnType::Type(_, ty) => {
       let result_ty = extract_result_ty(&ty)?;
       if let Some(result_ty) = result_ty {
-        (Some(replace_self(result_ty, parent)), true)
+        (Some(result_ty), true)
       } else {
-        (Some(replace_self(*ty, parent)), false)
+        (Some(*ty), false)
       }
     }
   };
@@ -1199,6 +1172,11 @@ fn convert_fields(
     let ts_type = field_opts.ts_type().map(|e| e.0.to_string());
 
     let mut ty = field.ty.clone();
+    if !ignored {
+      if let Some((ident, message)) = forbidden_js_visible_type(&ty) {
+        return Err(Diagnostic::spanned_error(&ident, message));
+      }
+    }
 
     let has_lifetime = if let Type::Path(syn::TypePath {
       path: Path { segments, .. },
@@ -1241,6 +1219,166 @@ fn convert_fields(
     })
   }
   Ok((napi_fields, is_tuple))
+}
+
+fn forbidden_class_field_type(ty: &Type) -> Option<(Ident, String)> {
+  const FORBIDDEN: &[&str] = &[
+    "AbortSignal",
+    "ArrayBuffer",
+    "Buffer",
+    "BufferSlice",
+    "Env",
+    "FrameScope",
+    "FunctionCallContext",
+    "ClassLocal",
+    "ClassRef",
+    "ClassRefMut",
+    "ClassStorageRef",
+    "CleanupEnvHook",
+    "Date",
+    "Ref",
+    "FunctionRef",
+    "ExternalRef",
+    "EscapableHandleScope",
+    "HandleScope",
+    "ObjectRef",
+    "UnknownRef",
+    "SymbolRef",
+    "Object",
+    "Promise",
+    "PromiseFuture",
+    "JsArrayBuffer",
+    "JsArrayBufferValue",
+    "JsBigInt",
+    "JsBoolean",
+    "JsBuffer",
+    "JsBufferValue",
+    "JsDataView",
+    "JsDataViewValue",
+    "JsDate",
+    "JsExternal",
+    "JsFunction",
+    "JsGlobal",
+    "JsNull",
+    "JsNumber",
+    "JsObject",
+    "JsString",
+    "JsStringLatin1",
+    "JsStringUtf8",
+    "JsStringUtf16",
+    "JsSymbol",
+    "JsTimeout",
+    "JsTypedArray",
+    "JsTypedArrayValue",
+    "JsUndefined",
+    "JsUnknown",
+    "JSON",
+    "JsDeferred",
+    "Array",
+    "BigInt64Array",
+    "BigInt64ArraySlice",
+    "BigUint64Array",
+    "BigUint64ArraySlice",
+    "Float32Array",
+    "Float32ArraySlice",
+    "Float64Array",
+    "Float64ArraySlice",
+    "Int16Array",
+    "Int16ArraySlice",
+    "Int32Array",
+    "Int32ArraySlice",
+    "Int8Array",
+    "Int8ArraySlice",
+    "IteratorValue",
+    "ReadableStream",
+    "This",
+    "TypedArray",
+    "Uint16Array",
+    "Uint16ArraySlice",
+    "Uint32Array",
+    "Uint32ArraySlice",
+    "Uint8Array",
+    "Uint8ArraySlice",
+    "Uint8ClampedArray",
+    "Uint8ClampedSlice",
+    "WriteableStream",
+    "Unknown",
+    "Function",
+    "napi_env",
+    "napi_value",
+    "napi_ref",
+  ];
+
+  match ty {
+    Type::Path(syn::TypePath { path, .. }) => {
+      let segment = path.segments.last()?;
+      let name = segment.ident.to_string();
+      if FORBIDDEN.contains(&name.as_str()) || is_raw_napi_type_name(&name) {
+        return Some((segment.ident.clone(), name));
+      }
+      if let PathArguments::AngleBracketed(args) = &segment.arguments {
+        for arg in &args.args {
+          if let GenericArgument::Type(ty) = arg {
+            if let Some(forbidden) = forbidden_class_field_type(ty) {
+              return Some(forbidden);
+            }
+          }
+        }
+      }
+      None
+    }
+    Type::Reference(reference) => forbidden_class_field_type(&reference.elem),
+    Type::Ptr(pointer) => forbidden_class_field_type(&pointer.elem),
+    Type::Array(array) => forbidden_class_field_type(&array.elem),
+    Type::Slice(slice) => forbidden_class_field_type(&slice.elem),
+    Type::Group(group) => forbidden_class_field_type(&group.elem),
+    Type::Paren(paren) => forbidden_class_field_type(&paren.elem),
+    Type::Tuple(tuple) => tuple.elems.iter().find_map(forbidden_class_field_type),
+    _ => None,
+  }
+}
+
+fn is_raw_napi_type_name(name: &str) -> bool {
+  name.starts_with("napi_")
+}
+
+fn forbidden_js_visible_type(ty: &Type) -> Option<(Ident, &'static str)> {
+  match ty {
+    Type::Path(path) => {
+      for segment in &path.path.segments {
+        if segment.ident == "WeakReference" {
+          return Some((
+            segment.ident.clone(),
+            "WeakReference<T> cannot be used in JavaScript-visible signatures",
+          ));
+        }
+        if is_raw_napi_type_name(&segment.ident.to_string()) {
+          return Some((
+            segment.ident.clone(),
+            "raw Node-API handles cannot be used in JavaScript-visible signatures",
+          ));
+        }
+        if let PathArguments::AngleBracketed(args) = &segment.arguments {
+          for arg in &args.args {
+            if let GenericArgument::Type(ty) = arg {
+              if let Some(ident) = forbidden_js_visible_type(ty) {
+                return Some(ident);
+              }
+            }
+          }
+        }
+      }
+      None
+    }
+    Type::Reference(reference) => forbidden_js_visible_type(&reference.elem),
+    Type::Ptr(pointer) => forbidden_js_visible_type(&pointer.elem),
+    Type::Array(array) => forbidden_js_visible_type(&array.elem),
+    Type::Slice(slice) => forbidden_js_visible_type(&slice.elem),
+    Type::Group(group) => forbidden_js_visible_type(&group.elem),
+    Type::Paren(paren) => forbidden_js_visible_type(&paren.elem),
+    Type::Tuple(tuple) => tuple.elems.iter().find_map(forbidden_js_visible_type),
+    _ => None,
+  }
 }
 
 impl ConvertToAST for syn::ItemStruct {
@@ -1334,33 +1472,36 @@ impl ConvertToAST for syn::ItemStruct {
         is_tuple,
       })
     } else {
-      // field lifetime check, JsValue types with lifetime can't be assigned to a field of napi class struct
+      if opts.custom_finalize().is_some() {
+        errors.push(err_span!(
+          self,
+          "#[napi(custom_finalize)] is not supported by the class storage object model"
+        ));
+      }
+
       for syn::Field { ty, .. } in self.fields.iter() {
-        if let syn::Type::Path(syn::TypePath { path, .. }) = ty {
-          if let Some(PathSegment {
+        if let Some((ident, name)) = forbidden_class_field_type(ty) {
+          errors.push(err_span!(
             ident,
-            arguments:
-              syn::PathArguments::AngleBracketed(syn::AngleBracketedGenericArguments { args, .. }),
-            ..
-          }) = path.segments.last()
-          {
-            if let Some(GenericArgument::Lifetime(syn::Lifetime { ident: _, .. })) = args.first() {
-              // has lifetime and type name matched with known js value types
-              if KNOWN_JS_VALUE_TYPES_WITH_LIFETIME.contains(ident.to_string().as_str()) {
-                // TODO: add link for more information
-                errors.push(err_span!(
-                  ty,
-                  "Can't assign {} to a field of napi class struct",
-                  ident
-                ));
-              }
-            }
-          }
+            "Can't assign {} to a field of napi class struct",
+            name
+          ));
         }
       }
       NapiStructKind::Class(NapiClass {
         fields,
         ctor: opts.constructor().is_some(),
+        subclass: opts.subclass().is_some(),
+        parent: opts.extends().map(|parent| NativeParentSpec {
+          rust_path: Type::Path(syn::TypePath {
+            qself: None,
+            path: parent.clone(),
+          }),
+          js_name: parent
+            .segments
+            .last()
+            .and_then(|segment| recorded_struct_js_name(&segment.ident)),
+        }),
         implement_iterator,
         implement_async_iterator,
         is_tuple,
@@ -1382,6 +1523,27 @@ impl ConvertToAST for syn::ItemStruct {
         }
       }
     };
+
+    if matches!(struct_kind, NapiStructKind::Class(_)) {
+      if self.generics.lifetimes().next().is_some() {
+        errors.push(err_span!(
+          self.generics,
+          "napi class must not declare lifetime parameters"
+        ));
+      }
+      if self.generics.type_params().next().is_some() {
+        errors.push(err_span!(
+          self.generics,
+          "napi class must not declare type parameters"
+        ));
+      }
+      if self.generics.const_params().next().is_some() {
+        errors.push(err_span!(
+          self.generics,
+          "napi class must not declare const parameters"
+        ));
+      }
+    }
 
     if self.generics.lifetimes().size_hint().0 > 1 {
       errors.push(err_span!(
@@ -1431,13 +1593,12 @@ impl ConvertToAST for syn::ItemImpl {
     let (struct_name, has_lifetime) = extract_path_ident(struct_name)?;
 
     // Check if this struct was recorded with a custom js_name, fallback to default if not found
-    let mut struct_js_name =
+    let (mut struct_js_name, mut is_class) =
       match check_recorded_struct_for_impl(&struct_name, &BindgenAttrs::default()) {
-        Ok(recorded_js_name) => recorded_js_name,
-        Err(_) => to_case(struct_name.to_string(), Case::UpperCamel),
+        Ok(recorded_js_name) => (recorded_js_name, true),
+        Err(_) => (to_case(struct_name.to_string(), Case::UpperCamel), false),
       };
     let mut items = vec![];
-    let mut task_output_type = None;
     let mut iterator_yield_type = None;
     let mut iterator_next_type = None;
     let mut iterator_return_type = None;
@@ -1450,9 +1611,7 @@ impl ConvertToAST for syn::ItemImpl {
         syn::ImplItem::Type(m) => {
           if let Some((_, t, _)) = &self.trait_ {
             if let Some(PathSegment { ident, .. }) = t.segments.last() {
-              if (ident == "Task" || ident == "ScopedTask") && m.ident == "JsValue" {
-                task_output_type = Some(m.ty.clone());
-              } else if ident == "Generator" || ident == "ScopedGenerator" {
+              if ident == "Generator" || ident == "ScopedGenerator" {
                 if let Type::Path(_) = &m.ty {
                   if m.ident == "Yield" {
                     iterator_yield_type = Some(m.ty.clone());
@@ -1490,6 +1649,7 @@ impl ConvertToAST for syn::ItemImpl {
 
         if opts.constructor().is_some() || opts.factory().is_some() {
           struct_js_name = check_recorded_struct_for_impl(&struct_name, &opts)?;
+          is_class = true;
         }
 
         let vis = method.vis.clone();
@@ -1520,8 +1680,8 @@ impl ConvertToAST for syn::ItemImpl {
       item: NapiItem::Impl(NapiImpl {
         name: struct_name.clone(),
         js_name: struct_js_name,
+        is_class,
         items,
-        task_output_type,
         iterator_yield_type,
         iterator_next_type,
         iterator_return_type,

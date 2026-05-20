@@ -55,6 +55,8 @@ macro_rules! attrgen {
       (module_exports, ModuleExports(Span)),
       (js_name, JsName(Span, String, Span)),
       (constructor, Constructor(Span)),
+      (subclass, Subclass(Span)),
+      (extends, Extends(Span, syn::Path)),
       (factory, Factory(Span)),
       (getter, Getter(Span, Option<Ident>)),
       (setter, Setter(Span, Option<Ident>)),
@@ -392,6 +394,14 @@ pub fn check_recorded_struct_for_impl(ident: &Ident, opts: &BindgenAttrs) -> Bin
       &struct_name,
     )
   }
+}
+
+pub fn recorded_struct_js_name(ident: &Ident) -> Option<String> {
+  let state = STRUCTS.get_or_init(StructParseState::default);
+  let map = state.parsed.lock().ok()?;
+  map
+    .get(&ident.to_string())
+    .map(|parsed| parsed.js_name.clone())
 }
 
 impl Parse for BindgenAttrs {
