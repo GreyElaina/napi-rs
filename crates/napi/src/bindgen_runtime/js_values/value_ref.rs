@@ -1,333 +1,495 @@
-use std::cell::{Cell, LazyCell};
-use std::ffi::c_void;
-use std::hash::BuildHasherDefault;
-use std::ops::{Deref, DerefMut};
+use std::cell::Cell;
+use std::marker::PhantomData;
 use std::ptr;
-use std::sync::{Arc, Weak};
-
-use nohash_hasher::NoHashHasher;
+use std::rc::{Rc, Weak};
 
 use crate::{
-  bindgen_runtime::{FromNapiValue, PersistedPerInstanceHashMap, ToNapiValue},
-  check_status, Env, Error, Result, Status,
+  bindgen_runtime::{
+    ClassChain, ClassStorageRef, EnvRecord, FrameObject, FrameScope, FromJs, IntoClassInitializer,
+    IntoJs, Local, NapiClass, NapiReceiver, Object, Result, Scope, TypeName, Unknown,
+  },
+  check_status, sys, Error, Status, ValueType,
 };
 
-type RefInformation = (
-  /* wrapped_value */ *mut c_void,
-  /* napi_ref */ crate::sys::napi_ref,
-  /* finalize_callback */ *const Cell<*mut dyn FnOnce()>,
-);
-
-thread_local! {
-  pub(crate) static REFERENCE_MAP: LazyCell<
-    PersistedPerInstanceHashMap<*mut c_void, RefInformation, BuildHasherDefault<NoHashHasher<usize>>>,
-  > = LazyCell::new(Default::default);
+pub struct Reference<T: NapiReceiver> {
+  state: ClassReferenceState<T::Access>,
+  marker: PhantomData<fn() -> T>,
+  not_send: PhantomData<Rc<()>>,
 }
 
-/// Create a [`napi_ref`](https://nodejs.org/api/n-api.html#napi_ref) from `Class` instance.
-///
-/// Unref the [`napi_ref`](https://nodejs.org/api/n-api.html#napi_ref) when the `Reference` is dropped.
-///
-/// The `Reference` is `Sync` when the `T` is `Sync`.
-/// It's not `Send` because of the `drop` of the `Reference` must be called in the same thread as the `Reference` is created.
-pub struct Reference<T: 'static> {
-  raw: *mut T,
-  napi_ref: crate::sys::napi_ref,
-  env: *mut c_void,
-  // the finalize callbacks can only be written with the `Env` passed in
-  // So we can use `Cell` rather than `AtomicPtr` here
-  finalize_callbacks: Arc<Cell<*mut dyn FnOnce()>>,
+pub struct WeakReference<T: NapiReceiver> {
+  state: ClassReferenceState<T::Access>,
+  marker: PhantomData<fn() -> T>,
+  not_send: PhantomData<Rc<()>>,
 }
 
-unsafe impl<T: Sync> Sync for Reference<T> {}
-
-impl<T> Drop for Reference<T> {
-  fn drop(&mut self) {
-    let rc_strong_count = Arc::strong_count(&self.finalize_callbacks);
-    let mut ref_count = 0;
-    // If Rc strong count == 1, then the referenced object is dropped on GC
-    // It would happen when the process is exiting
-    // In general, the `drop` of the `Reference` would happen first
-    if rc_strong_count > 1 {
-      let status = unsafe {
-        crate::sys::napi_reference_unref(
-          self.env as crate::sys::napi_env,
-          self.napi_ref,
-          &mut ref_count,
-        )
-      };
-      debug_assert!(
-        status == crate::sys::Status::napi_ok,
-        "Reference unref failed, status code: {}",
-        crate::Status::from(status)
-      );
-    };
-  }
+enum ClassReferenceKind {
+  Strong,
+  Weak,
 }
 
-impl<T: 'static> Reference<T> {
-  #[doc(hidden)]
-  #[allow(clippy::not_unsafe_ptr_arg_deref)]
-  pub fn add_ref(env: crate::sys::napi_env, t: *mut c_void, value: RefInformation) {
-    REFERENCE_MAP.with(|cell| {
-      cell.borrow_mut(|map| {
-        if let Some((_, previous_ref, previous_rc)) = map.insert(t, value) {
-          unsafe { Arc::from_raw(previous_rc) };
-          unsafe { crate::sys::napi_delete_reference(env, previous_ref) };
-        }
-      })
-    });
-  }
+struct ClassReferenceState<A> {
+  raw: Cell<sys::napi_ref>,
+  record: Weak<EnvRecord>,
+  access: A,
+  kind: ClassReferenceKind,
+}
 
-  #[doc(hidden)]
-  pub unsafe fn from_value_ptr(t: *mut c_void, env: crate::sys::napi_env) -> Result<Self> {
-    if let Some((wrapped_value, napi_ref, finalize_callbacks_ptr)) =
-      REFERENCE_MAP.with(|cell| cell.borrow_mut(|map| map.get(&t).cloned()))
-    {
-      let mut ref_count = 0;
-      check_status!(
-        unsafe { crate::sys::napi_reference_ref(env, napi_ref, &mut ref_count) },
-        "Failed to ref napi reference"
-      )?;
-      let finalize_callbacks_raw = unsafe { Arc::from_raw(finalize_callbacks_ptr) };
-      let finalize_callbacks = finalize_callbacks_raw.clone();
-      // Leak the raw finalize callbacks
-      let _ = Arc::into_raw(finalize_callbacks_raw);
-      Ok(Self {
-        raw: wrapped_value.cast(),
-        napi_ref,
-        env: env.cast(),
-        finalize_callbacks,
-      })
-    } else {
-      Err(Error::new(
+pub struct ClassLocal<'env, 'scope, T: NapiReceiver> {
+  object: Local<'scope, Object<'scope>>,
+  storage: ClassStorageRef<'scope>,
+  access: T::Access,
+  marker: PhantomData<fn(&'env (), T)>,
+}
+
+impl ClassReferenceKind {
+  fn owner_unavailable_error(&self) -> Error {
+    match self {
+      Self::Strong => Error::new(
         Status::InvalidArg,
-        format!("Class for Type {t:?} not found"),
-      ))
+        "Reference owner environment is no longer available".to_owned(),
+      ),
+      Self::Weak => Error::new(
+        Status::InvalidArg,
+        "WeakReference owner environment is no longer available".to_owned(),
+      ),
+    }
+  }
+
+  fn already_closed_error(&self) -> Error {
+    match self {
+      Self::Strong => Error::new(Status::InvalidArg, "Reference is already closed".to_owned()),
+      Self::Weak => Error::new(
+        Status::InvalidArg,
+        "WeakReference is already closed".to_owned(),
+      ),
     }
   }
 }
 
-impl<T: 'static> ToNapiValue for Reference<T> {
-  unsafe fn to_napi_value(env: crate::sys::napi_env, val: Self) -> Result<crate::sys::napi_value> {
-    let mut result = ptr::null_mut();
-    check_status!(
-      unsafe { crate::sys::napi_get_reference_value(env, val.napi_ref, &mut result) },
-      "Failed to get reference value"
-    )?;
-    Ok(result)
-  }
-}
-
-impl<T: 'static> FromNapiValue for Reference<T> {
-  unsafe fn from_napi_value(
-    env: crate::sys::napi_env,
-    napi_val: crate::sys::napi_value,
-  ) -> Result<Self> {
-    let mut value = ptr::null_mut();
-    check_status!(
-      unsafe { crate::sys::napi_unwrap(env, napi_val, &mut value) },
-      "Unwrap value [{}] from class Reference failed",
-      std::any::type_name::<T>(),
-    )?;
-    unsafe { Reference::from_value_ptr(value.cast(), env) }
-  }
-}
-
-impl<T: 'static> Reference<T> {
-  pub fn clone(&self, env: Env) -> Result<Self> {
-    let mut ref_count = 0;
-    check_status!(
-      unsafe { crate::sys::napi_reference_ref(env.0, self.napi_ref, &mut ref_count) },
-      "Failed to ref napi reference"
-    )?;
-    Ok(Self {
-      raw: self.raw,
-      napi_ref: self.napi_ref,
-      env: env.0.cast(),
-      finalize_callbacks: self.finalize_callbacks.clone(),
-    })
-  }
-
-  pub fn downgrade(&self) -> WeakReference<T> {
-    WeakReference {
-      raw: self.raw,
-      napi_ref: self.napi_ref,
-      finalize_callbacks: Arc::downgrade(&self.finalize_callbacks),
-    }
-  }
-
-  /// Safety to share because caller can provide `Env`
-  pub fn share_with<S: 'static, F: FnOnce(&'static mut T) -> Result<S>>(
-    self,
-    #[allow(unused_variables)] env: Env,
-    f: F,
-  ) -> Result<SharedReference<T, S>> {
-    let s = f(Box::leak(unsafe { Box::from_raw(self.raw) }))?;
-    let s_ptr = Box::into_raw(Box::new(s));
-    let prev_drop_fn = unsafe { Box::from_raw(self.finalize_callbacks.get()) };
-    let drop_fn = Box::new(move || {
-      drop(unsafe { Box::from_raw(s_ptr) });
-      prev_drop_fn();
-    });
-    self.finalize_callbacks.set(Box::into_raw(drop_fn));
-    Ok(SharedReference {
-      raw: s_ptr,
-      owner: self,
-    })
-  }
-}
-
-impl<T: 'static> Deref for Reference<T> {
-  type Target = T;
-
-  fn deref(&self) -> &Self::Target {
-    unsafe { Box::leak(Box::from_raw(self.raw)) }
-  }
-}
-
-impl<T: 'static> DerefMut for Reference<T> {
-  fn deref_mut(&mut self) -> &mut Self::Target {
-    unsafe { Box::leak(Box::from_raw(self.raw)) }
-  }
-}
-
-pub struct WeakReference<T: 'static> {
-  raw: *mut T,
-  napi_ref: crate::sys::napi_ref,
-  finalize_callbacks: Weak<Cell<*mut dyn FnOnce()>>,
-}
-
-impl<T> Clone for WeakReference<T> {
-  fn clone(&self) -> Self {
+impl<A: Copy> ClassReferenceState<A> {
+  fn new(raw: sys::napi_ref, record: Weak<EnvRecord>, access: A, kind: ClassReferenceKind) -> Self {
     Self {
-      raw: self.raw,
-      napi_ref: self.napi_ref,
-      finalize_callbacks: self.finalize_callbacks.clone(),
+      raw: Cell::new(raw),
+      record,
+      access,
+      kind,
     }
   }
-}
 
-impl<T: 'static> ToNapiValue for WeakReference<T> {
-  unsafe fn to_napi_value(env: crate::sys::napi_env, val: Self) -> Result<crate::sys::napi_value> {
-    if Weak::strong_count(&val.finalize_callbacks) == 0 {
-      return Err(Error::new(
-        Status::GenericFailure,
-        format!(
-          "The original reference that WeakReference<{}> is pointing to is dropped",
-          std::any::type_name::<T>()
-        ),
-      ));
-    };
-    let mut result = ptr::null_mut();
-    check_status!(
-      unsafe { crate::sys::napi_get_reference_value(env, val.napi_ref, &mut result) },
-      "Failed to get reference value"
-    )?;
-    Ok(result)
+  fn access(&self) -> A {
+    self.access
   }
-}
 
-impl<T: 'static> WeakReference<T> {
-  pub fn upgrade(&self, env: Env) -> Result<Option<Reference<T>>> {
-    if let Some(finalize_callbacks) = self.finalize_callbacks.upgrade() {
-      let mut ref_count = 0;
-      check_status!(
-        unsafe { crate::sys::napi_reference_ref(env.0, self.napi_ref, &mut ref_count) },
-        "Failed to ref napi reference"
-      )?;
-      Ok(Some(Reference {
-        raw: self.raw,
-        napi_ref: self.napi_ref,
-        env: env.0 as *mut c_void,
-        finalize_callbacks,
-      }))
+  fn owner_record(&self) -> Result<Rc<EnvRecord>> {
+    self
+      .record
+      .upgrade()
+      .ok_or_else(|| self.kind.owner_unavailable_error())
+  }
+
+  fn raw_ref(&self) -> Result<sys::napi_ref> {
+    let raw = self.raw.get();
+    if raw.is_null() {
+      Err(self.kind.already_closed_error())
     } else {
-      Ok(None)
+      Ok(raw)
     }
   }
 
-  pub fn get(&self) -> Option<&T> {
-    if Weak::strong_count(&self.finalize_callbacks) == 0 {
-      None
+  fn take_raw(&self) -> Result<sys::napi_ref> {
+    let raw = self.raw.replace(ptr::null_mut());
+    if raw.is_null() {
+      Err(self.kind.already_closed_error())
     } else {
-      Some(unsafe { Box::leak(Box::from_raw(self.raw)) })
-    }
-  }
-
-  pub fn get_mut(&mut self) -> Option<&mut T> {
-    if Weak::strong_count(&self.finalize_callbacks) == 0 {
-      None
-    } else {
-      Some(unsafe { Box::leak(Box::from_raw(self.raw)) })
+      Ok(raw)
     }
   }
 }
 
-/// ### Experimental feature
-///
-/// Create a `SharedReference` from an existed `Reference`.
-pub struct SharedReference<T: 'static, S: 'static> {
-  raw: *mut S,
-  owner: Reference<T>,
+impl<A> Drop for ClassReferenceState<A> {
+  fn drop(&mut self) {
+    let raw = self.raw.replace(ptr::null_mut());
+    if raw.is_null() {
+      return;
+    }
+
+    if let Some(record) = self.record.upgrade() {
+      record.deferred_refs().push(raw);
+    }
+  }
 }
 
-unsafe impl<T, S: Sync> Sync for SharedReference<T, S> {}
+impl<T: NapiReceiver> Reference<T> {
+  pub(crate) fn new_in(scope: &mut Scope<'_, '_>, value: T) -> Result<Self>
+  where
+    T: NapiClass + ClassChain + IntoClassInitializer<T>,
+  {
+    let init = IntoClassInitializer::<T>::into_class_initializer(value);
+    let object = unsafe { T::CLASS.new_object_from_scope(scope, init)? };
+    unsafe { Self::from_object_unchecked(scope, object) }
+  }
 
-impl<T: 'static, S: 'static> SharedReference<T, S> {
-  pub fn clone(&self, env: Env) -> Result<Self> {
-    Ok(SharedReference {
-      raw: self.raw,
-      owner: self.owner.clone(env)?,
+  pub(crate) fn bind<'env, 'scope>(
+    &self,
+    scope: &mut Scope<'env, 'scope>,
+  ) -> Result<ClassLocal<'env, 'scope, T>> {
+    let record = self.state.owner_record()?;
+    ensure_same_record(&record, scope)?;
+    let object = reference_value(scope.env().raw(), self.state.raw_ref()?)?;
+    let (access, storage) = unsafe { T::validate_raw_object(scope, object) }?;
+    ensure_same_access(self.state.access(), access)?;
+
+    Ok(ClassLocal {
+      object: unsafe { Local::from_raw(object) },
+      storage,
+      access,
+      marker: PhantomData,
     })
   }
 
-  pub fn clone_owner(&self, env: Env) -> Result<Reference<T>> {
-    self.owner.clone(env)
+  pub(crate) fn try_clone_in(&self, scope: &mut Scope<'_, '_>) -> Result<Self> {
+    let record = self.state.owner_record()?;
+    ensure_same_record(&record, scope)?;
+    let object = reference_value(scope.env().raw(), self.state.raw_ref()?)?;
+    unsafe { Self::from_object_unchecked(scope, object) }
   }
 
-  /// Safety to share because caller can provide `Env`
-  pub fn share_with<U: 'static, F: FnOnce(&'static mut S) -> Result<U>>(
-    self,
-    #[allow(unused_variables)] env: Env,
-    f: F,
-  ) -> Result<SharedReference<T, U>> {
-    let s = f(Box::leak(unsafe { Box::from_raw(self.raw) }))?;
-    let raw = Box::into_raw(Box::new(s));
-    let prev_drop_fn = unsafe { Box::from_raw(self.owner.finalize_callbacks.get()) };
-    let drop_fn = Box::new(move || {
-      drop(unsafe { Box::from_raw(raw) });
-      prev_drop_fn();
-    });
-    self.owner.finalize_callbacks.set(Box::into_raw(drop_fn));
-    Ok(SharedReference {
-      raw,
-      owner: self.owner,
+  pub(crate) fn downgrade_in(&self, scope: &mut Scope<'_, '_>) -> Result<WeakReference<T>> {
+    let record = self.state.owner_record()?;
+    ensure_same_record(&record, scope)?;
+    let object = reference_value(scope.env().raw(), self.state.raw_ref()?)?;
+    let raw = create_reference(scope.env().raw(), object, 0)?;
+
+    Ok(WeakReference {
+      state: ClassReferenceState::new(
+        raw,
+        Rc::downgrade(&record),
+        self.state.access(),
+        ClassReferenceKind::Weak,
+      ),
+      marker: PhantomData,
+      not_send: PhantomData,
+    })
+  }
+
+  pub(crate) fn from_frame_object<'scope>(
+    context: &mut FrameScope<'_, 'scope>,
+    object: FrameObject<'scope>,
+  ) -> Result<Self> {
+    let raw_object = object.raw_for(context)?;
+    let (access, _) = T::validate_object(context, object)?;
+    let raw = create_reference(context.scope_mut().env().raw(), raw_object, 1)?;
+    let record = Rc::downgrade(context.scope_mut().required_record()?);
+
+    Ok(Self {
+      state: ClassReferenceState::new(raw, record, access, ClassReferenceKind::Strong),
+      marker: PhantomData,
+      not_send: PhantomData,
+    })
+  }
+
+  pub(crate) fn cast_in<U: NapiReceiver>(&self, scope: &mut Scope<'_, '_>) -> Result<Reference<U>> {
+    let record = self.state.owner_record()?;
+    ensure_same_record(&record, scope)?;
+    let object = reference_value(scope.env().raw(), self.state.raw_ref()?)?;
+    unsafe { Reference::<U>::from_object_unchecked(scope, object) }
+  }
+
+  pub(crate) fn close_in(self, scope: &mut Scope<'_, '_>) -> Result<()> {
+    let record = self.state.owner_record()?;
+    ensure_same_record(&record, scope)?;
+    delete_reference(scope.env().raw(), self.state.take_raw()?)
+  }
+
+  #[doc(hidden)]
+  pub(crate) unsafe fn from_object_unchecked(
+    scope: &mut Scope<'_, '_>,
+    object: sys::napi_value,
+  ) -> Result<Self> {
+    let (access, _) = unsafe { T::validate_raw_object(scope, object) }?;
+    let raw = create_reference(scope.env().raw(), object, 1)?;
+    let record = Rc::downgrade(scope.required_record()?);
+
+    Ok(Self {
+      state: ClassReferenceState::new(raw, record, access, ClassReferenceKind::Strong),
+      marker: PhantomData,
+      not_send: PhantomData,
     })
   }
 }
 
-impl<T: 'static, S: 'static> ToNapiValue for SharedReference<T, S> {
-  unsafe fn to_napi_value(env: crate::sys::napi_env, val: Self) -> Result<crate::sys::napi_value> {
-    let mut result = ptr::null_mut();
+impl<'scope, T: NapiReceiver> IntoJs<'scope> for Reference<T> {
+  type Output = Object<'scope>;
+
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
+    let env = scope.env().raw();
+    let record = self.state.owner_record()?;
+    ensure_same_record(&record, scope)?;
+
+    let raw = reference_value(env, self.state.raw_ref()?)?;
+    Ok(unsafe { Local::from_raw(raw) })
+  }
+}
+
+impl<'env, 'scope, T: NapiReceiver> FromJs<'env, 'scope> for Reference<T> {
+  fn from_js(
+    scope: &mut Scope<'env, 'scope>,
+    value: Local<'scope, Unknown<'scope>>,
+  ) -> Result<Self> {
+    unsafe { Self::from_object_unchecked(scope, value.raw()) }
+  }
+}
+
+impl<T: NapiClass> TypeName for Reference<T> {
+  fn type_name() -> &'static str {
+    T::CLASS.info().js_name()
+  }
+
+  fn value_type() -> ValueType {
+    ValueType::Object
+  }
+}
+
+impl<T: NapiReceiver> WeakReference<T> {
+  pub(crate) fn upgrade_in(&self, scope: &mut Scope<'_, '_>) -> Result<Option<Reference<T>>> {
+    let record = self.state.owner_record()?;
+    ensure_same_record(&record, scope)?;
+
+    let raw = self.state.raw_ref()?;
+    let object = reference_value(scope.env().raw(), raw)?;
+    if object.is_null() {
+      return Ok(None);
+    }
+    let (access, _) = unsafe { T::validate_raw_object(scope, object) }?;
+    ensure_same_access(self.state.access(), access)?;
+
+    Ok(Some(Reference {
+      state: ClassReferenceState::new(
+        create_reference(scope.env().raw(), object, 1)?,
+        Rc::downgrade(&record),
+        self.state.access(),
+        ClassReferenceKind::Strong,
+      ),
+      marker: PhantomData,
+      not_send: PhantomData,
+    }))
+  }
+
+  pub(crate) fn close_in(self, scope: &mut Scope<'_, '_>) -> Result<()> {
+    let record = self.state.owner_record()?;
+    ensure_same_record(&record, scope)?;
+    delete_reference(scope.env().raw(), self.state.take_raw()?)
+  }
+}
+
+impl<'env, 'scope, T: NapiReceiver> ClassLocal<'env, 'scope, T> {
+  pub fn as_object(&self) -> Local<'scope, Object<'scope>> {
+    self.object
+  }
+}
+
+impl<'env, 'scope> Scope<'env, 'scope> {
+  pub fn reference<T>(&mut self, value: T) -> Result<Reference<T>>
+  where
+    T: NapiClass + ClassChain + IntoClassInitializer<T>,
+  {
+    Reference::new_in(self, value)
+  }
+
+  pub fn bind_reference<T: NapiReceiver>(
+    &mut self,
+    reference: &Reference<T>,
+  ) -> Result<ClassLocal<'env, 'scope, T>> {
+    reference.bind(self)
+  }
+
+  pub fn clone_reference<T: NapiReceiver>(
+    &mut self,
+    reference: &Reference<T>,
+  ) -> Result<Reference<T>> {
+    reference.try_clone_in(self)
+  }
+
+  pub fn downgrade_reference<T: NapiReceiver>(
+    &mut self,
+    reference: &Reference<T>,
+  ) -> Result<WeakReference<T>> {
+    reference.downgrade_in(self)
+  }
+
+  pub fn cast_reference<T: NapiReceiver, U: NapiReceiver>(
+    &mut self,
+    reference: &Reference<T>,
+  ) -> Result<Reference<U>> {
+    reference.cast_in(self)
+  }
+
+  pub fn close_reference<T: NapiReceiver>(&mut self, reference: Reference<T>) -> Result<()> {
+    reference.close_in(self)
+  }
+
+  pub fn upgrade_reference<T: NapiReceiver>(
+    &mut self,
+    reference: &WeakReference<T>,
+  ) -> Result<Option<Reference<T>>> {
+    reference.upgrade_in(self)
+  }
+
+  pub fn close_weak_reference<T: NapiReceiver>(
+    &mut self,
+    reference: WeakReference<T>,
+  ) -> Result<()> {
+    reference.close_in(self)
+  }
+
+  pub fn create_reference<T: NapiReceiver>(
+    &mut self,
+    local: &ClassLocal<'env, 'scope, T>,
+  ) -> Result<Reference<T>> {
+    Reference::from_class_local(self, local, 1)
+  }
+
+  pub fn create_weak_reference<T: NapiReceiver>(
+    &mut self,
+    local: &ClassLocal<'env, 'scope, T>,
+  ) -> Result<WeakReference<T>> {
+    let raw = create_reference(self.env().raw(), local.object.raw(), 0)?;
+    let record = Rc::downgrade(self.required_record()?);
+
+    Ok(WeakReference {
+      state: ClassReferenceState::new(raw, record, local.access, ClassReferenceKind::Weak),
+      marker: PhantomData,
+      not_send: PhantomData,
+    })
+  }
+
+  pub fn borrow_class<'borrow, T: NapiReceiver>(
+    &'borrow mut self,
+    local: &'borrow ClassLocal<'env, 'scope, T>,
+  ) -> Result<T::Ref<'borrow>> {
+    let storage = local.storage;
+    unsafe { T::ref_from_validated_object(local.object.raw(), storage, local.access) }
+  }
+
+  pub fn borrow_class_mut<'borrow, T: NapiReceiver>(
+    &'borrow mut self,
+    local: &'borrow ClassLocal<'env, 'scope, T>,
+  ) -> Result<T::Mut<'borrow>> {
+    let storage = local.storage;
+    unsafe { T::mut_from_validated_object(local.object.raw(), storage, local.access) }
+  }
+
+  pub fn same_class_object<T: NapiReceiver, U: NapiReceiver>(
+    &mut self,
+    left: &ClassLocal<'env, 'scope, T>,
+    right: &ClassLocal<'env, 'scope, U>,
+  ) -> Result<bool> {
+    let mut result = false;
     check_status!(
-      unsafe { crate::sys::napi_get_reference_value(env, val.owner.napi_ref, &mut result) },
-      "Failed to get reference value"
+      unsafe {
+        sys::napi_strict_equals(
+          self.env().raw(),
+          left.object.raw(),
+          right.object.raw(),
+          &mut result,
+        )
+      },
+      "Compare class object identity failed",
     )?;
     Ok(result)
   }
-}
 
-impl<T: 'static, S: 'static> Deref for SharedReference<T, S> {
-  type Target = S;
+  pub fn is_class_object<T: NapiReceiver>(
+    &mut self,
+    value: Local<'scope, Unknown<'scope>>,
+  ) -> bool {
+    unsafe { T::validate_raw_object(self, value.raw()).is_ok() }
+  }
 
-  fn deref(&self) -> &Self::Target {
-    unsafe { Box::leak(Box::from_raw(self.raw)) }
+  pub fn is_class_value<'value, T, V>(&mut self, value: &V) -> Result<bool>
+  where
+    T: NapiReceiver,
+    V: crate::JsValue<'value>,
+  {
+    let value = value.value();
+    self.ensure_value_env(value.env, "class candidate")?;
+    Ok(unsafe { T::validate_raw_object(self, value.value).is_ok() })
   }
 }
 
-impl<T: 'static, S: 'static> DerefMut for SharedReference<T, S> {
-  fn deref_mut(&mut self) -> &mut Self::Target {
-    unsafe { Box::leak(Box::from_raw(self.raw)) }
+impl<T: NapiReceiver> Reference<T> {
+  fn from_class_local<'env, 'scope>(
+    scope: &mut Scope<'env, 'scope>,
+    local: &ClassLocal<'env, 'scope, T>,
+    initial_refcount: u32,
+  ) -> Result<Self> {
+    let raw = create_reference(scope.env().raw(), local.object.raw(), initial_refcount)?;
+    let record = Rc::downgrade(scope.required_record()?);
+
+    Ok(Self {
+      state: ClassReferenceState::new(raw, record, local.access, ClassReferenceKind::Strong),
+      marker: PhantomData,
+      not_send: PhantomData,
+    })
   }
+}
+
+fn ensure_same_record(record: &Rc<EnvRecord>, scope: &Scope<'_, '_>) -> Result<()> {
+  let Some(current) = scope.record() else {
+    return Err(owner_mismatch());
+  };
+
+  if Rc::ptr_eq(record, current) {
+    Ok(())
+  } else {
+    Err(owner_mismatch())
+  }
+}
+
+fn ensure_same_access<T: Copy + Eq>(expected: T, actual: T) -> Result<()> {
+  if expected == actual {
+    Ok(())
+  } else {
+    Err(Error::new(
+      Status::InvalidArg,
+      "Reference class access does not match the current object".to_owned(),
+    ))
+  }
+}
+
+fn owner_mismatch() -> Error {
+  Error::new(
+    Status::InvalidArg,
+    "Reference owner environment does not match the current environment".to_owned(),
+  )
+}
+
+fn create_reference(
+  env: sys::napi_env,
+  object: sys::napi_value,
+  initial_refcount: u32,
+) -> Result<sys::napi_ref> {
+  let mut raw = ptr::null_mut();
+  check_status!(
+    unsafe { sys::napi_create_reference(env, object, initial_refcount, &mut raw) },
+    "Create class object reference failed",
+  )?;
+  Ok(raw)
+}
+
+fn reference_value(env: sys::napi_env, raw: sys::napi_ref) -> Result<sys::napi_value> {
+  let mut object = ptr::null_mut();
+  check_status!(
+    unsafe { sys::napi_get_reference_value(env, raw, &mut object) },
+    "Get class object reference value failed",
+  )?;
+  Ok(object)
+}
+
+fn delete_reference(env: sys::napi_env, raw: sys::napi_ref) -> Result<()> {
+  check_status!(
+    unsafe { sys::napi_delete_reference(env, raw) },
+    "Delete class object reference failed",
+  )
 }
