@@ -447,13 +447,8 @@ impl NapiStruct {
           }
 
           unsafe fn drop_initialized(data: std::ptr::NonNull<u8>) {
-            let layout = std::alloc::Layout::from_size_align_unchecked(
-              std::mem::size_of::<#layout_ty>(),
-              std::mem::align_of::<#layout_ty>(),
-            );
             unsafe {
               <Self as napi::bindgen_prelude::ClassChain>::drop_segments(data.cast());
-              std::alloc::dealloc(data.as_ptr(), layout);
             }
           }
         }
@@ -576,13 +571,8 @@ impl NapiStruct {
           }
 
           unsafe fn drop_initialized(data: std::ptr::NonNull<u8>) {
-            let layout = std::alloc::Layout::from_size_align_unchecked(
-              std::mem::size_of::<#layout_ty>(),
-              std::mem::align_of::<#layout_ty>(),
-            );
             unsafe {
               <Self as napi::bindgen_prelude::ClassChain>::drop_segments(data.cast());
-              std::alloc::dealloc(data.as_ptr(), layout);
             }
           }
         }

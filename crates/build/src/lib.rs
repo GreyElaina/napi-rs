@@ -26,7 +26,7 @@ pub fn setup() {
   let target_os = env::var("CARGO_CFG_TARGET_OS").expect("CARGO_CFG_TARGET_OS is not set");
 
   match target_os.as_str() {
-    "android" => if android::setup().is_ok() {},
+    "android" if android::setup().is_ok() => {}
     "wasi" => {
       wasi::setup();
     }

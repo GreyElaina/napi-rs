@@ -131,6 +131,7 @@ fn gen_tracing_debug(_js_name: &str, _parent_js_name: Option<&String>) -> TokenS
 
 impl TryToTokens for NapiFn {
   fn try_to_tokens(&self, tokens: &mut TokenStream) -> BindgenResult<()> {
+
     let name_str = self.name.to_string();
     let intermediate_ident = get_intermediate_ident(&name_str);
     let args_len = self.args.len();
@@ -170,15 +171,13 @@ impl TryToTokens for NapiFn {
         ) -> napi::Result<napi::bindgen_prelude::sys::napi_value> {
           #tracing_debug
           unsafe {
-            napi::bindgen_prelude::with_env(env, |mut env_wrapper| {
-              env_wrapper.with_scope(|scope| {
+            napi::bindgen_prelude::EnvRecord::enter_scope(env, |scope| {
                 let env_wrapper = *scope.env();
                 #(#arg_conversions)*
                 let #receiver_ret_name = {
                   #receiver(#(#arg_names),*)
                 };
                 #ret
-              })
             })
           }
         }
@@ -883,11 +882,9 @@ impl NapiFn {
       Some(ty) => {
         quote! {
           let ret = unsafe {
-            napi::bindgen_prelude::with_env(env, |mut env_wrapper| {
-              env_wrapper.with_scope(|scope| {
+            napi::bindgen_prelude::EnvRecord::enter_scope(env, |scope| {
                 let value = napi::bindgen_prelude::Local::from_raw(ret_ptr);
                 <#ty as napi::bindgen_prelude::FromJs>::from_js(scope, value)
-              })
             })
           }?;
 
@@ -1019,11 +1016,9 @@ impl NapiFn {
               {
                 let __class_init =
                   napi::bindgen_prelude::IntoClassInitializer::<#parent>::into_class_initializer(#ret);
-                napi::bindgen_prelude::with_env(#raw_env, |mut env_wrapper| {
-                  env_wrapper.with_scope(|scope| unsafe {
+                napi::bindgen_prelude::EnvRecord::enter_scope(#raw_env, |scope| unsafe {
                     <#parent as napi::bindgen_prelude::NapiClass>::CLASS
                       .new_object_from_scope(scope, __class_init)
-                  })
                 })
               }
             })
@@ -1054,11 +1049,9 @@ impl NapiFn {
             {
               let __class_init =
                 napi::bindgen_prelude::IntoClassInitializer::<#parent>::into_class_initializer(#ret);
-              napi::bindgen_prelude::with_env(#raw_env, |mut env_wrapper| {
-                env_wrapper.with_scope(|scope| unsafe {
+              napi::bindgen_prelude::EnvRecord::enter_scope(#raw_env, |scope| unsafe {
                   <#parent as napi::bindgen_prelude::NapiClass>::CLASS
                     .new_object_from_scope(scope, __class_init)
-                })
               })
             }
           })
@@ -1081,11 +1074,9 @@ impl NapiFn {
               {
                 let __class_init =
                   napi::bindgen_prelude::IntoClassInitializer::<#class>::into_class_initializer(#ret);
-                napi::bindgen_prelude::with_env(#raw_env, |mut env_wrapper| {
-                  env_wrapper.with_scope(|scope| unsafe {
+                napi::bindgen_prelude::EnvRecord::enter_scope(#raw_env, |scope| unsafe {
                     <#class as napi::bindgen_prelude::NapiClass>::CLASS
                       .new_object_from_scope(scope, __class_init)
-                  })
                 })
               }
             })
@@ -1147,11 +1138,9 @@ impl NapiFn {
             {
               let __class_init =
                 napi::bindgen_prelude::IntoClassInitializer::<#class>::into_class_initializer(#ret);
-              napi::bindgen_prelude::with_env(#raw_env, |mut env_wrapper| {
-                env_wrapper.with_scope(|scope| unsafe {
+              napi::bindgen_prelude::EnvRecord::enter_scope(#raw_env, |scope| unsafe {
                   <#class as napi::bindgen_prelude::NapiClass>::CLASS
                     .new_object_from_scope(scope, __class_init)
-                })
               })
             }
           })
