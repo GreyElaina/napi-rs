@@ -23,6 +23,8 @@ impl ToTypeDef for NapiConst {
         &self.js_name,
         ty_to_ts_type(&self.type_name, false, false, false).0
       ),
+      extends: None,
+      native_parent: None,
       js_mod: self.js_mod.to_owned(),
       js_doc: JSDoc::new(&self.comments),
     })

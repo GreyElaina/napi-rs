@@ -24,7 +24,6 @@ impl NapiConst {
     let name_ident = &self.name;
     let js_name_lit = Literal::string(&format!("{}\0", self.name));
     let register_name = &self.register_name;
-    let type_name = &self.type_name;
     let cb_name = Ident::new(
       &format!("__register__const__{register_name}_callback__"),
       self.name.span(),
@@ -35,7 +34,10 @@ impl NapiConst {
       #[allow(non_snake_case)]
       #[allow(clippy::all)]
       unsafe fn #cb_name(env: napi::sys::napi_env) -> napi::Result<napi::sys::napi_value> {
-        <#type_name as napi::bindgen_prelude::ToNapiValue>::to_napi_value(env, #name_ident)
+        let mut env_wrapper = unsafe { napi::bindgen_prelude::Env::from_raw(env) };
+        env_wrapper.with_scope(|scope| {
+          napi::bindgen_prelude::IntoJs::into_js(#name_ident, scope).map(|value| value.raw())
+        })
       }
       #[cfg(all(not(test), not(target_family = "wasm")))]
       napi::ctor::declarative::ctor! {

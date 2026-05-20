@@ -2,11 +2,88 @@ use std::collections::HashMap;
 use std::vec::Vec;
 use std::{cell::RefCell, iter};
 
-use super::{add_alias, format_js_property_name, ty_to_ts_type, ToTypeDef, TypeDef};
+use super::{
+  add_alias, format_js_property_name, ty_to_ts_type, NativeParentTypeDef, ToTypeDef, TypeDef,
+};
 use crate::{typegen::JSDoc, util::to_case, NapiImpl, NapiStruct, NapiStructField, NapiStructKind};
 
+fn reference_self_field_type(ty: &syn::Type, owner: &str) -> Option<(String, bool)> {
+  let syn::Type::Path(path) = ty else {
+    return None;
+  };
+  let segment = path.path.segments.last()?;
+  if segment.ident == "Reference" {
+    let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
+      return None;
+    };
+    let Some(syn::GenericArgument::Type(inner)) = args.args.first() else {
+      return None;
+    };
+    if is_self_type(inner) {
+      return Some((owner.to_owned(), false));
+    }
+  }
+
+  if segment.ident != "Option" {
+    return None;
+  }
+  let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
+    return None;
+  };
+  let Some(syn::GenericArgument::Type(inner)) = args.args.first() else {
+    return None;
+  };
+  let syn::Type::Path(inner_path) = inner else {
+    return None;
+  };
+  if inner_path.path.segments.last()?.ident != "Reference" {
+    return None;
+  }
+  let syn::PathArguments::AngleBracketed(reference_args) =
+    &inner_path.path.segments.last()?.arguments
+  else {
+    return None;
+  };
+  let Some(syn::GenericArgument::Type(reference_inner)) = reference_args.args.first() else {
+    return None;
+  };
+  if is_self_type(reference_inner) {
+    Some((owner.to_owned(), true))
+  } else {
+    None
+  }
+}
+
+fn is_self_type(ty: &syn::Type) -> bool {
+  let syn::Type::Path(path) = ty else {
+    return false;
+  };
+  path.qself.is_none() && path.path.segments.len() == 1 && path.path.segments[0].ident == "Self"
+}
+
+fn native_parent_type_def(ty: &syn::Type, js_name: Option<&String>) -> Option<NativeParentTypeDef> {
+  let syn::Type::Path(path) = ty else {
+    return None;
+  };
+  if path.qself.is_some() {
+    return None;
+  }
+  let rust_path = path
+    .path
+    .segments
+    .iter()
+    .map(|segment| segment.ident.to_string())
+    .collect::<Vec<_>>();
+  if rust_path.is_empty() {
+    return None;
+  }
+  Some(NativeParentTypeDef {
+    rust_path,
+    js_name: js_name.cloned(),
+  })
+}
+
 thread_local! {
-  pub(crate) static TASK_STRUCTS: RefCell<HashMap<String, String>> = Default::default();
   pub(crate) static CLASS_STRUCTS: RefCell<HashMap<String, String>> = Default::default();
 }
 
@@ -38,9 +115,18 @@ impl ToTypeDef for NapiStruct {
       js_doc.add_block(generator_doc)
     }
 
+    let native_parent = match &self.kind {
+      NapiStructKind::Class(class) => class
+        .parent
+        .as_ref()
+        .and_then(|parent| native_parent_type_def(&parent.rust_path, parent.js_name.as_ref())),
+      _ => None,
+    };
+
     Some(TypeDef {
-      kind: String::from(match self.kind {
+      kind: String::from(match &self.kind {
         NapiStructKind::Transparent(_) => "type",
+        NapiStructKind::Class(class) if !class.ctor => "non_constructible_class",
         NapiStructKind::Class(_) => "struct",
         NapiStructKind::Object(_) => "interface",
         NapiStructKind::StructuredEnum(_) => "type",
@@ -49,6 +135,8 @@ impl ToTypeDef for NapiStruct {
       name: self.js_name.to_owned(),
       original_name: Some(self.name.to_string()),
       def: self.gen_ts_class(),
+      extends: None,
+      native_parent,
       js_mod: self.js_mod.to_owned(),
       js_doc,
     })
@@ -57,22 +145,6 @@ impl ToTypeDef for NapiStruct {
 
 impl ToTypeDef for NapiImpl {
   fn to_type_def(&self) -> Option<TypeDef> {
-    if let Some(output_type) = &self.task_output_type {
-      TASK_STRUCTS.with(|t| {
-        let (resolved_type, is_optional) = ty_to_ts_type(output_type, false, true, false);
-        t.borrow_mut().insert(
-          self.name.to_string(),
-          if resolved_type == "undefined" {
-            "void".to_owned()
-          } else if is_optional {
-            format!("{resolved_type} | null")
-          } else {
-            resolved_type
-          },
-        );
-      });
-    }
-
     if let Some(output_type) = &self.iterator_yield_type {
       let next_type = if let Some(ref ty) = self.iterator_next_type {
         ty_to_ts_type(ty, false, false, false).0
@@ -94,6 +166,8 @@ impl ToTypeDef for NapiImpl {
           return_type,
           next_type,
         ),
+        extends: None,
+        native_parent: None,
         js_mod: self.js_mod.to_owned(),
         js_doc: JSDoc::new::<Vec<String>, String>(Vec::default()),
       })
@@ -125,6 +199,8 @@ impl ToTypeDef for NapiImpl {
           "[Symbol.asyncIterator](): AsyncGenerator<{}, {}, {}>",
           yield_type, return_type, next_type,
         ),
+        extends: None,
+        native_parent: None,
         js_mod: self.js_mod.to_owned(),
         js_doc: JSDoc::new::<Vec<String>, String>(Vec::default()),
       })
@@ -150,6 +226,8 @@ impl ToTypeDef for NapiImpl {
           })
           .collect::<Vec<_>>()
           .join("\\n"),
+        extends: None,
+        native_parent: None,
         js_mod: self.js_mod.to_owned(),
         js_doc: JSDoc::new::<Vec<String>, String>(Vec::default()),
       })
@@ -173,7 +251,8 @@ impl NapiStruct {
       field_str.push_str("readonly ")
     }
 
-    let (arg, is_optional) = ty_to_ts_type(&f.ty, false, true, false);
+    let (arg, is_optional) = reference_self_field_type(&f.ty, &self.js_name)
+      .unwrap_or_else(|| ty_to_ts_type(&f.ty, false, true, false));
     let arg = f.ts_type.as_ref().map(|ty| ty.to_string()).unwrap_or(arg);
     let js_name = format_js_property_name(&f.js_name);
 

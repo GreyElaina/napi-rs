@@ -19,6 +19,8 @@ impl ToTypeDef for NapiType {
       name: self.js_name.to_owned(),
       original_name: Some(self.name.to_string()),
       def: ty_to_ts_type(&self.value, false, false, false).0,
+      extends: None,
+      native_parent: None,
       js_mod: self.js_mod.to_owned(),
       js_doc: JSDoc::new(&self.comments),
     })

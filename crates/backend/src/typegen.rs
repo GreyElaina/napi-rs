@@ -13,14 +13,24 @@ mod r#type;
 
 use syn::{PathSegment, Type, TypePath, TypeSlice};
 
+use crate::type_semantics::ClassInputKind;
+
 #[derive(Default, Debug)]
 pub struct TypeDef {
   pub kind: String,
   pub name: String,
   pub original_name: Option<String>,
   pub def: String,
+  pub extends: Option<String>,
+  pub native_parent: Option<NativeParentTypeDef>,
   pub js_mod: Option<String>,
   pub js_doc: JSDoc,
+}
+
+#[derive(Default, Debug)]
+pub struct NativeParentTypeDef {
+  pub rust_path: Vec<String>,
+  pub js_name: Option<String>,
 }
 
 #[derive(Default, Debug)]
@@ -236,17 +246,45 @@ impl Display for TypeDef {
     } else {
       "".to_string()
     };
-
+    let extends = if let Some(extends) = &self.extends {
+      format!(", \"extends\": \"{}\"", escape_json(extends))
+    } else {
+      "".to_string()
+    };
+    let native_parent = if let Some(native_parent) = &self.native_parent {
+      format!(", \"native_parent\": {native_parent}")
+    } else {
+      "".to_string()
+    };
     write!(
       f,
-      r#"{{"kind": "{}", "name": "{}", "js_doc": "{}", "def": "{}"{}{}}}"#,
+      r#"{{"kind": "{}", "name": "{}", "js_doc": "{}", "def": "{}"{}{}{}{}}}"#,
       self.kind,
       self.name,
       escape_json(&self.js_doc.to_string()),
       escape_json(&self.def),
       original_name,
+      extends,
+      native_parent,
       js_mod,
     )
+  }
+}
+
+impl Display for NativeParentTypeDef {
+  fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+    let rust_path = self
+      .rust_path
+      .iter()
+      .map(|segment| format!("\"{}\"", escape_json(segment)))
+      .collect::<Vec<_>>()
+      .join(", ");
+    let js_name = if let Some(js_name) = &self.js_name {
+      format!(", \"js_name\": \"{}\"", escape_json(js_name))
+    } else {
+      String::new()
+    };
+    write!(f, r#"{{"rust_path": [{}]{js_name}}}"#, rust_path)
   }
 }
 
@@ -265,7 +303,6 @@ static KNOWN_TYPES: LazyLock<HashMap<&'static str, (&'static str, bool, bool)>> 
       ("ObjectRef", ("object", false, false)),
       ("Array", ("unknown[]", false, false)),
       ("Value", ("any", false, false)),
-      ("ClassInstance", ("{}", false, false)),
     ]);
 
     // Collection types
@@ -374,7 +411,7 @@ static KNOWN_TYPES: LazyLock<HashMap<&'static str, (&'static str, bool, bool)>> 
     // Async and Promise types
     map.extend([
       ("Promise", ("Promise<{}>", false, false)),
-      ("PromiseRaw", ("Promise<{}>", false, false)),
+      ("PromiseFuture", ("Promise<{}>", false, false)),
       ("AbortSignal", ("AbortSignal", false, false)),
     ]);
 
@@ -504,44 +541,12 @@ fn handle_option_type(
   })
 }
 
-/// Handles conversion of AsyncTask<T> to Promise<T>
-fn handle_async_task_type(args: &[(String, bool)]) -> Option<(String, bool)> {
-  r#struct::TASK_STRUCTS.with(|t| {
-    let (output_type, _) = args.first()?.to_owned();
-    if let Some(o) = t.borrow().get(&output_type) {
-      Some((format!("Promise<{o}>"), false))
-    } else {
-      Some(("Promise<unknown>".to_owned(), false))
-    }
-  })
-}
-
-/// Handles conversion of Reference<T> and WeakReference<T>
-fn handle_reference_type(args: &[(String, bool)], rust_ty: String) -> Option<(String, bool)> {
-  r#struct::TASK_STRUCTS.with(|t| {
-    // Reference<T> => T
-    if let Some(arg) = args.first() {
-      let (output_type, _) = arg.to_owned();
-      if let Some(o) = t.borrow().get(&output_type) {
-        Some((o.to_owned(), false))
-      } else {
-        Some((output_type, false))
-      }
-    } else {
-      // Not NAPI-RS `Reference`
-      Some((rust_ty, false))
-    }
-  })
-}
-
-/// Handles conversion of AsyncBlock<T> to Promise<T>
-fn handle_async_block_type(args: &[(String, bool)], rust_ty: String) -> Option<(String, bool)> {
-  if let Some(arg) = args.first() {
-    Some((format!("Promise<{}>", arg.0), false))
-  } else {
-    // Not NAPI-RS `AsyncBlock`
-    Some((rust_ty, false))
-  }
+/// Handles conversion of class input types.
+fn handle_class_input_type(args: &[(String, bool)], rust_ty: String) -> Option<(String, bool)> {
+  args
+    .first()
+    .map(|(output_type, _)| (output_type.to_owned(), false))
+    .or_else(|| Some((rust_ty, false)))
 }
 
 /// Handles conversion of ThreadsafeFunction to TypeScript function type
@@ -767,12 +772,15 @@ fn handle_type_path(
       Some(args.first().unwrap().to_owned())
     } else if rust_ty == "Option" {
       handle_option_type(&args, is_struct_field, is_return_ty)
-    } else if rust_ty == "AsyncTask" {
-      handle_async_task_type(&args)
-    } else if rust_ty == "Reference" || rust_ty == "WeakReference" {
-      handle_reference_type(&args, rust_ty)
-    } else if rust_ty == "AsyncBlock" {
-      handle_async_block_type(&args, rust_ty)
+    } else if ClassInputKind::from_ident(ident).is_some() {
+      handle_class_input_type(&args, rust_ty)
+    } else if rust_ty == "ClassInitializer" {
+      Some(
+        args
+          .first()
+          .cloned()
+          .unwrap_or_else(|| ("any".to_owned(), false)),
+      )
     } else if rust_ty == "FnArgs" {
       is_passthrough_type = true;
       Some(args.first().unwrap().to_owned())

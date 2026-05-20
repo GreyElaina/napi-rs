@@ -8,13 +8,166 @@ use crate::util::to_case;
 
 use crate::{
   codegen::{get_intermediate_ident, js_mod_to_token_stream},
+  type_semantics::{resolve_class_type, NapiTypeExt},
   BindgenResult, FnKind, NapiImpl, NapiStruct, NapiStructKind, TryToTokens,
 };
 use crate::{NapiArray, NapiClass, NapiObject, NapiStructuredEnum, NapiTransparent};
 
 static NAPI_IMPL_ID: AtomicU32 = AtomicU32::new(0);
 
-const STRUCT_FIELD_SPECIAL_CASE: &[&str] = &["Option", "Result"];
+fn has_receiver_frame_input_arg(item: &crate::NapiFn) -> bool {
+  item.args.iter().any(|arg| {
+    let crate::NapiFnArgKind::PatType(path) = &arg.kind else {
+      return false;
+    };
+    let syn::Pat::Ident(pat) = path.pat.as_ref() else {
+      return false;
+    };
+    if pat.ident != "this" {
+      return false;
+    }
+    path.ty.as_class_input().is_some()
+  })
+}
+
+fn class_field_reference_class_type(ty: &syn::Type, owner: &Ident) -> Option<TokenStream> {
+  let input = ty.as_class_input()?;
+  if !input.kind().is_reference() {
+    return None;
+  }
+  input.class_type(Some(owner))
+}
+
+fn is_reference_class_type(ty: &syn::Type) -> bool {
+  ty.as_class_input()
+    .is_some_and(|input| input.kind().is_reference())
+}
+
+fn option_reference_class_type(ty: &syn::Type, owner: &Ident) -> Option<TokenStream> {
+  let input = ty.as_optional_class_input()?;
+  if !input.kind().is_reference() {
+    return None;
+  }
+  resolve_class_type(input.inner(), Some(owner))
+}
+
+fn class_field_from_frame(ty: &syn::Type, index: TokenStream, owner: &Ident) -> TokenStream {
+  if let Some(class) = class_field_reference_class_type(ty, owner) {
+    return quote! {
+      frame.arg_reference::<#class>(#index)?
+    };
+  }
+
+  if let Some(class) = option_reference_class_type(ty, owner) {
+    return quote! {
+      frame.arg_opt_reference::<#class>(#index)?
+    };
+  }
+
+  quote! {{
+    frame.arg::<#ty>(#index)?
+  }}
+}
+
+fn object_field_getter_from_scope(
+  ty: &syn::Type,
+  target: TokenStream,
+  field_js_name: &str,
+  missing_is_none: bool,
+  missing_context: TokenStream,
+) -> TokenStream {
+  if missing_is_none {
+    let decode_ty = ty.option_inner().unwrap_or(ty);
+    quote! {
+      scope.get_optional_named_property::<#decode_ty, _>(&#target, #field_js_name)
+    }
+  } else {
+    quote! {
+      scope.get_optional_named_property::<#ty, _>(&#target, #field_js_name)?.ok_or_else(|| napi::bindgen_prelude::Error::new(
+        napi::bindgen_prelude::Status::InvalidArg,
+        #missing_context,
+      ))
+    }
+  }
+}
+
+fn optional_reference_field_inner(ty: &syn::Type, owner: &Ident) -> Option<TokenStream> {
+  let input = ty.as_optional_class_input()?;
+  if !input.kind().is_reference() {
+    return None;
+  }
+  input
+    .class_type(Some(owner))
+    .map(|class| quote! { napi::bindgen_prelude::Reference<#class> })
+}
+
+fn class_field_from_object_scope(
+  ty: &syn::Type,
+  field_js_name: &str,
+  owner: &Ident,
+  missing_is_none: bool,
+  missing_context: TokenStream,
+) -> Option<TokenStream> {
+  let decode_ty = if is_reference_class_type(ty) {
+    quote! { #ty }
+  } else if let Some(inner) = optional_reference_field_inner(ty, owner) {
+    if missing_is_none {
+      return Some(quote! {
+        scope.get_optional_named_property::<#inner, _>(&obj, #field_js_name)
+      });
+    }
+    quote! { #ty }
+  } else {
+    return None;
+  };
+
+  Some(quote! {
+    scope.get_optional_named_property::<#decode_ty, _>(&obj, #field_js_name)?.ok_or_else(|| napi::bindgen_prelude::Error::new(
+      napi::bindgen_prelude::Status::InvalidArg,
+      #missing_context,
+    ))
+  })
+}
+
+fn into_js_frame(value: TokenStream) -> TokenStream {
+  quote! {
+    {
+      let mut return_env = frame.env();
+      return_env.with_scope(|scope| {
+        napi::bindgen_prelude::IntoJs::into_js(#value, scope).map(|local| local.raw())
+      })
+    }
+  }
+}
+
+fn class_field_into_js(ty: &syn::Type, field: &syn::Member) -> Option<TokenStream> {
+  if is_reference_class_type(ty) {
+    return Some(quote! {
+      let scope = frame.context_mut().scope_mut();
+      let val = scope.clone_reference(&obj.#field)?;
+      napi::bindgen_prelude::IntoJs::into_js(val, scope).map(|local| local.raw())
+    });
+  }
+
+  if ty
+    .as_optional_class_input()
+    .is_some_and(|input| input.kind().is_reference())
+  {
+    let undefined = into_js_frame(quote! { () });
+    return Some(quote! {
+      match obj.#field.as_ref() {
+        Some(reference) => {
+          let scope = frame.context_mut().scope_mut();
+          let val = scope.clone_reference(reference)?;
+          napi::bindgen_prelude::IntoJs::into_js(val, scope).map(|local| local.raw())
+        }
+        None => #undefined,
+      }
+    });
+  }
+
+  None
+}
 
 #[cfg(feature = "tracing")]
 fn gen_tracing_debug(class_name: &str, method_name: &str) -> TokenStream {
@@ -41,36 +194,15 @@ fn gen_napi_value_map_impl(
   } else {
     quote! { #name }
   };
-  let js_name_str = format!("{name_str}\0");
   let validate = quote! {
     unsafe fn validate(env: napi::sys::napi_env, napi_val: napi::sys::napi_value) -> napi::Result<napi::sys::napi_value> {
-      if let Some(ctor_ref) = napi::bindgen_prelude::get_class_constructor(#js_name_str) {
-        let mut ctor = std::ptr::null_mut();
-        napi::check_status!(
-          napi::sys::napi_get_reference_value(env, ctor_ref, &mut ctor),
-          "Failed to get constructor reference of class `{}`",
-          #name_str
-        )?;
-        let mut is_instance_of = false;
-        napi::check_status!(
-          napi::sys::napi_instanceof(env, napi_val, ctor, &mut is_instance_of),
-          "Failed to get external value of class `{}`",
-          #name_str
-        )?;
-        if is_instance_of {
-          Ok(std::ptr::null_mut())
-        } else {
-          Err(napi::Error::new(
-            napi::Status::InvalidArg,
-            format!("Value is not instanceof class `{}`", #name_str)
-          ))
+      let mut env_wrapper = unsafe { napi::bindgen_prelude::Env::from_raw(env) };
+      env_wrapper.with_scope(|scope| {
+        unsafe {
+          <#name as napi::bindgen_prelude::NapiReceiver>::validate_raw_object(scope, napi_val)?;
         }
-      } else {
-        Err(napi::Error::new(
-          napi::Status::InvalidArg,
-          format!("Failed to get constructor of class `{}`", #name_str)
-        ))
-      }
+        Ok(std::ptr::null_mut())
+      })
     }
   };
   quote! {
@@ -110,42 +242,6 @@ fn gen_napi_value_map_impl(
     #to_napi_val_impl
 
     #[automatically_derived]
-    impl napi::bindgen_prelude::FromNapiRef for #name {
-      unsafe fn from_napi_ref(
-        env: napi::bindgen_prelude::sys::napi_env,
-        napi_val: napi::bindgen_prelude::sys::napi_value
-      ) -> napi::bindgen_prelude::Result<&'static Self> {
-        let mut wrapped_val: *mut std::ffi::c_void = std::ptr::null_mut();
-
-        napi::bindgen_prelude::check_status!(
-          napi::bindgen_prelude::sys::napi_unwrap(env, napi_val, &mut wrapped_val),
-          "Failed to recover `{}` type from napi value",
-          #name_str,
-        )?;
-
-        Ok(&*(wrapped_val as *const #name))
-      }
-    }
-
-    #[automatically_derived]
-    impl napi::bindgen_prelude::FromNapiMutRef for #name {
-      unsafe fn from_napi_mut_ref(
-        env: napi::bindgen_prelude::sys::napi_env,
-        napi_val: napi::bindgen_prelude::sys::napi_value
-      ) -> napi::bindgen_prelude::Result<&'static mut Self> {
-        let mut wrapped_val: *mut std::ffi::c_void = std::ptr::null_mut();
-
-        napi::bindgen_prelude::check_status!(
-          napi::bindgen_prelude::sys::napi_unwrap(env, napi_val, &mut wrapped_val),
-          "Failed to recover `{}` type from napi value",
-          #name_str,
-        )?;
-
-        Ok(&mut *(wrapped_val as *mut #name))
-      }
-    }
-
-    #[automatically_derived]
     impl napi::bindgen_prelude::ValidateNapiValue for &#name {
       #validate
     }
@@ -180,15 +276,16 @@ impl NapiStruct {
   fn gen_helper_mod(&self, class: &NapiClass) -> TokenStream {
     let mod_name = Ident::new(&format!("__napi_helper__{}", self.name), Span::call_site());
 
-    let ctor = if class.ctor {
-      self.gen_default_ctor(class)
-    } else {
-      quote! {}
-    };
+    let ctor = self.gen_default_ctor(class);
 
     let mut getters_setters = self.gen_default_getters_setters(class);
     getters_setters.sort_by(|a, b| a.0.cmp(&b.0));
     let register = self.gen_register(class);
+    let class_runtime = if self.has_lifetime {
+      quote! {}
+    } else {
+      self.gen_class_runtime(class)
+    };
 
     let getters_setters_token = getters_setters.into_iter().map(|(_, token)| token);
 
@@ -201,12 +298,347 @@ impl NapiStruct {
 
         #ctor
         #(#getters_setters_token)*
+        #class_runtime
         #register
       }
     }
   }
 
+  fn gen_class_runtime(&self, class: &NapiClass) -> TokenStream {
+    let name = &self.name;
+    let js_name = &self.js_name;
+    let rust_name = self.name.to_string();
+    let subclassable = class.subclass;
+    let info_name = Ident::new("__NAPI_CLASS_INFO", Span::call_site());
+    let def_name = Ident::new("__NAPI_CLASS_DEF", Span::call_site());
+    let layout_name = Ident::new("__NAPI_CLASS_LAYOUT", Span::call_site());
+    let entry_name = Ident::new("__NAPI_CLASS_ENTRY", Span::call_site());
+    let layout_ty = Ident::new("__NapiClassLayout", Span::call_site());
+    let layout_fn = Ident::new("__napi_class_layout", Span::call_site());
+    let drop_fn = Ident::new("__napi_drop_initialized", Span::call_site());
+
+    let subclass_impl = if class.subclass {
+      quote! {
+        unsafe impl napi::bindgen_prelude::NapiSubclass for #name {}
+      }
+    } else {
+      quote! {}
+    };
+
+    if let Some(parent) = &class.parent {
+      let parent = &parent.rust_path;
+      quote! {
+        #[repr(C)]
+        pub struct #layout_ty {
+          parent: <#parent as napi::bindgen_prelude::ClassChain>::Layout,
+          value: std::mem::MaybeUninit<#name>,
+        }
+
+        static #info_name: napi::bindgen_prelude::ClassInfo = unsafe {
+          napi::bindgen_prelude::ClassInfo::new(#rust_name, #js_name, #subclassable)
+        };
+
+        static #entry_name: napi::bindgen_prelude::ClassEntry = unsafe {
+          napi::bindgen_prelude::ClassEntry::new(
+            &#info_name,
+            std::mem::offset_of!(#layout_ty, value),
+          )
+        };
+
+        static #layout_name: napi::bindgen_prelude::ClassLayout = unsafe {
+          napi::bindgen_prelude::ClassLayout::new(
+            Some(<#parent as napi::bindgen_prelude::ClassChain>::LAYOUT),
+            #entry_name,
+            std::mem::size_of::<#layout_ty>(),
+            std::mem::align_of::<#layout_ty>(),
+            #drop_fn,
+          )
+        };
+
+        fn #layout_fn() -> &'static napi::bindgen_prelude::ClassLayout {
+          &#layout_name
+        }
+
+        static #def_name: napi::bindgen_prelude::ClassDef<#name> = unsafe {
+          napi::bindgen_prelude::ClassDef::new(&#info_name, #layout_fn)
+        };
+
+        unsafe impl napi::bindgen_prelude::NapiClass for #name {
+          type Parent = #parent;
+
+          const CLASS: &'static napi::bindgen_prelude::ClassDef<Self> = &#def_name;
+        }
+
+        unsafe impl napi::bindgen_prelude::NapiReceiver for #name {
+          type Access = napi::bindgen_prelude::ClassAccess;
+
+          type Ref<'scope> = napi::bindgen_prelude::ClassRef<'scope, Self>
+          where
+            Self: 'scope;
+
+          type Mut<'scope> = napi::bindgen_prelude::ClassRefMut<'scope, Self>
+          where
+            Self: 'scope;
+
+          unsafe fn validate_raw_object<'scope>(
+            scope: &mut napi::bindgen_prelude::Scope<'_, 'scope>,
+            object: napi::bindgen_prelude::sys::napi_value,
+          ) -> napi::Result<(Self::Access, napi::bindgen_prelude::ClassStorageRef<'scope>)> {
+            unsafe { napi::bindgen_prelude::ClassStorageRef::validate_raw_object(
+              scope,
+              object,
+              <Self as napi::bindgen_prelude::NapiClass>::CLASS.info(),
+            ) }
+          }
+
+          unsafe fn ref_from_validated_object<'scope>(
+            object: napi::bindgen_prelude::sys::napi_value,
+            storage: napi::bindgen_prelude::ClassStorageRef<'scope>,
+            access: Self::Access,
+          ) -> napi::Result<Self::Ref<'scope>> {
+            unsafe {
+              napi::bindgen_prelude::ClassRef::from_validated_parts(object, storage, access)
+            }
+          }
+
+          unsafe fn mut_from_validated_object<'scope>(
+            object: napi::bindgen_prelude::sys::napi_value,
+            storage: napi::bindgen_prelude::ClassStorageRef<'scope>,
+            access: Self::Access,
+          ) -> napi::Result<Self::Mut<'scope>> {
+            unsafe {
+              napi::bindgen_prelude::ClassRefMut::from_validated_parts(object, storage, access)
+            }
+          }
+        }
+
+        #subclass_impl
+
+        unsafe impl napi::bindgen_prelude::ClassChain for #name {
+          type Layout = #layout_ty;
+
+          const LAYOUT: &'static napi::bindgen_prelude::ClassLayout = &#layout_name;
+
+          unsafe fn write_init(
+            init: napi::bindgen_prelude::ClassInitializer<Self>,
+            dst: std::ptr::NonNull<Self::Layout>,
+          ) {
+            let (value, parent) = init.into_value_and_parent();
+            let layout = dst.as_ptr();
+            unsafe {
+              <#parent as napi::bindgen_prelude::ClassChain>::write_init(
+                parent,
+                std::ptr::NonNull::new_unchecked(&mut (*layout).parent),
+              );
+              (*layout).value.write(value);
+            }
+          }
+
+          unsafe fn drop_segments(data: std::ptr::NonNull<Self::Layout>) {
+            let layout = data.as_ptr();
+            unsafe {
+              napi::bindgen_prelude::drop_segment(
+                std::ptr::NonNull::new_unchecked((*layout).value.as_mut_ptr()),
+              );
+              <#parent as napi::bindgen_prelude::ClassChain>::drop_segments(
+                std::ptr::NonNull::new_unchecked(&mut (*layout).parent),
+              );
+            }
+          }
+
+          unsafe fn drop_initialized(data: std::ptr::NonNull<u8>) {
+            let layout = std::alloc::Layout::from_size_align_unchecked(
+              std::mem::size_of::<#layout_ty>(),
+              std::mem::align_of::<#layout_ty>(),
+            );
+            unsafe {
+              <Self as napi::bindgen_prelude::ClassChain>::drop_segments(data.cast());
+              std::alloc::dealloc(data.as_ptr(), layout);
+            }
+          }
+        }
+
+        unsafe fn #drop_fn(data: std::ptr::NonNull<u8>) {
+          unsafe { <#name as napi::bindgen_prelude::ClassChain>::drop_initialized(data) }
+        }
+      }
+    } else {
+      quote! {
+        #[repr(C)]
+        pub struct #layout_ty {
+          value: std::mem::MaybeUninit<#name>,
+        }
+
+        static #info_name: napi::bindgen_prelude::ClassInfo = unsafe {
+          napi::bindgen_prelude::ClassInfo::new(#rust_name, #js_name, #subclassable)
+        };
+
+        static #entry_name: napi::bindgen_prelude::ClassEntry = unsafe {
+          napi::bindgen_prelude::ClassEntry::new(
+            &#info_name,
+            std::mem::offset_of!(#layout_ty, value),
+          )
+        };
+
+        static #layout_name: napi::bindgen_prelude::ClassLayout = unsafe {
+          napi::bindgen_prelude::ClassLayout::new(
+            None,
+            #entry_name,
+            std::mem::size_of::<#layout_ty>(),
+            std::mem::align_of::<#layout_ty>(),
+            #drop_fn,
+          )
+        };
+
+        fn #layout_fn() -> &'static napi::bindgen_prelude::ClassLayout {
+          &#layout_name
+        }
+
+        static #def_name: napi::bindgen_prelude::ClassDef<#name> = unsafe {
+          napi::bindgen_prelude::ClassDef::new(&#info_name, #layout_fn)
+        };
+
+        unsafe impl napi::bindgen_prelude::NapiClass for #name {
+          type Parent = ();
+
+          const CLASS: &'static napi::bindgen_prelude::ClassDef<Self> = &#def_name;
+        }
+
+        unsafe impl napi::bindgen_prelude::NapiReceiver for #name {
+          type Access = napi::bindgen_prelude::ClassAccess;
+
+          type Ref<'scope> = napi::bindgen_prelude::ClassRef<'scope, Self>
+          where
+            Self: 'scope;
+
+          type Mut<'scope> = napi::bindgen_prelude::ClassRefMut<'scope, Self>
+          where
+            Self: 'scope;
+
+          unsafe fn validate_raw_object<'scope>(
+            scope: &mut napi::bindgen_prelude::Scope<'_, 'scope>,
+            object: napi::bindgen_prelude::sys::napi_value,
+          ) -> napi::Result<(Self::Access, napi::bindgen_prelude::ClassStorageRef<'scope>)> {
+            unsafe { napi::bindgen_prelude::ClassStorageRef::validate_raw_object(
+              scope,
+              object,
+              <Self as napi::bindgen_prelude::NapiClass>::CLASS.info(),
+            ) }
+          }
+
+          unsafe fn ref_from_validated_object<'scope>(
+            object: napi::bindgen_prelude::sys::napi_value,
+            storage: napi::bindgen_prelude::ClassStorageRef<'scope>,
+            access: Self::Access,
+          ) -> napi::Result<Self::Ref<'scope>> {
+            unsafe {
+              napi::bindgen_prelude::ClassRef::from_validated_parts(object, storage, access)
+            }
+          }
+
+          unsafe fn mut_from_validated_object<'scope>(
+            object: napi::bindgen_prelude::sys::napi_value,
+            storage: napi::bindgen_prelude::ClassStorageRef<'scope>,
+            access: Self::Access,
+          ) -> napi::Result<Self::Mut<'scope>> {
+            unsafe {
+              napi::bindgen_prelude::ClassRefMut::from_validated_parts(object, storage, access)
+            }
+          }
+        }
+
+        #subclass_impl
+
+        unsafe impl napi::bindgen_prelude::ClassChain for #name {
+          type Layout = #layout_ty;
+
+          const LAYOUT: &'static napi::bindgen_prelude::ClassLayout = &#layout_name;
+
+          unsafe fn write_init(
+            init: napi::bindgen_prelude::ClassInitializer<Self>,
+            dst: std::ptr::NonNull<Self::Layout>,
+          ) {
+            let (value, parent) = init.into_value_and_parent();
+            let layout = dst.as_ptr();
+            std::mem::drop(parent);
+            unsafe {
+              (*layout).value.write(value);
+            }
+          }
+
+          unsafe fn drop_segments(data: std::ptr::NonNull<Self::Layout>) {
+            let layout = data.as_ptr();
+            unsafe {
+              napi::bindgen_prelude::drop_segment(
+                std::ptr::NonNull::new_unchecked((*layout).value.as_mut_ptr()),
+              );
+            }
+          }
+
+          unsafe fn drop_initialized(data: std::ptr::NonNull<u8>) {
+            let layout = std::alloc::Layout::from_size_align_unchecked(
+              std::mem::size_of::<#layout_ty>(),
+              std::mem::align_of::<#layout_ty>(),
+            );
+            unsafe {
+              <Self as napi::bindgen_prelude::ClassChain>::drop_segments(data.cast());
+              std::alloc::dealloc(data.as_ptr(), layout);
+            }
+          }
+        }
+
+        unsafe fn #drop_fn(data: std::ptr::NonNull<u8>) {
+          unsafe { <#name as napi::bindgen_prelude::ClassChain>::drop_initialized(data) }
+        }
+      }
+    }
+  }
+
   fn gen_default_ctor(&self, class: &NapiClass) -> TokenStream {
+    if class.ctor {
+      self.gen_field_default_ctor(class)
+    } else {
+      self.gen_hidden_constructor_shell(class)
+    }
+  }
+
+  fn gen_hidden_constructor_shell(&self, _class: &NapiClass) -> TokenStream {
+    let name = &self.name;
+    let js_name_str = &self.js_name;
+    let tracing_debug = gen_tracing_debug(js_name_str, "constructor");
+
+    let constructor = quote! {
+      let receiver = frame.constructor_receiver::<#name>()?;
+      match unsafe {
+        <#name as napi::bindgen_prelude::NapiClass>::CLASS
+          .try_wrap_internal_construction(receiver)?
+      } {
+        napi::bindgen_prelude::InternalConstructionResult::Wrapped(value) => Ok(value),
+        napi::bindgen_prelude::InternalConstructionResult::Absent => Err(
+          napi::bindgen_prelude::Error::new(
+            napi::bindgen_prelude::Status::InvalidArg,
+            format!("Class `{}` is not constructible", #js_name_str),
+          ),
+        ),
+      }
+    };
+
+    quote! {
+      extern "C" fn constructor(
+        env: napi::bindgen_prelude::sys::napi_env,
+        cb: napi::bindgen_prelude::sys::napi_callback_info
+      ) -> napi::bindgen_prelude::sys::napi_value {
+        unsafe {
+          napi::__private::__napi_binding_entry::<0>(env, cb, |mut frame| {
+            #tracing_debug
+            #constructor
+          })
+        }
+      }
+    }
+  }
+
+  fn gen_field_default_ctor(&self, class: &NapiClass) -> TokenStream {
     let name = &self.name;
     let js_name_str = &self.js_name;
     let fields_len = class.fields.len();
@@ -214,11 +646,11 @@ impl NapiStruct {
 
     for (i, field) in class.fields.iter().enumerate() {
       let ty = &field.ty;
+      let field_value = class_field_from_frame(ty, quote! { #i }, name);
       match &field.name {
-        syn::Member::Named(ident) => fields
-          .push(quote! { #ident: <#ty as napi::bindgen_prelude::FromNapiValue>::from_napi_value(env, cb.get_arg(#i))? }),
+        syn::Member::Named(ident) => fields.push(quote! { #ident: #field_value }),
         syn::Member::Unnamed(_) => {
-          fields.push(quote! { <#ty as napi::bindgen_prelude::FromNapiValue>::from_napi_value(env, cb.get_arg(#i))? });
+          fields.push(field_value);
         }
       }
     }
@@ -228,13 +660,48 @@ impl NapiStruct {
     } else {
       quote! { #name {#(#fields),*} }
     };
-
-    let is_empty_struct_hint = fields_len == 0;
-
-    let constructor = if class.implement_iterator {
-      quote! { unsafe { cb.construct_generator::<#is_empty_struct_hint, #name>(#js_name_str, #construct) } }
+    let wrap_from_public_constructor = if class.implement_iterator {
+      quote! {
+        let init =
+          napi::bindgen_prelude::IntoClassInitializer::<#name>::into_class_initializer(#construct);
+        frame.construct_generator::<false, #name>(
+          #js_name_str,
+          init,
+        )
+      }
+    } else if class.implement_async_iterator {
+      quote! {
+        let init =
+          napi::bindgen_prelude::IntoClassInitializer::<#name>::into_class_initializer(#construct);
+        frame.construct_async_generator::<false, #name>(
+          #js_name_str,
+          init,
+        )
+      }
     } else {
-      quote! { unsafe { cb.construct::<#is_empty_struct_hint, #name>(#js_name_str, #construct) } }
+      quote! {
+        let init =
+          napi::bindgen_prelude::IntoClassInitializer::<#name>::into_class_initializer(#construct);
+        let receiver = frame.constructor_receiver::<#name>()?;
+        <#name as napi::bindgen_prelude::NapiClass>::CLASS.wrap_receiver(
+          receiver,
+          init,
+        )
+      }
+    };
+
+    let constructor = quote! {
+      let receiver = frame.constructor_receiver::<#name>()?;
+      match unsafe {
+        <#name as napi::bindgen_prelude::NapiClass>::CLASS
+          .try_wrap_internal_construction(receiver)?
+      } {
+        napi::bindgen_prelude::InternalConstructionResult::Wrapped(value) => Ok(value),
+        napi::bindgen_prelude::InternalConstructionResult::Absent => {
+          let receiver = frame.constructor_receiver::<#name>()?;
+          #wrap_from_public_constructor
+        }
+      }
     };
 
     let tracing_debug = gen_tracing_debug(js_name_str, "constructor");
@@ -244,278 +711,32 @@ impl NapiStruct {
         env: napi::bindgen_prelude::sys::napi_env,
         cb: napi::bindgen_prelude::sys::napi_callback_info
       ) -> napi::bindgen_prelude::sys::napi_value {
-        #tracing_debug
-        napi::bindgen_prelude::CallbackInfo::<#fields_len>::new(env, cb, None, false)
-          .and_then(|cb| #constructor)
-          .unwrap_or_else(|e| {
-            unsafe { napi::bindgen_prelude::JsError::from(e).throw_into(env) };
-            std::ptr::null_mut::<napi::bindgen_prelude::sys::napi_value__>()
+        unsafe {
+          napi::__private::__napi_binding_entry::<#fields_len>(env, cb, |mut frame| {
+            #tracing_debug
+            #constructor
           })
+        }
       }
     }
   }
-
   fn gen_napi_value_map_impl(&self) -> TokenStream {
     match &self.kind {
       NapiStructKind::Array(array) => self.gen_napi_value_array_impl(array),
       NapiStructKind::Transparent(transparent) => self.gen_napi_value_transparent_impl(transparent),
-      NapiStructKind::Class(class) if !class.ctor => gen_napi_value_map_impl(
-        &self.name,
-        self.gen_to_napi_value_ctor_impl_for_non_default_constructor_struct(class),
-        self.has_lifetime,
-      ),
-      NapiStructKind::Class(class) => gen_napi_value_map_impl(
-        &self.name,
-        self.gen_to_napi_value_ctor_impl(class),
-        self.has_lifetime,
-      ),
-      NapiStructKind::Object(obj) => self.gen_to_napi_value_obj_impl(obj),
+      NapiStructKind::Class(_) => gen_napi_value_map_impl(&self.name, quote! {}, self.has_lifetime),
+      NapiStructKind::Object(obj) => self.gen_into_js_obj_impl(obj),
       NapiStructKind::StructuredEnum(structured_enum) => {
-        self.gen_to_napi_value_structured_enum_impl(structured_enum)
+        self.gen_into_js_structured_enum_impl(structured_enum)
       }
     }
   }
 
-  fn gen_to_napi_value_ctor_impl_for_non_default_constructor_struct(
-    &self,
-    class: &NapiClass,
-  ) -> TokenStream {
-    let name = &self.name;
-    let js_name_raw = &self.js_name;
-    let js_name_str = format!("{js_name_raw}\0");
-    let iterator_implementation = self.gen_iterator_property(class, name);
-    let async_iterator_implementation = self.gen_async_iterator_property(class, name);
-    let (object_finalize_impl, to_napi_value_impl, javascript_class_ext_impl) = if self.has_lifetime
-    {
-      let name = quote! { #name<'_javascript_function_scope> };
-      (
-        quote! { impl <'_javascript_function_scope> napi::bindgen_prelude::ObjectFinalize for #name {} },
-        quote! { impl <'_javascript_function_scope> napi::bindgen_prelude::ToNapiValue for #name },
-        quote! { impl <'_javascript_function_scope> napi::bindgen_prelude::JavaScriptClassExt for #name },
-      )
-    } else {
-      (
-        quote! { impl napi::bindgen_prelude::ObjectFinalize for #name {} },
-        quote! { impl napi::bindgen_prelude::ToNapiValue for #name },
-        quote! { impl napi::bindgen_prelude::JavaScriptClassExt for #name },
-      )
-    };
-    let finalize_trait = if class.use_custom_finalize {
-      quote! {}
-    } else {
-      quote! {
-        #[automatically_derived]
-        #object_finalize_impl
-      }
-    };
-    quote! {
-      #[automatically_derived]
-      #to_napi_value_impl {
-        unsafe fn to_napi_value(
-          env: napi::sys::napi_env,
-          val: #name
-        ) -> napi::Result<napi::bindgen_prelude::sys::napi_value> {
-          if let Some(ctor_ref) = napi::__private::get_class_constructor(#js_name_str) {
-            let mut wrapped_value = Box::into_raw(Box::new(val));
-            if wrapped_value as usize == 0x1 {
-              wrapped_value = Box::into_raw(Box::new(0u8)).cast();
-            }
-            let instance_value = napi::bindgen_prelude::new_instance::<#name>(env, wrapped_value.cast(), ctor_ref)?;
-            #iterator_implementation
-            #async_iterator_implementation
-            Ok(instance_value)
-          } else {
-            Err(napi::bindgen_prelude::Error::new(
-              napi::bindgen_prelude::Status::InvalidArg, format!("Failed to get constructor of class `{}` in `ToNapiValue`", #js_name_raw))
-            )
-          }
-        }
-      }
-
-      #finalize_trait
-
-      #[automatically_derived]
-      #javascript_class_ext_impl {
-        fn into_instance<'scope>(self, env: &'scope napi::Env) -> napi::Result<napi::bindgen_prelude::ClassInstance<'scope, Self>>
-         {
-          if let Some(ctor_ref) = napi::bindgen_prelude::get_class_constructor(#js_name_str) {
-            unsafe {
-              let wrapped_value = Box::into_raw(Box::new(self));
-              let instance_value = napi::bindgen_prelude::new_instance::<#name>(env.raw(), wrapped_value as *mut _ as *mut std::ffi::c_void, ctor_ref)?;
-              Ok(napi::bindgen_prelude::ClassInstance::new(instance_value, env.raw(), wrapped_value))
-            }
-          } else {
-            Err(napi::bindgen_prelude::Error::new(
-              napi::bindgen_prelude::Status::InvalidArg, format!("Failed to get constructor of class `{}`", #js_name_raw))
-            )
-          }
-        }
-
-        fn into_reference(self, env: napi::Env) -> napi::Result<napi::bindgen_prelude::Reference<Self>> {
-          if let Some(ctor_ref) = napi::bindgen_prelude::get_class_constructor(#js_name_str) {
-            unsafe {
-              let mut wrapped_value = Box::into_raw(Box::new(self));
-              if wrapped_value as usize == 0x1 {
-                wrapped_value = Box::into_raw(Box::new(0u8)).cast();
-              }
-              let instance_value = napi::bindgen_prelude::new_instance::<#name>(env.raw(), wrapped_value.cast(), ctor_ref)?;
-              {
-                let env = env.raw();
-                #iterator_implementation
-                #async_iterator_implementation
-              }
-              napi::bindgen_prelude::Reference::<#name>::from_value_ptr(wrapped_value.cast(), env.raw())
-            }
-          } else {
-            Err(napi::bindgen_prelude::Error::new(
-              napi::bindgen_prelude::Status::InvalidArg, format!("Failed to get constructor of class `{}`", #js_name_raw))
-            )
-          }
-        }
-
-        fn instance_of<'env, V: napi::JsValue<'env>>(env: &napi::bindgen_prelude::Env, value: &V) -> napi::bindgen_prelude::Result<bool> {
-          if let Some(ctor_ref) = napi::bindgen_prelude::get_class_constructor(#js_name_str) {
-            let mut ctor = std::ptr::null_mut();
-            napi::check_status!(
-              unsafe { napi::sys::napi_get_reference_value(env.raw(), ctor_ref, &mut ctor) },
-              "Failed to get constructor reference of class `{}`",
-              #js_name_str
-            )?;
-            let mut is_instance_of = false;
-            napi::check_status!(
-              unsafe { napi::sys::napi_instanceof(env.raw(), value.value().value, ctor, &mut is_instance_of) },
-              "Failed to run instanceof for class `{}`",
-              #js_name_str
-            )?;
-            Ok(is_instance_of)
-          } else {
-            Err(napi::Error::new(napi::Status::GenericFailure, format!("Failed to get constructor of class `{}`", #js_name_str)))
-          }
-        }
-      }
-    }
-  }
-
-  fn gen_iterator_property(&self, class: &NapiClass, name: &Ident) -> TokenStream {
-    if !class.implement_iterator {
-      return quote! {};
-    }
-    quote! {
-      unsafe { napi::__private::create_iterator::<#name>(env, instance_value, wrapped_value); }
-    }
-  }
-
-  fn gen_async_iterator_property(&self, class: &NapiClass, name: &Ident) -> TokenStream {
-    if !class.implement_async_iterator {
-      return quote! {};
-    }
-    // Note: `create_async_iterator` is NOT unsafe, unlike `create_iterator`.
-    // `create_iterator` is unsafe because `ScopedGenerator<'a>` has a lifetime parameter,
-    // requiring the caller to uphold lifetime invariants. `create_async_iterator` uses
-    // `AsyncGenerator` whose Future must be `Send + 'static`, so all data is owned and
-    // no lifetime invariants need to be upheld by the caller.
-    quote! {
-      napi::__private::create_async_iterator::<#name>(env, instance_value, wrapped_value);
-    }
-  }
-
-  fn gen_to_napi_value_ctor_impl(&self, class: &NapiClass) -> TokenStream {
-    let name = &self.name;
-    let js_name_without_null = &self.js_name;
-    let js_name_str = format!("{}\0", &self.js_name);
-
-    let mut field_conversions = vec![];
-    let mut field_destructions = vec![];
-
-    for field in class.fields.iter() {
-      let ty = &field.ty;
-
-      match &field.name {
-        syn::Member::Named(ident) => {
-          // alias here prevents field name shadowing
-          let alias_ident = format_ident!("{}_", ident);
-          field_destructions.push(quote! { #ident: #alias_ident });
-          field_conversions.push(
-            quote! { <#ty as napi::bindgen_prelude::ToNapiValue>::to_napi_value(env, #alias_ident)? },
-          );
-        }
-        syn::Member::Unnamed(i) => {
-          let arg_name = format_ident!("arg{}", i);
-          field_destructions.push(quote! { #arg_name });
-          field_conversions.push(
-            quote! { <#ty as napi::bindgen_prelude::ToNapiValue>::to_napi_value(env, #arg_name)? },
-          );
-        }
-      }
-    }
-
-    let destructed_fields = if class.is_tuple {
-      quote! {
-        Self (#(#field_destructions),*)
-      }
-    } else {
-      quote! {
-        Self {#(#field_destructions),*}
-      }
-    };
-
-    let finalize_trait = if class.use_custom_finalize {
-      quote! {}
-    } else if self.has_lifetime {
-      quote! { impl <'_javascript_function_scope> napi::bindgen_prelude::ObjectFinalize for #name<'_javascript_function_scope> {} }
-    } else {
-      quote! { impl napi::bindgen_prelude::ObjectFinalize for #name {} }
-    };
-
-    let to_napi_value_impl = if self.has_lifetime {
-      quote! { impl <'_javascript_function_scope> napi::bindgen_prelude::ToNapiValue for #name<'_javascript_function_scope> }
-    } else {
-      quote! { impl napi::bindgen_prelude::ToNapiValue for #name }
-    };
-
-    quote! {
-      #[automatically_derived]
-      #to_napi_value_impl {
-        unsafe fn to_napi_value(
-          env: napi::bindgen_prelude::sys::napi_env,
-          val: #name,
-        ) -> napi::bindgen_prelude::Result<napi::bindgen_prelude::sys::napi_value> {
-          if let Some(ctor_ref) = napi::bindgen_prelude::get_class_constructor(#js_name_str) {
-            let mut ctor = std::ptr::null_mut();
-
-            napi::bindgen_prelude::check_status!(
-              napi::bindgen_prelude::sys::napi_get_reference_value(env, ctor_ref, &mut ctor),
-              "Failed to get constructor reference of class `{}`",
-              #js_name_without_null
-            )?;
-
-            let mut instance_value = std::ptr::null_mut();
-            let #destructed_fields = val;
-            let args = vec![#(#field_conversions),*];
-
-            napi::bindgen_prelude::check_status!(
-              napi::bindgen_prelude::sys::napi_new_instance(env, ctor, args.len(), args.as_ptr(), &mut instance_value),
-              "Failed to construct class `{}`",
-              #js_name_without_null
-            )?;
-
-            Ok(instance_value)
-          } else {
-            Err(napi::bindgen_prelude::Error::new(
-              napi::bindgen_prelude::Status::InvalidArg, format!("Failed to get constructor of class `{}`", #js_name_str))
-            )
-          }
-        }
-      }
-      #finalize_trait
-    }
-  }
-
-  fn gen_to_napi_value_obj_impl(&self, obj: &NapiObject) -> TokenStream {
+  fn gen_into_js_obj_impl(&self, obj: &NapiObject) -> TokenStream {
     let name = &self.name;
     let name_str = self.name.to_string();
 
-    let mut obj_field_getters = vec![];
+    let mut js_obj_field_getters = vec![];
     let mut field_destructions = vec![];
 
     // For optimized object creation: separate always-set fields from conditionally-set fields
@@ -560,21 +781,21 @@ impl NapiStruct {
               // Optional with use_nullable=true: set to value or null
               value_conversions.push(quote! {
                 let #value_var = if let Some(inner) = #alias_ident {
-                  napi::bindgen_prelude::ToNapiValue::to_napi_value(env, inner)?
+                  napi::bindgen_prelude::IntoJs::into_js(inner, scope)?.raw()
                 } else {
-                  napi::bindgen_prelude::ToNapiValue::to_napi_value(env, napi::bindgen_prelude::Null)?
+                  napi::bindgen_prelude::IntoJs::into_js(napi::bindgen_prelude::Null, scope)?.raw()
                 };
               });
             } else {
               // Non-optional: always set
               value_conversions.push(quote! {
-                let #value_var = napi::bindgen_prelude::ToNapiValue::to_napi_value(env, #alias_ident)?;
+                let #value_var = napi::bindgen_prelude::IntoJs::into_js(#alias_ident, scope)?.raw();
               });
             }
 
             property_descriptors.push(quote! {
               napi::bindgen_prelude::sys::napi_property_descriptor {
-                utf8name: std::ffi::CStr::from_bytes_with_nul_unchecked(#field_js_name_lit.as_bytes()).as_ptr(),
+                utf8name: unsafe { std::ffi::CStr::from_bytes_with_nul_unchecked(#field_js_name_lit.as_bytes()) }.as_ptr(),
                 name: std::ptr::null_mut(),
                 method: None,
                 getter: None,
@@ -589,29 +810,57 @@ impl NapiStruct {
           } else {
             // Optional with use_nullable=false: conditionally set
             conditional_setters.push(quote! {
-              if #alias_ident.is_some() {
-                obj.set(#field_js_name, #alias_ident)?;
+              if let Some(value) = #alias_ident {
+                obj.set(#field_js_name, value)?;
               }
             });
           }
 
-          // Getters remain the same
           if is_optional_field && !self.use_nullable {
-            obj_field_getters.push(quote! {
-              let #alias_ident: #ty = obj.get(#field_js_name).map_err(|mut err| {
+            let js_getter = class_field_from_object_scope(
+              &ty,
+              field_js_name,
+              name,
+              true,
+              quote! { format!("Missing field `{}`", #field_js_name) },
+            )
+            .unwrap_or_else(|| {
+              object_field_getter_from_scope(
+                &ty,
+                quote! { obj },
+                field_js_name,
+                true,
+                quote! { format!("Missing field `{}`", #field_js_name) },
+              )
+            });
+            js_obj_field_getters.push(quote! {
+              let #alias_ident: #ty = #js_getter.map_err(|mut err| {
                 err.reason = format!("{} on {}.{}", err.reason, #name_str, #field_js_name);
                 err
               })?;
             });
           } else {
-            obj_field_getters.push(quote! {
-              let #alias_ident: #ty = obj.get(#field_js_name).map_err(|mut err| {
+            let js_getter = class_field_from_object_scope(
+              &ty,
+              field_js_name,
+              name,
+              false,
+              quote! { format!("Missing field `{}`", #field_js_name) },
+            )
+            .unwrap_or_else(|| {
+              object_field_getter_from_scope(
+                &ty,
+                quote! { obj },
+                field_js_name,
+                false,
+                quote! { format!("Missing field `{}`", #field_js_name) },
+              )
+            });
+            js_obj_field_getters.push(quote! {
+              let #alias_ident: #ty = #js_getter.map_err(|mut err| {
                 err.reason = format!("{} on {}.{}", err.reason, #name_str, #field_js_name);
                 err
-              })?.ok_or_else(|| napi::bindgen_prelude::Error::new(
-                napi::bindgen_prelude::Status::InvalidArg,
-                format!("Missing field `{}`", #field_js_name),
-              ))?;
+              })?;
             });
           }
         }
@@ -628,21 +877,21 @@ impl NapiStruct {
               // Optional with use_nullable=true: set to value or null
               value_conversions.push(quote! {
                 let #value_var = if let Some(inner) = #arg_name {
-                  napi::bindgen_prelude::ToNapiValue::to_napi_value(env, inner)?
+                  napi::bindgen_prelude::IntoJs::into_js(inner, scope)?.raw()
                 } else {
-                  napi::bindgen_prelude::ToNapiValue::to_napi_value(env, napi::bindgen_prelude::Null)?
+                  napi::bindgen_prelude::IntoJs::into_js(napi::bindgen_prelude::Null, scope)?.raw()
                 };
               });
             } else {
               // Non-optional: always set
               value_conversions.push(quote! {
-                let #value_var = napi::bindgen_prelude::ToNapiValue::to_napi_value(env, #arg_name)?;
+                let #value_var = napi::bindgen_prelude::IntoJs::into_js(#arg_name, scope)?.raw();
               });
             }
 
             property_descriptors.push(quote! {
               napi::bindgen_prelude::sys::napi_property_descriptor {
-                utf8name: std::ffi::CStr::from_bytes_with_nul_unchecked(#field_js_name_lit.as_bytes()).as_ptr(),
+                utf8name: unsafe { std::ffi::CStr::from_bytes_with_nul_unchecked(#field_js_name_lit.as_bytes()) }.as_ptr(),
                 name: std::ptr::null_mut(),
                 method: None,
                 getter: None,
@@ -657,22 +906,48 @@ impl NapiStruct {
           } else {
             // Optional with use_nullable=false: conditionally set
             conditional_setters.push(quote! {
-              if #arg_name.is_some() {
-                obj.set(#field_js_name, #arg_name)?;
+              if let Some(value) = #arg_name {
+                obj.set(#field_js_name, value)?;
               }
             });
           }
 
-          // Getters remain the same
           if is_optional_field && !self.use_nullable {
-            obj_field_getters.push(quote! { let #arg_name: #ty = obj.get(#field_js_name)?; });
-          } else {
-            obj_field_getters.push(quote! {
-              let #arg_name: #ty = obj.get(#field_js_name)?.ok_or_else(|| napi::bindgen_prelude::Error::new(
-                napi::bindgen_prelude::Status::InvalidArg,
-                format!("Missing field `{}`", #field_js_name),
-              ))?;
+            let js_getter = class_field_from_object_scope(
+              &ty,
+              field_js_name,
+              name,
+              true,
+              quote! { format!("Missing field `{}`", #field_js_name) },
+            )
+            .unwrap_or_else(|| {
+              object_field_getter_from_scope(
+                &ty,
+                quote! { obj },
+                field_js_name,
+                true,
+                quote! { format!("Missing field `{}`", #field_js_name) },
+              )
             });
+            js_obj_field_getters.push(quote! { let #arg_name: #ty = #js_getter?; });
+          } else {
+            let js_getter = class_field_from_object_scope(
+              &ty,
+              field_js_name,
+              name,
+              false,
+              quote! { format!("Missing field `{}`", #field_js_name) },
+            )
+            .unwrap_or_else(|| {
+              object_field_getter_from_scope(
+                &ty,
+                quote! { obj },
+                field_js_name,
+                false,
+                quote! { format!("Missing field `{}`", #field_js_name) },
+              )
+            });
+            js_obj_field_getters.push(quote! { let #arg_name: #ty = #js_getter?; });
           }
         }
       }
@@ -688,27 +963,19 @@ impl NapiStruct {
       }
     };
 
-    let name_with_lifetime = if self.has_lifetime {
-      quote! { #name<'_javascript_function_scope> }
+    let (into_js_impl, validate_napi_value_impl, type_name_impl) = if self.has_lifetime {
+      (
+        quote! { impl <'scope, '_javascript_function_scope> napi::bindgen_prelude::IntoJs<'scope> for #name<'_javascript_function_scope> where '_javascript_function_scope: 'scope },
+        quote! { impl <'_javascript_function_scope> napi::bindgen_prelude::ValidateNapiValue for #name<'_javascript_function_scope> },
+        quote! { impl <'_javascript_function_scope> napi::bindgen_prelude::TypeName for #name<'_javascript_function_scope> },
+      )
     } else {
-      quote! { #name }
+      (
+        quote! { impl <'scope> napi::bindgen_prelude::IntoJs<'scope> for #name },
+        quote! { impl napi::bindgen_prelude::ValidateNapiValue for #name },
+        quote! { impl napi::bindgen_prelude::TypeName for #name },
+      )
     };
-    let (from_napi_value_impl, to_napi_value_impl, validate_napi_value_impl, type_name_impl) =
-      if self.has_lifetime {
-        (
-          quote! { impl <'_javascript_function_scope> napi::bindgen_prelude::FromNapiValue for #name<'_javascript_function_scope> },
-          quote! { impl <'_javascript_function_scope> napi::bindgen_prelude::ToNapiValue for #name<'_javascript_function_scope> },
-          quote! { impl <'_javascript_function_scope> napi::bindgen_prelude::ValidateNapiValue for #name<'_javascript_function_scope> },
-          quote! { impl <'_javascript_function_scope> napi::bindgen_prelude::TypeName for #name<'_javascript_function_scope> },
-        )
-      } else {
-        (
-          quote! { impl napi::bindgen_prelude::FromNapiValue for #name },
-          quote! { impl napi::bindgen_prelude::ToNapiValue for #name },
-          quote! { impl napi::bindgen_prelude::ValidateNapiValue for #name },
-          quote! { impl napi::bindgen_prelude::TypeName for #name },
-        )
-      };
 
     // Generate object creation code
     let object_creation = if conditional_setters.is_empty() {
@@ -721,8 +988,7 @@ impl NapiStruct {
           #(#property_descriptors),*
         ];
 
-        let obj_ptr = napi::bindgen_prelude::create_object_with_properties(env, &properties)?;
-        Ok(obj_ptr)
+        scope.create_object_with_properties(&properties)
       }
     } else {
       // Some fields are conditionally set - use batched for always-set, then add conditionals
@@ -734,24 +1000,27 @@ impl NapiStruct {
           #(#property_descriptors),*
         ];
 
-        let obj_ptr = napi::bindgen_prelude::create_object_with_properties(env, &properties)?;
-
-        // Wrap in Object for conditional field setters
-        let mut obj = napi::bindgen_prelude::Object::from_raw(env, obj_ptr);
+        let mut obj = scope.create_object_with_properties(&properties)?;
 
         #(#conditional_setters)*
 
-        Ok(obj_ptr)
+        Ok::<_, napi::bindgen_prelude::Error>(obj)
       }
     };
 
-    let to_napi_value = if obj.object_to_js {
+    let into_js = if obj.object_to_js {
       quote! {
         #[automatically_derived]
-        #to_napi_value_impl {
-          unsafe fn to_napi_value(env: napi::bindgen_prelude::sys::napi_env, val: #name_with_lifetime) -> napi::bindgen_prelude::Result<napi::bindgen_prelude::sys::napi_value> {
-            let #destructed_fields = val;
-            #object_creation
+        #into_js_impl {
+          type Output = napi::bindgen_prelude::Object<'scope>;
+
+          fn into_js(
+            self,
+            scope: &mut napi::bindgen_prelude::Scope<'_, 'scope>,
+          ) -> napi::bindgen_prelude::Result<napi::bindgen_prelude::Local<'scope, Self::Output>> {
+            let #destructed_fields = self;
+            let object = { #object_creation }?;
+            napi::bindgen_prelude::IntoJs::into_js(object, scope)
           }
         }
       }
@@ -759,34 +1028,43 @@ impl NapiStruct {
       quote! {}
     };
 
-    let from_napi_value = if obj.object_from_js {
-      let return_type = if self.has_lifetime {
-        quote! { #name<'_javascript_function_scope> }
+    let from_js = if obj.object_from_js {
+      let from_js_impl = if self.has_lifetime {
+        quote! { impl<'env, 'scope> napi::bindgen_prelude::FromJs<'env, 'scope> for #name<'scope> }
       } else {
-        quote! { #name }
+        quote! { impl<'env, 'scope> napi::bindgen_prelude::FromJs<'env, 'scope> for #name }
+      };
+      let js_field_decode = if js_obj_field_getters.is_empty() {
+        quote! {
+          scope.assert_value_type(value, napi::bindgen_prelude::ValueType::Object)?;
+        }
+      } else {
+        quote! {
+          let obj = <napi::bindgen_prelude::Object as napi::bindgen_prelude::FromJs>::from_js(
+            scope,
+            value,
+          )?;
+
+          #(#js_obj_field_getters)*
+        }
       };
       quote! {
         #[automatically_derived]
-        #from_napi_value_impl {
-          unsafe fn from_napi_value(
-            env: napi::bindgen_prelude::sys::napi_env,
-            napi_val: napi::bindgen_prelude::sys::napi_value
-          ) -> napi::bindgen_prelude::Result<#return_type> {
-            #[allow(unused_variables)]
-            let env_wrapper = napi::bindgen_prelude::Env::from(env);
-            #[allow(unused_mut)]
-            let mut obj = napi::bindgen_prelude::Object::from_napi_value(env, napi_val)?;
+        #validate_napi_value_impl {}
 
-            #(#obj_field_getters)*
+        #[automatically_derived]
+        #from_js_impl {
+          fn from_js(
+            scope: &mut napi::bindgen_prelude::Scope<'env, 'scope>,
+            value: napi::bindgen_prelude::Local<'scope, napi::bindgen_prelude::Unknown<'scope>>
+          ) -> napi::bindgen_prelude::Result<Self> {
+            #js_field_decode
 
             let val = #destructed_fields;
 
             Ok(val)
           }
         }
-
-        #[automatically_derived]
-        #validate_napi_value_impl {}
       }
     } else {
       quote! {}
@@ -804,9 +1082,9 @@ impl NapiStruct {
         }
       }
 
-      #to_napi_value
+      #into_js
 
-      #from_napi_value
+      #from_js
     }
   }
 
@@ -833,29 +1111,47 @@ impl NapiStruct {
       );
 
       if field.getter {
-        let default_to_napi_value_convert = quote! {
-          let val = &mut obj.#field_ident;
-          unsafe { <&mut #ty as napi::bindgen_prelude::ToNapiValue>::to_napi_value(env, val) }
+        let default_into_js_convert = into_js_frame(quote! { val });
+        let none_into_js = into_js_frame(quote! { () });
+        let ok_into_js = into_js_frame(quote! { val });
+        let default_into_js_convert = quote! {
+          let val = &obj.#field_ident;
+          #default_into_js_convert
         };
-        let to_napi_value_convert = if let syn::Type::Path(syn::TypePath {
+        let into_js_convert = if let Some(convert) = class_field_into_js(ty, field_ident) {
+          convert
+        } else if let syn::Type::Path(syn::TypePath {
           path: syn::Path { segments, .. },
           ..
         }) = ty
         {
           if let Some(syn::PathSegment { ident, .. }) = segments.last() {
-            if STRUCT_FIELD_SPECIAL_CASE.iter().any(|name| ident == name) {
+            if ident == "Option" {
               quote! {
-                let val = obj.#field_ident.as_mut();
-                unsafe { napi::bindgen_prelude::ToNapiValue::to_napi_value(env, val) }
+                match &obj.#field_ident {
+                  Some(val) => #ok_into_js,
+                  None => #none_into_js,
+                }
+              }
+            } else if ident == "Result" {
+              quote! {
+                match &obj.#field_ident {
+                  Ok(val) => #ok_into_js,
+                  Err(err) => {
+                    let scope = frame.context_mut().scope_mut();
+                    let error = scope.create_error_value(format!("{:?}", err.status), err.reason.clone())?;
+                    Ok(error.raw())
+                  }
+                }
               }
             } else {
-              default_to_napi_value_convert
+              default_into_js_convert
             }
           } else {
-            default_to_napi_value_convert
+            default_into_js_convert
           }
         } else {
-          default_to_napi_value_convert
+          default_into_js_convert
         };
         let tracing_debug = gen_tracing_debug(js_name_str, &field.js_name);
         getters_setters.push((
@@ -865,16 +1161,13 @@ impl NapiStruct {
               env: napi::bindgen_prelude::sys::napi_env,
               cb: napi::bindgen_prelude::sys::napi_callback_info
             ) -> napi::bindgen_prelude::sys::napi_value {
-              #tracing_debug
-              napi::bindgen_prelude::CallbackInfo::<0>::new(env, cb, Some(0), false)
-                .and_then(|mut cb| cb.unwrap_borrow_mut::<#struct_name>())
-                .and_then(|obj| {
-                  #to_napi_value_convert
+              unsafe {
+                napi::__private::__napi_binding_entry::<0>(env, cb, |mut frame| {
+                  #tracing_debug
+                  let obj = frame.this_class::<#struct_name>()?;
+                  #into_js_convert
                 })
-                .unwrap_or_else(|e| {
-                  unsafe { napi::bindgen_prelude::JsError::from(e).throw_into(env) };
-                  std::ptr::null_mut::<napi::bindgen_prelude::sys::napi_value__>()
-                })
+              }
             }
           },
         ));
@@ -883,6 +1176,8 @@ impl NapiStruct {
       if field.setter {
         let setter_tracing_debug =
           gen_tracing_debug(js_name_str, &format!("set_{}", field.js_name));
+        let class_field_from_frame = class_field_from_frame(ty, quote! { 0 }, struct_name);
+        let setter_return = quote! { frame.return_value(()) };
         getters_setters.push((
           field.js_name.clone(),
           quote! {
@@ -890,22 +1185,15 @@ impl NapiStruct {
               env: napi::bindgen_prelude::sys::napi_env,
               cb: napi::bindgen_prelude::sys::napi_callback_info
             ) -> napi::bindgen_prelude::sys::napi_value {
-              #setter_tracing_debug
-              napi::bindgen_prelude::CallbackInfo::<1>::new(env, cb, Some(1), false)
-                .and_then(|mut cb_info| unsafe {
-                  cb_info.unwrap_borrow_mut::<#struct_name>()
-                    .and_then(|obj| {
-                      <#ty as napi::bindgen_prelude::FromNapiValue>::from_napi_value(env, cb_info.get_arg(0))
-                        .and_then(move |val| {
-                          obj.#field_ident = val;
-                          <() as napi::bindgen_prelude::ToNapiValue>::to_napi_value(env, ())
-                        })
-                    })
+              unsafe {
+                napi::__private::__napi_binding_entry::<1>(env, cb, |mut frame| {
+                  #setter_tracing_debug
+                  let mut obj = frame.this_class_mut::<#struct_name>()?;
+                  let val = #class_field_from_frame;
+                  obj.#field_ident = val;
+                  #setter_return
                 })
-                .unwrap_or_else(|e| {
-                  unsafe { napi::bindgen_prelude::JsError::from(e).throw_into(env) };
-                  std::ptr::null_mut::<napi::bindgen_prelude::sys::napi_value__>()
-                })
+              }
             }
           },
         ));
@@ -973,6 +1261,7 @@ impl NapiStruct {
       props.push(prop);
     }
     let js_mod_ident = js_mod_to_token_stream(self.js_mod.as_ref());
+    let constructible = class.ctor;
     quote! {
       #[cfg(all(not(test), not(target_family = "wasm")))]
       napi::ctor::declarative::ctor! {
@@ -980,7 +1269,14 @@ impl NapiStruct {
         #[allow(clippy::all)]
         #[ctor(unsafe)]
         fn #struct_register_name() {
-          napi::__private::register_class(std::any::TypeId::of::<#name>(), #js_mod_ident, #js_name, vec![#(#props),*], #implement_iterator);
+          napi::__private::register_napi_class::<#name>(
+            #js_mod_ident,
+            #js_name,
+            vec![#(#props),*],
+            Some(constructor),
+            #constructible,
+            #implement_iterator,
+          );
         }
       }
 
@@ -989,22 +1285,26 @@ impl NapiStruct {
       #[cfg(all(not(test), target_family = "wasm"))]
       #[no_mangle]
       extern "C" fn #struct_register_name() {
-        napi::__private::register_class(std::any::TypeId::of::<#name>(), #js_mod_ident, #js_name, vec![#(#props),*], #implement_iterator);
+        napi::__private::register_napi_class::<#name>(
+          #js_mod_ident,
+          #js_name,
+          vec![#(#props),*],
+          Some(constructor),
+          #constructible,
+          #implement_iterator,
+        );
       }
     }
   }
 
-  fn gen_to_napi_value_structured_enum_impl(
-    &self,
-    structured_enum: &NapiStructuredEnum,
-  ) -> TokenStream {
+  fn gen_into_js_structured_enum_impl(&self, structured_enum: &NapiStructuredEnum) -> TokenStream {
     let name = &self.name;
     let name_str = self.name.to_string();
     let discriminant = structured_enum.discriminant.as_str();
     let discriminant_null_terminated = format!("{}\0", discriminant);
 
     let mut variant_arm_setters = vec![];
-    let mut variant_arm_getters = vec![];
+    let mut variant_arm_js_getters = vec![];
 
     for variant in structured_enum.variants.iter() {
       let variant_name = &variant.name;
@@ -1013,7 +1313,7 @@ impl NapiStruct {
         variant_name_str = to_case(variant_name_str, case);
       }
 
-      let mut obj_field_getters = vec![];
+      let mut js_obj_field_getters = vec![];
       let mut field_destructions = vec![];
 
       // For optimized object creation
@@ -1024,11 +1324,11 @@ impl NapiStruct {
       // First property is always the discriminant
       let discriminant_value_var = Ident::new("__discriminant_value", Span::call_site());
       value_conversions.push(quote! {
-        let #discriminant_value_var = napi::bindgen_prelude::ToNapiValue::to_napi_value(env, #variant_name_str)?;
+        let #discriminant_value_var = napi::bindgen_prelude::IntoJs::into_js(#variant_name_str, scope)?.raw();
       });
       property_descriptors.push(quote! {
         napi::bindgen_prelude::sys::napi_property_descriptor {
-          utf8name: std::ffi::CStr::from_bytes_with_nul_unchecked(#discriminant_null_terminated.as_bytes()).as_ptr(),
+          utf8name: unsafe { std::ffi::CStr::from_bytes_with_nul_unchecked(#discriminant_null_terminated.as_bytes()) }.as_ptr(),
           name: std::ptr::null_mut(),
           method: None,
           getter: None,
@@ -1076,21 +1376,21 @@ impl NapiStruct {
                 // Optional with use_nullable=true: set to value or null
                 value_conversions.push(quote! {
                   let #value_var = if let Some(inner) = #alias_ident {
-                    napi::bindgen_prelude::ToNapiValue::to_napi_value(env, inner)?
+                    napi::bindgen_prelude::IntoJs::into_js(inner, scope)?.raw()
                   } else {
-                    napi::bindgen_prelude::ToNapiValue::to_napi_value(env, napi::bindgen_prelude::Null)?
+                    napi::bindgen_prelude::IntoJs::into_js(napi::bindgen_prelude::Null, scope)?.raw()
                   };
                 });
               } else {
                 // Non-optional: always set
                 value_conversions.push(quote! {
-                  let #value_var = napi::bindgen_prelude::ToNapiValue::to_napi_value(env, #alias_ident)?;
+                  let #value_var = napi::bindgen_prelude::IntoJs::into_js(#alias_ident, scope)?.raw();
                 });
               }
 
               property_descriptors.push(quote! {
                 napi::bindgen_prelude::sys::napi_property_descriptor {
-                  utf8name: std::ffi::CStr::from_bytes_with_nul_unchecked(#field_js_name_lit.as_bytes()).as_ptr(),
+                  utf8name: unsafe { std::ffi::CStr::from_bytes_with_nul_unchecked(#field_js_name_lit.as_bytes()) }.as_ptr(),
                   name: std::ptr::null_mut(),
                   method: None,
                   getter: None,
@@ -1105,23 +1405,23 @@ impl NapiStruct {
             } else {
               // Optional with use_nullable=false: conditionally set
               conditional_setters.push(quote! {
-                if #alias_ident.is_some() {
-                  obj.set(#field_js_name, #alias_ident)?;
+                if let Some(value) = #alias_ident {
+                  obj.set(#field_js_name, value)?;
                 }
               });
             }
 
-            // Getters remain the same
             if is_optional_field && !self.use_nullable {
-              obj_field_getters.push(quote! {
-                let #alias_ident: #ty = obj.get(#field_js_name).map_err(|mut err| {
+              let decode_ty = ty.option_inner().unwrap_or(&ty);
+              js_obj_field_getters.push(quote! {
+                let #alias_ident: #ty = scope.get_optional_named_property::<#decode_ty, _>(&obj, #field_js_name).map_err(|mut err| {
                   err.reason = format!("{} on {}.{}", err.reason, #name_str, #field_js_name);
                   err
                 })?;
               });
             } else {
-              obj_field_getters.push(quote! {
-                let #alias_ident: #ty = obj.get(#field_js_name).map_err(|mut err| {
+              js_obj_field_getters.push(quote! {
+                let #alias_ident: #ty = scope.get_optional_named_property::<#ty, _>(&obj, #field_js_name).map_err(|mut err| {
                   err.reason = format!("{} on {}.{}", err.reason, #name_str, #field_js_name);
                   err
                 })?.ok_or_else(|| napi::bindgen_prelude::Error::new(
@@ -1143,21 +1443,21 @@ impl NapiStruct {
                 // Optional with use_nullable=true: set to value or null
                 value_conversions.push(quote! {
                   let #value_var = if let Some(inner) = #arg_name {
-                    napi::bindgen_prelude::ToNapiValue::to_napi_value(env, inner)?
+                    napi::bindgen_prelude::IntoJs::into_js(inner, scope)?.raw()
                   } else {
-                    napi::bindgen_prelude::ToNapiValue::to_napi_value(env, napi::bindgen_prelude::Null)?
+                    napi::bindgen_prelude::IntoJs::into_js(napi::bindgen_prelude::Null, scope)?.raw()
                   };
                 });
               } else {
                 // Non-optional: always set
                 value_conversions.push(quote! {
-                  let #value_var = napi::bindgen_prelude::ToNapiValue::to_napi_value(env, #arg_name)?;
+                  let #value_var = napi::bindgen_prelude::IntoJs::into_js(#arg_name, scope)?.raw();
                 });
               }
 
               property_descriptors.push(quote! {
                 napi::bindgen_prelude::sys::napi_property_descriptor {
-                  utf8name: std::ffi::CStr::from_bytes_with_nul_unchecked(#field_js_name_lit.as_bytes()).as_ptr(),
+                  utf8name: unsafe { std::ffi::CStr::from_bytes_with_nul_unchecked(#field_js_name_lit.as_bytes()) }.as_ptr(),
                   name: std::ptr::null_mut(),
                   method: None,
                   getter: None,
@@ -1172,18 +1472,20 @@ impl NapiStruct {
             } else {
               // Optional with use_nullable=false: conditionally set
               conditional_setters.push(quote! {
-                if #arg_name.is_some() {
-                  obj.set(#field_js_name, #arg_name)?;
+                if let Some(value) = #arg_name {
+                  obj.set(#field_js_name, value)?;
                 }
               });
             }
 
-            // Getters remain the same
             if is_optional_field && !self.use_nullable {
-              obj_field_getters.push(quote! { let #arg_name: #ty = obj.get(#field_js_name)?; });
+              let decode_ty = ty.option_inner().unwrap_or(&ty);
+              js_obj_field_getters.push(
+                quote! { let #arg_name: #ty = scope.get_optional_named_property::<#decode_ty, _>(&obj, #field_js_name)?; },
+              );
             } else {
-              obj_field_getters.push(quote! {
-                let #arg_name: #ty = obj.get(#field_js_name)?.ok_or_else(|| napi::bindgen_prelude::Error::new(
+              js_obj_field_getters.push(quote! {
+                let #arg_name: #ty = scope.get_optional_named_property::<#ty, _>(&obj, #field_js_name)?.ok_or_else(|| napi::bindgen_prelude::Error::new(
                   napi::bindgen_prelude::Status::InvalidArg,
                   format!("Missing field `{}`", #field_js_name),
                 ))?;
@@ -1213,7 +1515,7 @@ impl NapiStruct {
             #(#property_descriptors),*
           ];
 
-          napi::bindgen_prelude::create_object_with_properties(env, &properties)
+          scope.create_object_with_properties(&properties)
         }
       } else {
         // Some fields are conditionally set
@@ -1224,12 +1526,11 @@ impl NapiStruct {
             #(#property_descriptors),*
           ];
 
-          let obj_ptr = napi::bindgen_prelude::create_object_with_properties(env, &properties)?;
-          let mut obj = napi::bindgen_prelude::Object::from_raw(env, obj_ptr);
+          let mut obj = scope.create_object_with_properties(&properties)?;
 
           #(#conditional_setters)*
 
-          Ok(obj_ptr)
+          Ok::<_, napi::bindgen_prelude::Error>(obj)
         }
       };
 
@@ -1239,21 +1540,27 @@ impl NapiStruct {
         },
       });
 
-      variant_arm_getters.push(quote! {
+      variant_arm_js_getters.push(quote! {
         #variant_name_str => {
-          #(#obj_field_getters)*
+          #(#js_obj_field_getters)*
           #destructed_fields
         },
       })
     }
 
-    let to_napi_value = if structured_enum.object_to_js {
+    let into_js = if structured_enum.object_to_js {
       quote! {
-        impl napi::bindgen_prelude::ToNapiValue for #name {
-          unsafe fn to_napi_value(env: napi::bindgen_prelude::sys::napi_env, val: #name) -> napi::bindgen_prelude::Result<napi::bindgen_prelude::sys::napi_value> {
-            match val {
+        impl<'scope> napi::bindgen_prelude::IntoJs<'scope> for #name {
+          type Output = napi::bindgen_prelude::Object<'scope>;
+
+          fn into_js(
+            self,
+            scope: &mut napi::bindgen_prelude::Scope<'_, 'scope>,
+          ) -> napi::bindgen_prelude::Result<napi::bindgen_prelude::Local<'scope, Self::Output>> {
+            let object = match self {
               #(#variant_arm_setters)*
-            }
+            }?;
+            napi::bindgen_prelude::IntoJs::into_js(object, scope)
           }
         }
       }
@@ -1261,18 +1568,20 @@ impl NapiStruct {
       quote! {}
     };
 
-    let from_napi_value = if structured_enum.object_from_js {
+    let from_js = if structured_enum.object_from_js {
       quote! {
-        impl napi::bindgen_prelude::FromNapiValue for #name {
-          unsafe fn from_napi_value(
-            env: napi::bindgen_prelude::sys::napi_env,
-            napi_val: napi::bindgen_prelude::sys::napi_value
+        impl napi::bindgen_prelude::ValidateNapiValue for #name {}
+
+        impl<'env, 'scope> napi::bindgen_prelude::FromJs<'env, 'scope> for #name {
+          fn from_js(
+            scope: &mut napi::bindgen_prelude::Scope<'env, 'scope>,
+            value: napi::bindgen_prelude::Local<'scope, napi::bindgen_prelude::Unknown<'scope>>
           ) -> napi::bindgen_prelude::Result<Self> {
-            #[allow(unused_variables)]
-            let env_wrapper = napi::bindgen_prelude::Env::from(env);
-            #[allow(unused_mut)]
-            let mut obj = napi::bindgen_prelude::Object::from_napi_value(env, napi_val)?;
-            let type_: String = obj.get(#discriminant).map_err(|mut err| {
+            let obj = <napi::bindgen_prelude::Object as napi::bindgen_prelude::FromJs>::from_js(
+              scope,
+              value,
+            )?;
+            let type_: String = scope.get_optional_named_property(&obj, #discriminant).map_err(|mut err| {
               err.reason = format!("{} on {}.{}", err.reason, #name_str, #discriminant);
               err
             })?.ok_or_else(|| napi::bindgen_prelude::Error::new(
@@ -1280,7 +1589,7 @@ impl NapiStruct {
               format!("Missing field `{}`", #discriminant),
             ))?;
             let val = match type_.as_str() {
-              #(#variant_arm_getters)*
+              #(#variant_arm_js_getters)*
               _ => return Err(napi::bindgen_prelude::Error::new(
                 napi::bindgen_prelude::Status::InvalidArg,
                 format!("Unknown variant `{}`", type_),
@@ -1290,8 +1599,6 @@ impl NapiStruct {
             Ok(val)
           }
         }
-
-        impl napi::bindgen_prelude::ValidateNapiValue for #name {}
       }
     } else {
       quote! {}
@@ -1308,9 +1615,9 @@ impl NapiStruct {
         }
       }
 
-      #to_napi_value
+      #into_js
 
-      #from_napi_value
+      #from_js
     }
   }
 
@@ -1323,15 +1630,17 @@ impl NapiStruct {
     };
     let inner_type = transparent.ty.clone().into_token_stream();
 
-    let to_napi_value = if transparent.object_to_js {
+    let into_js = if transparent.object_to_js {
       quote! {
         #[automatically_derived]
-        impl napi::bindgen_prelude::ToNapiValue for #name {
-          unsafe fn to_napi_value(
-            env: napi::bindgen_prelude::sys::napi_env,
-            val: Self
-          ) -> napi::bindgen_prelude::Result<napi::bindgen_prelude::sys::napi_value> {
-            <#inner_type>::to_napi_value(env, val.0)
+        impl<'scope> napi::bindgen_prelude::IntoJs<'scope> for #name {
+          type Output = <#inner_type as napi::bindgen_prelude::IntoJs<'scope>>::Output;
+
+          fn into_js(
+            self,
+            scope: &mut napi::bindgen_prelude::Scope<'_, 'scope>,
+          ) -> napi::bindgen_prelude::Result<napi::bindgen_prelude::Local<'scope, Self::Output>> {
+            napi::bindgen_prelude::IntoJs::into_js(self.0, scope)
           }
         }
       }
@@ -1339,15 +1648,15 @@ impl NapiStruct {
       quote! {}
     };
 
-    let from_napi_value = if transparent.object_from_js {
+    let from_js = if transparent.object_from_js {
       quote! {
         #[automatically_derived]
-        impl napi::bindgen_prelude::FromNapiValue for #name {
-          unsafe fn from_napi_value(
-            env: napi::bindgen_prelude::sys::napi_env,
-            napi_val: napi::bindgen_prelude::sys::napi_value
+        impl<'env, 'scope> napi::bindgen_prelude::FromJs<'env, 'scope> for #name {
+          fn from_js(
+            scope: &mut napi::bindgen_prelude::Scope<'env, 'scope>,
+            value: napi::bindgen_prelude::Local<'scope, napi::bindgen_prelude::Unknown<'scope>>
           ) -> napi::bindgen_prelude::Result<Self> {
-            Ok(Self(<#inner_type>::from_napi_value(env, napi_val)?))
+            Ok(Self(<#inner_type as napi::bindgen_prelude::FromJs>::from_js(scope, value)?))
           }
         }
       }
@@ -1377,9 +1686,9 @@ impl NapiStruct {
         }
       }
 
-      #to_napi_value
+      #into_js
 
-      #from_napi_value
+      #from_js
     }
   }
 
@@ -1388,7 +1697,7 @@ impl NapiStruct {
     let name_str = self.name.to_string();
 
     let mut obj_field_setters = vec![];
-    let mut obj_field_getters = vec![];
+    let mut js_obj_field_getters = vec![];
     let mut field_destructions = vec![];
 
     for field in array.fields.iter() {
@@ -1415,8 +1724,8 @@ impl NapiStruct {
         if is_optional_field {
           obj_field_setters.push(match self.use_nullable {
             false => quote! {
-              if #arg_name.is_some() {
-                array.set(#field_index, #arg_name)?;
+              if let Some(value) = #arg_name {
+                array.set(#field_index, value)?;
               }
             },
             true => quote! {
@@ -1431,10 +1740,13 @@ impl NapiStruct {
           obj_field_setters.push(quote! { array.set(#field_index, #arg_name)?; });
         }
         if is_optional_field && !self.use_nullable {
-          obj_field_getters.push(quote! { let #arg_name: #ty = array.get(#field_index)?; });
+          let decode_ty = ty.option_inner().unwrap_or(&ty);
+          js_obj_field_getters.push(
+            quote! { let #arg_name: #ty = scope.get_optional_element::<#decode_ty>(&array, #field_index)?; },
+          );
         } else {
-          obj_field_getters.push(quote! {
-            let #arg_name: #ty = array.get(#field_index)?.ok_or_else(|| napi::bindgen_prelude::Error::new(
+          js_obj_field_getters.push(quote! {
+            let #arg_name: #ty = scope.get_optional_element::<#ty>(&array, #field_index)?.ok_or_else(|| napi::bindgen_prelude::Error::new(
               napi::bindgen_prelude::Status::InvalidArg,
               format!("Failed to get element with index `{}`", #field_index),
             ))?;
@@ -1447,44 +1759,39 @@ impl NapiStruct {
       Self (#(#field_destructions),*)
     };
 
-    let name_with_lifetime = if self.has_lifetime {
-      quote! { #name<'_javascript_function_scope> }
+    let (into_js_impl, validate_napi_value_impl, type_name_impl) = if self.has_lifetime {
+      (
+        quote! { impl <'scope, '_javascript_function_scope> napi::bindgen_prelude::IntoJs<'scope> for #name<'_javascript_function_scope> where '_javascript_function_scope: 'scope },
+        quote! { impl <'_javascript_function_scope> napi::bindgen_prelude::ValidateNapiValue for #name<'_javascript_function_scope> },
+        quote! { impl <'_javascript_function_scope> napi::bindgen_prelude::TypeName for #name<'_javascript_function_scope> },
+      )
     } else {
-      quote! { #name }
+      (
+        quote! { impl <'scope> napi::bindgen_prelude::IntoJs<'scope> for #name },
+        quote! { impl napi::bindgen_prelude::ValidateNapiValue for #name },
+        quote! { impl napi::bindgen_prelude::TypeName for #name },
+      )
     };
-    let (from_napi_value_impl, to_napi_value_impl, validate_napi_value_impl, type_name_impl) =
-      if self.has_lifetime {
-        (
-          quote! { impl <'_javascript_function_scope> napi::bindgen_prelude::FromNapiValue for #name<'_javascript_function_scope> },
-          quote! { impl <'_javascript_function_scope> napi::bindgen_prelude::ToNapiValue for #name<'_javascript_function_scope> },
-          quote! { impl <'_javascript_function_scope> napi::bindgen_prelude::ValidateNapiValue for #name<'_javascript_function_scope> },
-          quote! { impl <'_javascript_function_scope> napi::bindgen_prelude::TypeName for #name<'_javascript_function_scope> },
-        )
-      } else {
-        (
-          quote! { impl napi::bindgen_prelude::FromNapiValue for #name },
-          quote! { impl napi::bindgen_prelude::ToNapiValue for #name },
-          quote! { impl napi::bindgen_prelude::ValidateNapiValue for #name },
-          quote! { impl napi::bindgen_prelude::TypeName for #name },
-        )
-      };
 
     let array_len = array.fields.len() as u32;
 
-    let to_napi_value = if array.object_to_js {
+    let into_js = if array.object_to_js {
       quote! {
         #[automatically_derived]
-        #to_napi_value_impl {
-          unsafe fn to_napi_value(env: napi::bindgen_prelude::sys::napi_env, val: #name_with_lifetime) -> napi::bindgen_prelude::Result<napi::bindgen_prelude::sys::napi_value> {
-            #[allow(unused_variables)]
-            let env_wrapper = napi::bindgen_prelude::Env::from(env);
-            #[allow(unused_mut)]
-            let mut array = env_wrapper.create_array(#array_len)?;
+        #into_js_impl {
+          type Output = napi::bindgen_prelude::Array<'scope>;
 
-            let #destructed_fields = val;
+          fn into_js(
+            self,
+            scope: &mut napi::bindgen_prelude::Scope<'_, 'scope>,
+          ) -> napi::bindgen_prelude::Result<napi::bindgen_prelude::Local<'scope, Self::Output>> {
+            #[allow(unused_mut)]
+            let mut array = scope.create_array(#array_len)?;
+
+            let #destructed_fields = self;
             #(#obj_field_setters)*
 
-            napi::bindgen_prelude::Array::to_napi_value(env, array)
+            napi::bindgen_prelude::IntoJs::into_js(array, scope)
           }
         }
       }
@@ -1492,34 +1799,31 @@ impl NapiStruct {
       quote! {}
     };
 
-    let from_napi_value = if array.object_from_js {
-      let return_type = if self.has_lifetime {
-        quote! { #name<'_javascript_function_scope> }
+    let from_js = if array.object_from_js {
+      let from_js_impl = if self.has_lifetime {
+        quote! { impl<'env, 'scope> napi::bindgen_prelude::FromJs<'env, 'scope> for #name<'scope> }
       } else {
-        quote! { #name }
+        quote! { impl<'env, 'scope> napi::bindgen_prelude::FromJs<'env, 'scope> for #name }
       };
       quote! {
         #[automatically_derived]
-        #from_napi_value_impl {
-          unsafe fn from_napi_value(
-            env: napi::bindgen_prelude::sys::napi_env,
-            napi_val: napi::bindgen_prelude::sys::napi_value
-          ) -> napi::bindgen_prelude::Result<#return_type> {
-            #[allow(unused_variables)]
-            let env_wrapper = napi::bindgen_prelude::Env::from(env);
-            #[allow(unused_mut)]
-            let mut array = napi::bindgen_prelude::Array::from_napi_value(env, napi_val)?;
+        #validate_napi_value_impl {}
 
-            #(#obj_field_getters)*
+        #[automatically_derived]
+        #from_js_impl {
+          fn from_js(
+            scope: &mut napi::bindgen_prelude::Scope<'env, 'scope>,
+            value: napi::bindgen_prelude::Local<'scope, napi::bindgen_prelude::Unknown<'scope>>
+          ) -> napi::bindgen_prelude::Result<Self> {
+            let array = <napi::bindgen_prelude::Array as napi::bindgen_prelude::FromJs>::from_js(scope, value)?;
+
+            #(#js_obj_field_getters)*
 
             let val = #destructed_fields;
 
             Ok(val)
           }
         }
-
-        #[automatically_derived]
-        #validate_napi_value_impl {}
       }
     } else {
       quote! {}
@@ -1537,9 +1841,9 @@ impl NapiStruct {
         }
       }
 
-      #to_napi_value
+      #into_js
 
-      #from_napi_value
+      #from_js
     }
   }
 }
@@ -1554,7 +1858,7 @@ impl TryToTokens for NapiImpl {
 
 impl NapiImpl {
   fn gen_helper_mod(&self) -> BindgenResult<TokenStream> {
-    if cfg!(test) {
+    if cfg!(test) || !self.is_class {
       return Ok(quote! {});
     }
 
@@ -1603,7 +1907,7 @@ impl NapiImpl {
         FnKind::Getter => quote! { .with_getter(#intermediate_name) },
         FnKind::Setter => quote! { .with_setter(#intermediate_name) },
         _ => {
-          if item.fn_self.is_some() {
+          if item.fn_self.is_some() || has_receiver_frame_input_arg(item) {
             quote! { .with_method(#intermediate_name) }
           } else {
             quote! { .with_method(#intermediate_name).with_property_attributes(napi::bindgen_prelude::PropertyAttributes::Static) }
@@ -1630,14 +1934,24 @@ impl NapiImpl {
         napi::ctor::declarative::ctor! {
           #[ctor(unsafe)]
           fn #register_name() {
-            napi::__private::register_class(std::any::TypeId::of::<#name>(), #js_mod_ident, #js_name, vec![#(#props),*], false);
+            napi::__private::register_napi_class_impl::<#name>(
+              #js_mod_ident,
+              #js_name,
+              vec![#(#props),*],
+              false,
+            );
           }
         }
 
         #[cfg(all(not(test), target_family = "wasm"))]
         #[no_mangle]
         extern "C" fn #register_name() {
-          napi::__private::register_class(std::any::TypeId::of::<#name>(), #js_mod_ident, #js_name, vec![#(#props_wasm),*], false);
+          napi::__private::register_napi_class_impl::<#name>(
+            #js_mod_ident,
+            #js_name,
+            vec![#(#props_wasm),*],
+            false,
+          );
         }
       }
     })

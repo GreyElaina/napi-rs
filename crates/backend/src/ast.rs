@@ -114,10 +114,18 @@ pub struct NapiTransparent {
 pub struct NapiClass {
   pub fields: Vec<NapiStructField>,
   pub ctor: bool,
+  pub subclass: bool,
+  pub parent: Option<NativeParentSpec>,
   pub implement_iterator: bool,
   pub implement_async_iterator: bool,
   pub is_tuple: bool,
   pub use_custom_finalize: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct NativeParentSpec {
+  pub rust_path: Type,
+  pub js_name: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -171,9 +179,9 @@ pub struct NapiStructField {
 pub struct NapiImpl {
   pub name: Ident,
   pub js_name: String,
+  pub is_class: bool,
   pub has_lifetime: bool,
   pub items: Vec<NapiFn>,
-  pub task_output_type: Option<Type>,
   pub iterator_yield_type: Option<Type>,
   pub iterator_next_type: Option<Type>,
   pub iterator_return_type: Option<Type>,

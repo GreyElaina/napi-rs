@@ -22,14 +22,12 @@ impl NapiEnum {
   fn gen_napi_value_map_impl(&self) -> TokenStream {
     let name = &self.name;
     let name_str = self.name.to_string();
-    let mut from_napi_branches = vec![];
     let mut to_napi_branches = vec![];
 
     self.variants.iter().for_each(|v| {
       let val: Literal = (&v.val).into();
       let v_name = &v.name;
 
-      from_napi_branches.push(quote! { #val => Ok(#name::#v_name) });
       to_napi_branches.push(quote! { #name::#v_name => #val });
     });
 
@@ -39,8 +37,8 @@ impl NapiEnum {
       quote! { napi::bindgen_prelude::ValueType::Number }
     };
 
-    let from_napi_value = self.gen_from_napi_value(name, from_napi_branches);
-    let to_napi_value = self.gen_to_napi_value(name, to_napi_branches);
+    let from_js = self.gen_from_js(name);
+    let into_js = self.gen_into_js(name, to_napi_branches);
     quote! {
       impl napi::bindgen_prelude::TypeName for #name {
         fn type_name() -> &'static str {
@@ -57,18 +55,17 @@ impl NapiEnum {
           env: napi::bindgen_prelude::sys::napi_env,
           napi_val: napi::bindgen_prelude::sys::napi_value
         ) -> napi::bindgen_prelude::Result<napi::sys::napi_value> {
-          napi::bindgen_prelude::assert_type_of!(env, napi_val, #validate_type)?;
-          Ok(std::ptr::null_mut())
+          napi::__private::validate_raw_value_type(env, napi_val, #validate_type)
         }
       }
 
-      #from_napi_value
+      #from_js
 
-      #to_napi_value
+      #into_js
     }
   }
 
-  fn gen_from_napi_value(&self, name: &Ident, from_napi_branches: Vec<TokenStream>) -> TokenStream {
+  fn gen_from_js(&self, name: &Ident) -> TokenStream {
     if !self.object_from_js {
       return quote! {};
     }
@@ -76,10 +73,10 @@ impl NapiEnum {
     let name_str = self.name.to_string();
     if self.variants.is_empty() {
       return quote! {
-        impl napi::bindgen_prelude::FromNapiValue for #name {
-          unsafe fn from_napi_value(
-            env: napi::bindgen_prelude::sys::napi_env,
-            napi_val: napi::bindgen_prelude::sys::napi_value
+        impl<'env, 'scope> napi::bindgen_prelude::FromJs<'env, 'scope> for #name {
+          fn from_js(
+            _scope: &mut napi::bindgen_prelude::Scope<'env, 'scope>,
+            _value: napi::bindgen_prelude::Local<'scope, napi::bindgen_prelude::Unknown<'scope>>
           ) -> napi::bindgen_prelude::Result<Self> {
             Err(napi::bindgen_prelude::error!(
               napi::bindgen_prelude::Status::InvalidArg,
@@ -91,13 +88,34 @@ impl NapiEnum {
       };
     }
 
-    let from_napi_value = if self.is_string_enum {
+    let mut from_js_branches = vec![];
+    self.variants.iter().for_each(|v| {
+      let val: Literal = (&v.val).into();
+      let v_name = &v.name;
+
+      from_js_branches.push(quote! { #val => Ok(#name::#v_name) });
+    });
+    let from_js_value = if self.is_string_enum {
       quote! {
-        let val: String = napi::bindgen_prelude::FromNapiValue::from_napi_value(env, napi_val)
+        let val = <String as napi::bindgen_prelude::FromJs>::from_js(scope, value).map_err(|e| {
+          napi::bindgen_prelude::error!(
+            e.status,
+            "Failed to convert napi value into enum `{}`. {}",
+            #name_str,
+            e,
+          )
+        })?;
       }
     } else {
       quote! {
-        let val = napi::bindgen_prelude::FromNapiValue::from_napi_value(env, napi_val)
+        let val = <i32 as napi::bindgen_prelude::FromJs>::from_js(scope, value).map_err(|e| {
+          napi::bindgen_prelude::error!(
+            e.status,
+            "Failed to convert napi value into enum `{}`. {}",
+            #name_str,
+            e,
+          )
+        })?;
       }
     };
     let match_val = if self.is_string_enum {
@@ -105,23 +123,17 @@ impl NapiEnum {
     } else {
       quote! { val }
     };
+
     quote! {
-      impl napi::bindgen_prelude::FromNapiValue for #name {
-        unsafe fn from_napi_value(
-          env: napi::bindgen_prelude::sys::napi_env,
-          napi_val: napi::bindgen_prelude::sys::napi_value
+      impl<'env, 'scope> napi::bindgen_prelude::FromJs<'env, 'scope> for #name {
+        fn from_js(
+          scope: &mut napi::bindgen_prelude::Scope<'env, 'scope>,
+          value: napi::bindgen_prelude::Local<'scope, napi::bindgen_prelude::Unknown<'scope>>
         ) -> napi::bindgen_prelude::Result<Self> {
-          #from_napi_value.map_err(|e| {
-            napi::bindgen_prelude::error!(
-              e.status,
-              "Failed to convert napi value into enum `{}`. {}",
-              #name_str,
-              e,
-            )
-          })?;
+          #from_js_value
 
           match #match_val {
-            #(#from_napi_branches,)*
+            #(#from_js_branches,)*
             _ => {
               Err(napi::bindgen_prelude::error!(
                 napi::bindgen_prelude::Status::InvalidArg,
@@ -136,79 +148,97 @@ impl NapiEnum {
     }
   }
 
-  fn gen_to_napi_value(&self, name: &Ident, to_napi_branches: Vec<TokenStream>) -> TokenStream {
+  fn gen_into_js(&self, name: &Ident, to_napi_branches: Vec<TokenStream>) -> TokenStream {
     if !self.object_to_js {
       return quote! {};
     }
 
+    let output_ty = if self.is_string_enum {
+      quote! { <&'static str as napi::bindgen_prelude::IntoJs<'scope>>::Output }
+    } else {
+      quote! { <i32 as napi::bindgen_prelude::IntoJs<'scope>>::Output }
+    };
+
     if self.variants.is_empty() {
       return quote! {
-        impl napi::bindgen_prelude::ToNapiValue for #name {
-          unsafe fn to_napi_value(
-            env: napi::bindgen_prelude::sys::napi_env,
-            val: Self
-          ) -> napi::bindgen_prelude::Result<napi::bindgen_prelude::sys::napi_value> {
-            napi::bindgen_prelude::ToNapiValue::to_napi_value(env, ())
+        impl<'scope> napi::bindgen_prelude::IntoJs<'scope> for #name {
+          type Output = <() as napi::bindgen_prelude::IntoJs<'scope>>::Output;
+
+          fn into_js(
+            self,
+            scope: &mut napi::bindgen_prelude::Scope<'_, 'scope>,
+          ) -> napi::bindgen_prelude::Result<napi::bindgen_prelude::Local<'scope, Self::Output>> {
+            napi::bindgen_prelude::IntoJs::into_js((), scope)
           }
         }
 
-        impl napi::bindgen_prelude::ToNapiValue for &#name {
-          unsafe fn to_napi_value(
-            env: napi::bindgen_prelude::sys::napi_env,
-            val: Self
-          ) -> napi::bindgen_prelude::Result<napi::bindgen_prelude::sys::napi_value> {
-            napi::bindgen_prelude::ToNapiValue::to_napi_value(env, ())
+        impl<'scope> napi::bindgen_prelude::IntoJs<'scope> for &#name {
+          type Output = <() as napi::bindgen_prelude::IntoJs<'scope>>::Output;
+
+          fn into_js(
+            self,
+            scope: &mut napi::bindgen_prelude::Scope<'_, 'scope>,
+          ) -> napi::bindgen_prelude::Result<napi::bindgen_prelude::Local<'scope, Self::Output>> {
+            napi::bindgen_prelude::IntoJs::into_js((), scope)
           }
         }
 
-        impl napi::bindgen_prelude::ToNapiValue for &mut #name {
-          unsafe fn to_napi_value(
-            env: napi::bindgen_prelude::sys::napi_env,
-            val: Self
-          ) -> napi::bindgen_prelude::Result<napi::bindgen_prelude::sys::napi_value> {
-            napi::bindgen_prelude::ToNapiValue::to_napi_value(env, ())
+        impl<'scope> napi::bindgen_prelude::IntoJs<'scope> for &mut #name {
+          type Output = <() as napi::bindgen_prelude::IntoJs<'scope>>::Output;
+
+          fn into_js(
+            self,
+            scope: &mut napi::bindgen_prelude::Scope<'_, 'scope>,
+          ) -> napi::bindgen_prelude::Result<napi::bindgen_prelude::Local<'scope, Self::Output>> {
+            napi::bindgen_prelude::IntoJs::into_js((), scope)
           }
         }
       };
     }
 
     quote! {
-      impl napi::bindgen_prelude::ToNapiValue for #name {
-        unsafe fn to_napi_value(
-          env: napi::bindgen_prelude::sys::napi_env,
-          val: Self
-        ) -> napi::bindgen_prelude::Result<napi::bindgen_prelude::sys::napi_value> {
-          let val = match val {
+      impl<'scope> napi::bindgen_prelude::IntoJs<'scope> for #name {
+        type Output = #output_ty;
+
+        fn into_js(
+          self,
+          scope: &mut napi::bindgen_prelude::Scope<'_, 'scope>,
+        ) -> napi::bindgen_prelude::Result<napi::bindgen_prelude::Local<'scope, Self::Output>> {
+          let val = match self {
             #(#to_napi_branches,)*
           };
 
-          napi::bindgen_prelude::ToNapiValue::to_napi_value(env, val)
+          napi::bindgen_prelude::IntoJs::into_js(val, scope)
         }
       }
 
-      impl napi::bindgen_prelude::ToNapiValue for &#name {
-        unsafe fn to_napi_value(
-          env: napi::bindgen_prelude::sys::napi_env,
-          val: Self
-        ) -> napi::bindgen_prelude::Result<napi::bindgen_prelude::sys::napi_value> {
-          let val = match val {
+      impl<'scope> napi::bindgen_prelude::IntoJs<'scope> for &#name {
+        type Output = #output_ty;
+
+        fn into_js(
+          self,
+          scope: &mut napi::bindgen_prelude::Scope<'_, 'scope>,
+        ) -> napi::bindgen_prelude::Result<napi::bindgen_prelude::Local<'scope, Self::Output>> {
+          let val = match self {
             #(#to_napi_branches,)*
           };
 
-          napi::bindgen_prelude::ToNapiValue::to_napi_value(env, val)
+          napi::bindgen_prelude::IntoJs::into_js(val, scope)
         }
       }
 
-      impl napi::bindgen_prelude::ToNapiValue for &mut #name {
-        unsafe fn to_napi_value(
-          env: napi::bindgen_prelude::sys::napi_env,
-          val: Self
-        ) -> napi::bindgen_prelude::Result<napi::bindgen_prelude::sys::napi_value> {
-          let val = match val {
+      impl<'scope> napi::bindgen_prelude::IntoJs<'scope> for &mut #name {
+        type Output = #output_ty;
+
+        fn into_js(
+          self,
+          scope: &mut napi::bindgen_prelude::Scope<'_, 'scope>,
+        ) -> napi::bindgen_prelude::Result<napi::bindgen_prelude::Local<'scope, Self::Output>> {
+          let val = match self {
             #(#to_napi_branches,)*
           };
 
-          napi::bindgen_prelude::ToNapiValue::to_napi_value(env, val)
+          napi::bindgen_prelude::IntoJs::into_js(val, scope)
         }
       }
     }
@@ -236,7 +266,7 @@ impl NapiEnum {
 
       // Convert the value first
       value_conversions.push(quote! {
-        let #value_var = napi::bindgen_prelude::ToNapiValue::to_napi_value(env, #val_lit)?;
+        let #value_var = napi::bindgen_prelude::IntoJs::into_js(#val_lit, scope)?.raw();
       });
 
       // Create property descriptor using the pre-computed value
@@ -279,9 +309,12 @@ impl NapiEnum {
         use std::ffi::CString;
         use std::ptr;
 
-        #object_creation
+        let mut env_wrapper = unsafe { napi::bindgen_prelude::Env::from_raw(env) };
+        env_wrapper.with_scope(|scope| {
+          #object_creation
 
-        Ok(obj_ptr)
+          Ok(obj_ptr)
+        })
       }
       #[cfg(all(not(test), not(target_family = "wasm")))]
       napi::ctor::declarative::ctor! {

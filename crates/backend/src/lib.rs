@@ -10,6 +10,7 @@ use proc_macro2::TokenStream;
 pub mod error;
 pub mod ast;
 pub mod codegen;
+mod type_semantics;
 #[cfg(feature = "type-def")]
 pub mod typegen;
 mod util;
