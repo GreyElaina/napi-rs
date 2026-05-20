@@ -75,7 +75,7 @@ pub fn create_external_utf16_string<'env>(env: &'env Env) -> Result<JsStringUtf1
   std::mem::forget(data);
 
   unsafe {
-    JsStringUtf16::from_external(env, data_ptr, len, data_ptr, move |_, ptr| {
+    JsStringUtf16::from_external(env, data_ptr, len, data_ptr, move |ptr| {
       std::mem::drop(Vec::from_raw_parts(ptr as *mut u16, len, len));
     })
   }
@@ -90,7 +90,7 @@ pub fn create_external_latin1_string<'env>(env: &'env Env) -> Result<JsStringLat
   std::mem::forget(data);
 
   unsafe {
-    JsStringLatin1::from_external(env, data_ptr, len, data_ptr, move |_, ptr| {
+    JsStringLatin1::from_external(env, data_ptr, len, data_ptr, move |ptr| {
       std::mem::drop(Vec::from_raw_parts(ptr as *mut u8, len, len));
     })
   }
@@ -112,7 +112,7 @@ pub fn create_external_latin1_short<'env>(env: &'env Env) -> Result<JsStringLati
   std::mem::forget(data);
 
   unsafe {
-    JsStringLatin1::from_external(env, data_ptr, len, data_ptr, move |_, ptr| {
+    JsStringLatin1::from_external(env, data_ptr, len, data_ptr, move |ptr| {
       std::mem::drop(Vec::from_raw_parts(ptr as *mut u8, len, len));
     })
   }
@@ -127,7 +127,7 @@ pub fn create_external_latin1_long<'env>(env: &'env Env) -> Result<JsStringLatin
   std::mem::forget(data);
 
   unsafe {
-    JsStringLatin1::from_external(env, data_ptr, len, data_ptr, move |_, ptr| {
+    JsStringLatin1::from_external(env, data_ptr, len, data_ptr, move |ptr| {
       std::mem::drop(Vec::from_raw_parts(ptr as *mut u8, len, len));
     })
   }
@@ -150,7 +150,7 @@ pub fn create_external_latin1_with_latin1_chars<'env>(
   std::mem::forget(data);
 
   unsafe {
-    JsStringLatin1::from_external(env, data_ptr, len, data_ptr, move |_, ptr| {
+    JsStringLatin1::from_external(env, data_ptr, len, data_ptr, move |ptr| {
       std::mem::drop(Vec::from_raw_parts(ptr as *mut u8, len, len));
     })
   }
@@ -170,7 +170,7 @@ pub fn create_external_latin1_custom_finalize<'env>(
   std::mem::forget(data);
 
   unsafe {
-    JsStringLatin1::from_external(env, data_ptr, len, hint, move |_, (ptr, size)| {
+    JsStringLatin1::from_external(env, data_ptr, len, hint, move |(ptr, size)| {
       // Custom cleanup that uses both pointer and size from hint
       std::mem::drop(Vec::from_raw_parts(ptr as *mut u8, size, size));
     })

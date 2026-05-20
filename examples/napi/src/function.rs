@@ -1,5 +1,5 @@
 use napi::{
-  bindgen_prelude::{ClassInstance, FnArgs, Function, FunctionRef, PromiseRaw},
+  bindgen_prelude::{FnArgs, Function, FunctionRef, Promise, Reference, Scope},
   threadsafe_function::{ThreadsafeFunctionCallMode, UnknownReturnValue},
   Env, Error, Result, Status,
 };
@@ -7,112 +7,118 @@ use napi::{
 use crate::class::Animal;
 
 #[napi]
-pub fn call0(callback: Function<(), u32>) -> Result<u32> {
-  callback.call(())
+pub fn call0(scope: &mut Scope, callback: Function<(), u32>) -> Result<u32> {
+  scope.call(&callback, ())
 }
 
 #[napi]
-pub fn call1(callback: Function<u32, u32>, arg: u32) -> Result<u32> {
-  callback.call(arg)
+pub fn call1(scope: &mut Scope, callback: Function<u32, u32>, arg: u32) -> Result<u32> {
+  scope.call(&callback, arg)
 }
 
 #[napi]
-pub fn call2(callback: Function<FnArgs<(u32, u32)>, u32>, arg1: u32, arg2: u32) -> Result<u32> {
-  callback.call((arg1, arg2).into())
+pub fn call2(
+  scope: &mut Scope,
+  callback: Function<FnArgs<(u32, u32)>, u32>,
+  arg1: u32,
+  arg2: u32,
+) -> Result<u32> {
+  scope.call(&callback, (arg1, arg2))
 }
 
 #[napi]
 pub fn call_with_tuple_arg(
+  scope: &mut Scope,
   callback: Function<(u32, u32), u32>,
   arg1: u32,
   arg2: u32,
 ) -> Result<u32> {
-  callback.call((arg1, arg2))
+  scope.call(&callback, (arg1, arg2))
 }
 
 #[napi]
-pub fn call_with_nested_function_arg<'env>(
-  env: &'env Env,
-  callback: Function<'env, Function<'env, u32, u32>, u32>,
+pub fn call_with_nested_function_arg<'env, 'scope>(
+  scope: &mut Scope<'env, 'scope>,
+  callback: Function<'scope, Function<'scope, u32, u32>, u32>,
 ) -> Result<u32> {
-  let inner = env.create_function("inner", no_export_function_c_callback)?;
-  callback.call(inner)
+  let inner: Function<'scope, u32, u32> =
+    scope.create_function("inner", no_export_function_c_callback)?;
+  scope.call(&callback, inner)
 }
 
 #[napi]
-pub fn apply0(ctx: ClassInstance<Animal>, callback: Function<(), ()>) -> Result<()> {
-  callback.apply(ctx, ())
+pub fn apply0(scope: &mut Scope, ctx: Reference<Animal>, callback: Function<(), ()>) -> Result<()> {
+  scope.apply(&callback, ctx, ())
 }
 
 #[napi]
 pub fn apply1(
-  ctx: ClassInstance<Animal>,
+  scope: &mut Scope,
+  ctx: Reference<Animal>,
   callback: Function<String, ()>,
   name: String,
 ) -> Result<()> {
-  callback.apply(ctx, name)
+  scope.apply(&callback, ctx, name)
 }
 
 #[napi]
-pub fn call_function(cb: Function<(), u32>) -> Result<u32> {
-  cb.call(())
+pub fn call_function(scope: &mut Scope, cb: Function<(), u32>) -> Result<u32> {
+  scope.call(&cb, ())
 }
 
 #[napi]
 pub fn call_function_with_arg(
+  scope: &mut Scope,
   cb: Function<FnArgs<(u32, u32)>, u32>,
   arg0: u32,
   arg1: u32,
 ) -> Result<u32> {
-  cb.call((arg0, arg1).into())
+  scope.call(&cb, (arg0, arg1))
 }
 
 #[napi(ts_return_type = "Promise<void>")]
 pub fn create_reference_on_function<'env>(
   env: &'env Env,
   cb: Function<'env, (), ()>,
-) -> Result<PromiseRaw<'env, ()>> {
-  let reference = cb.create_ref()?;
-  env.spawn_future_with_callback(
-    async {
-      tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-      Ok(())
-    },
-    move |env, _| {
-      let cb = reference.borrow_back(env)?;
-      cb.call(())?;
-      Ok(())
-    },
-  )
+) -> Result<Promise<'env, ()>> {
+  let tsfn = cb.build_threadsafe_function().build()?;
+  env.spawn_future(async move {
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    tsfn.call((), ThreadsafeFunctionCallMode::NonBlocking);
+    Ok(())
+  })
 }
 
 #[napi]
 pub fn call_function_with_arg_and_ctx(
-  ctx: ClassInstance<Animal>,
+  scope: &mut Scope,
+  ctx: Reference<Animal>,
   cb: Function<String, ()>,
   name: String,
 ) -> Result<()> {
-  cb.apply(ctx, name)
+  scope.apply(&cb, ctx, name)
 }
 
 #[napi]
 pub fn reference_as_callback(
-  env: Env,
+  scope: &mut Scope,
   callback: FunctionRef<FnArgs<(u32, u32)>, u32>,
   arg0: u32,
   arg1: u32,
 ) -> Result<u32> {
-  callback.borrow_back(&env)?.call((arg0, arg1).into())
+  let callback = scope.borrow_function(&callback)?;
+  scope.call(&callback, (arg0, arg1))
 }
 
 #[napi]
 pub fn reference_with_tuple_arg(
-  env: Env,
+  scope: &mut Scope,
   callback: FunctionRef<(u32, u32), u32>,
   arg0: u32,
   arg1: u32,
 ) -> Result<u32> {
-  callback.borrow_back(&env)?.call((arg0, arg1))
+  let callback = scope.borrow_function(&callback)?;
+  scope.call(&callback, (arg0, arg1))
 }
 
 #[napi]
@@ -179,10 +185,11 @@ pub fn no_export_function(input: u32) -> u32 {
 
 #[napi]
 pub fn optional_callback_types(
+  scope: &mut Scope,
   callback: Option<Function<String, UnknownReturnValue>>,
 ) -> Result<()> {
   if let Some(callback) = callback {
-    callback.call("Hello".to_owned())?;
+    scope.call(&callback, "Hello".to_owned())?;
   }
   Ok(())
 }

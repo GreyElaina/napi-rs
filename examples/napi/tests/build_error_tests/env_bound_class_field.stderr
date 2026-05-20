@@ -1,0 +1,23 @@
+error: Can't assign CleanupEnvHook to a field of napi class struct
+  --> tests/build_error_tests/env_bound_class_field.rs:10:16
+   |
+10 |   pub cleanup: CleanupEnvHook<()>,
+   |                ^^^^^^^^^^^^^^
+
+error: Can't assign Date to a field of napi class struct
+  --> tests/build_error_tests/env_bound_class_field.rs:11:13
+   |
+11 |   pub date: Date<'static>,
+   |             ^^^^
+
+error: Can't assign EscapableHandleScope to a field of napi class struct
+  --> tests/build_error_tests/env_bound_class_field.rs:12:18
+   |
+12 |   pub escapable: EscapableHandleScope<'static>,
+   |                  ^^^^^^^^^^^^^^^^^^^^
+
+error: Can't assign HandleScope to a field of napi class struct
+  --> tests/build_error_tests/env_bound_class_field.rs:13:15
+   |
+13 |   pub handle: HandleScope,
+   |               ^^^^^^^^^^^

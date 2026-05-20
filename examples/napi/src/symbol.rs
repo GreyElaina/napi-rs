@@ -18,8 +18,6 @@ pub fn create_symbol_for(desc: String) -> Symbol {
 }
 
 #[napi]
-pub fn create_symbol_ref(env: &Env, desc: String) -> Result<SymbolRef> {
-  let symbol = Symbol::for_desc(desc);
-  let js_symbol = symbol.into_js_symbol(env)?;
-  js_symbol.create_ref()
+pub fn create_symbol_ref(env: &mut Env, desc: String) -> Result<SymbolRef> {
+  env.with_scope(|scope| scope.create_ref(Symbol::for_desc(desc)))
 }

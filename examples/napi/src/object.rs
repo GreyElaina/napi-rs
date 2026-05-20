@@ -1,12 +1,12 @@
 use napi::{bindgen_prelude::*, threadsafe_function::ThreadsafeFunction, JsGlobal, Result};
 
 #[napi]
-fn list_obj_keys(obj: Object) -> Vec<String> {
-  Object::keys(&obj).unwrap()
+fn list_obj_keys(mut env: Env, obj: Object) -> Result<Vec<String>> {
+  env.with_scope(|scope| scope.keys(&obj))
 }
 
 #[napi]
-fn create_obj(env: &Env) -> Object<'_> {
+fn create_obj<'env>(env: &'env Env<'env>) -> Object<'env> {
   let mut obj = Object::new(env).unwrap();
   obj.set("test", 1).unwrap();
 
@@ -14,7 +14,7 @@ fn create_obj(env: &Env) -> Object<'_> {
 }
 
 #[napi]
-fn get_global(env: &Env) -> Result<JsGlobal<'_>> {
+fn get_global<'env>(env: &'env Env<'env>) -> Result<JsGlobal<'env>> {
   env.get_global()
 }
 
@@ -72,10 +72,16 @@ pub fn receive_strict_object(strict_object: StrictObject) {
 }
 
 #[napi]
-pub fn get_str_from_object(env: &Env) {
-  let mut obj = Object::new(env).unwrap();
-  obj.set("name", "value").unwrap();
-  assert_eq!(obj.get("name").unwrap(), Some("value".to_string()));
+pub fn get_str_from_object(env: &mut Env) -> Result<()> {
+  env.with_scope(|scope| {
+    let mut obj = Object::new(scope.env())?;
+    obj.set("name", "value")?;
+    assert_eq!(
+      scope.get_optional_named_property::<String, _>(&obj, "name")?,
+      Some("value".to_owned())
+    );
+    Ok(())
+  })
 }
 
 #[napi(object)]
@@ -88,7 +94,7 @@ pub struct TsTypeChanged {
 }
 
 #[napi(ts_return_type = "{ value: ArrayBuffer, get getter(): number }")]
-pub fn create_obj_with_property(env: &Env) -> Result<Object<'_>> {
+pub fn create_obj_with_property<'env>(env: &'env Env<'env>) -> Result<Object<'env>> {
   let mut obj = Object::new(env)?;
   let arraybuffer = ArrayBuffer::from_data(env, vec![0; 10])?;
   obj.define_properties(&[
@@ -128,9 +134,12 @@ fn receive_object_only_from_js(
 }
 
 #[napi(ts_args_type = "obj: { foo: number; bar: string; }")]
-fn object_get_named_property_should_perform_typecheck(obj: Object) -> Result<()> {
-  obj.get_named_property::<u32>("foo")?;
-  obj.get_named_property::<String>("bar")?;
+fn object_get_named_property_should_perform_typecheck(
+  scope: &mut Scope,
+  obj: Object,
+) -> Result<()> {
+  let _: u32 = scope.get_named_property(&obj, "foo")?;
+  let _: String = scope.get_named_property(&obj, "bar")?;
   Ok(())
 }
 
@@ -170,14 +179,14 @@ pub struct FunctionData<'a> {
 }
 
 #[napi]
-pub fn generate_function_and_call_it(env: &Env) -> Result<FunctionData<'_>> {
+pub fn generate_function_and_call_it<'env>(env: &'env Env<'env>) -> Result<FunctionData<'env>> {
   let handle = env.create_function_from_closure("handle_function", |_ctx| Ok(1))?;
   Ok(FunctionData { handle })
 }
 
 #[napi]
-pub fn get_null_byte_property(obj: Object) -> Result<Option<String>> {
-  obj.get::<String>("\0virtual")
+pub fn get_null_byte_property(scope: &mut Scope, obj: Object) -> Result<Option<String>> {
+  scope.get_optional_named_property(&obj, "\0virtual")
 }
 
 #[napi]
@@ -202,17 +211,20 @@ pub fn receive_binding_vite_plugin_meta(meta: BindingVitePluginMeta) {
 }
 
 #[napi]
-pub fn create_object_ref(env: &Env) -> Result<ObjectRef> {
+pub fn create_object_ref(env: &mut Env) -> Result<ObjectRef> {
   let mut obj = Object::new(env)?;
   obj.set("test", 1)?;
-  obj.create_ref()
+  env.with_scope(|scope| scope.create_ref(&obj))
 }
 
 #[napi]
-pub fn object_with_c_apis(env: &Env) -> Result<Object<'_>> {
+pub fn object_with_c_apis<'env>(env: &'env mut Env<'env>) -> Result<Object<'env>> {
   let mut obj = Object::new(env)?;
   obj.set_c_named_property(c"test", 1)?;
-  assert_eq!(obj.get_c_named_property::<u32>(c"test")?, 1);
+  assert_eq!(
+    env.with_scope(|scope| scope.get_c_named_property::<u32, _>(&obj, c"test"))?,
+    1
+  );
   assert!(obj.has_c_named_property(c"test")?);
   assert!(obj.delete_c_named_property(c"test")?);
   assert!(!obj.has_c_own_property(c"test")?);

@@ -1,71 +1,65 @@
-use napi::{bindgen_prelude::*, Error, JsString};
+use napi::{bindgen_prelude::*, Error};
 
 #[napi]
-pub async fn async_plus_100(p: Promise<u32>) -> Result<u32> {
+pub async fn async_plus_100(p: PromiseFuture<u32>) -> Result<u32> {
   let v = p.await?;
   Ok(v + 100)
 }
 
 #[napi]
-pub fn call_then_on_promise(input: PromiseRaw<u32>) -> Result<PromiseRaw<String>> {
-  input.then(|v| Ok(format!("{}", v.value)))
+pub fn call_then_on_promise(input: Promise<'_, u32>) -> Result<Promise<'_, String>> {
+  input.then(|_, v| Ok(format!("{}", v.value)))
 }
 
 #[napi]
-pub fn call_catch_on_promise(input: PromiseRaw<'_, u32>) -> Result<PromiseRaw<'_, String>> {
-  input.catch(|e: CallbackContext<String>| Ok(e.value))
+pub fn call_catch_on_promise(input: Promise<'_, u32>) -> Result<Promise<'_, String>> {
+  input.catch(|_, e: CallbackContext<String>| Ok(e.value))
 }
 
 #[napi]
 pub fn call_finally_on_promise(
-  mut input: PromiseRaw<u32>,
+  mut input: Promise<u32>,
   on_finally: FunctionRef<(), ()>,
-) -> Result<PromiseRaw<u32>> {
-  input.finally(move |env| {
-    on_finally.borrow_back(&env)?.call(())?;
+) -> Result<Promise<u32>> {
+  input.finally(move |scope| {
+    let on_finally = scope.borrow_function(&on_finally)?;
+    scope.call(&on_finally, ())?;
     Ok(())
   })
 }
 
 #[napi]
-pub fn esm_resolve<'env>(
-  _: &'env Env,
-  next: Function<'env, (), PromiseRaw<'env, ()>>,
-) -> Result<PromiseRaw<'env, ()>> {
-  next.call(())
+pub fn esm_resolve<'env, 'scope>(
+  scope: &mut Scope<'env, 'scope>,
+  next: Function<'scope, (), Promise<'scope, ()>>,
+) -> Result<Promise<'scope, ()>> {
+  scope.call(&next, ())
 }
 
 #[napi]
-pub fn spawn_future_lifetime<'env>(
-  env: &'env Env,
-  input: u32,
-) -> Result<PromiseRaw<'env, JsString<'env>>> {
-  env.spawn_future_with_callback(async move { Ok(input) }, |env, val| {
-    env.create_string(format!("{}", val))
-  })
+pub fn spawn_future_lifetime<'env>(env: &'env Env, input: u32) -> Result<Promise<'env, String>> {
+  env.spawn_future(async move { Ok(format!("{}", input)) })
 }
 
 #[napi]
 pub struct ClassReturnInPromise {}
 
 #[napi]
-pub fn promise_raw_return_class_instance<'env>(
+pub fn promise_return_class_instance<'env>(
   env: &'env Env,
-) -> Result<PromiseRaw<'env, ClassReturnInPromise>> {
-  env.spawn_future_with_callback(async move { Ok(ClassReturnInPromise {}) }, |_env, _val| {
-    Ok(ClassReturnInPromise {})
-  })
+) -> Result<Promise<'env, ClassInitializer<ClassReturnInPromise>>> {
+  env.spawn_future(async move { Ok(ClassInitializer::from(ClassReturnInPromise {})) })
 }
 
 #[napi]
-pub fn create_resolved_promise<'env>(env: &'env Env, value: u32) -> Result<PromiseRaw<'env, u32>> {
-  PromiseRaw::resolve(env, value)
+pub fn create_resolved_promise<'env>(env: &'env Env, value: u32) -> Result<Promise<'env, u32>> {
+  Promise::resolve(env, value)
 }
 
 #[napi]
 pub fn create_rejected_promise<'env>(
   env: &'env Env,
   message: String,
-) -> Result<PromiseRaw<'env, u32>> {
-  PromiseRaw::reject(env, Error::from_reason(message))
+) -> Result<Promise<'env, u32>> {
+  Promise::reject(env, Error::from_reason(message))
 }

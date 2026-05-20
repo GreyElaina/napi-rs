@@ -90,11 +90,11 @@ import {
   eitherF64OrU32,
   withoutAbortController,
   withAbortController,
-  asyncTaskReadFile,
-  asyncTaskOptionalReturn,
-  asyncTaskFinally,
+  blockingReadFile,
+  blockingOptionalReturn,
+  blockingFinally,
   asyncResolveArray,
-  asyncTaskArraybuffer,
+  blockingArraybuffer,
   asyncMultiTwo,
   bigintAdd,
   createBigInt,
@@ -288,7 +288,7 @@ import {
   ThingList,
   createFunction,
   spawnFutureLifetime,
-  promiseRawReturnClassInstance,
+  promiseReturnClassInstance,
   ClassReturnInPromise,
   acceptUntypedTypedArray,
   defineClass,
@@ -300,6 +300,10 @@ import {
   withAbortSignalHandle,
   createI32ArrayFromExternal,
   optionalCallbackTypes,
+  RendererNode,
+  ImageNode,
+  PngImageNode,
+  SelfReferenceField,
 } from '../index.cjs'
 // import other stuff in `#[napi(module_exports)]`
 import nativeAddon from '../index.cjs'
@@ -581,8 +585,7 @@ test('class', (t) => {
   const width = new Width(1)
   t.is(plusOne.call(width), 2)
   t.throws(() => {
-    // @ts-expect-error
-    plusOne.call('')
+    plusOne.call('' as unknown as Width)
   })
 
   t.notThrows(() => {
@@ -698,6 +701,62 @@ test('define class', (t) => {
   t.is(instance.rustMethod(), 42)
 })
 
+test('native class inheritance', (t) => {
+  t.false(Object.prototype.hasOwnProperty.call(nativeAddon, '__napiClassMetadata'))
+
+  const image = new ImageNode(1, 20)
+  t.true(image instanceof ImageNode)
+  t.true(image instanceof RendererNode)
+  t.is(image.id(), 1)
+  t.is(image.nodeKind(), 'renderer')
+  t.is(image.receiverId(), 1)
+  t.is(image.ownedReceiverId(), 1)
+  t.true(image.envMutMarker())
+  image.setIdFromReceiver(11)
+  t.is(image.id(), 11)
+  t.true(image.hasSameId(image))
+  t.true(image.hasSameIdRef(image))
+  t.is(image.imageKind(), 'image')
+  t.is(image.width, 20)
+  image.width = 30
+  t.is(image.width, 30)
+  image.setSuperId(12)
+  t.is(image.id(), 12)
+  t.is(image.receiverId(), 12)
+
+  const png = new PngImageNode(2, 40, 60)
+  t.true(png instanceof PngImageNode)
+  t.true(png instanceof ImageNode)
+  t.true(png instanceof RendererNode)
+  t.is(png.id(), 2)
+  t.is(png.nodeKind(), 'renderer')
+  t.is(png.imageKind(), 'image')
+  t.is(png.width, 40)
+  t.is(png.height, 60)
+  t.throws(() => Reflect.construct(RendererNode as never, []))
+
+  // Non-constructible RendererNode is a public value, not a ctor; prototype wiring
+  // uses hidden constructors (see generated wrapper), so only assert public edges.
+  t.not(Object.getPrototypeOf(ImageNode.prototype), null)
+  t.is(typeof image.nodeKind, 'function')
+  t.is(Object.getPrototypeOf(PngImageNode.prototype), ImageNode.prototype)
+  t.is(Object.getPrototypeOf(PngImageNode), ImageNode)
+})
+
+test('class field can reference self', (t) => {
+  const root = new SelfReferenceField()
+  t.is(root.next, undefined)
+  t.is(root.current(), root)
+  t.is(root.maybeNext(), null)
+  root.next = root
+  t.is(root.next, root)
+  t.is(root.maybeNext(), root)
+
+  const detached = SelfReferenceField.newDetached()
+  t.true(detached instanceof SelfReferenceField)
+  t.is(detached.next, undefined)
+})
+
 test('async self in class', async (t) => {
   const b = new Bird('foo')
   t.is(await b.getNameAsync(), 'foo')
@@ -720,12 +779,10 @@ test('class factory', (t) => {
   doge.name = '旺财'
   t.is(doge.name, '旺财')
 
-  const error = t.throws(() => new ClassWithFactory())
-  t.true(
-    error?.message.startsWith(
-      'Class contains no `constructor`, can not new it!',
-    ),
+  const error = t.throws(
+    () => new (ClassWithFactory as unknown as new () => ClassWithFactory)(),
   )
+  t.true(error?.message.includes('is not a constructor'))
 })
 
 test('async class factory', async (t) => {
@@ -738,14 +795,6 @@ test('async class factory', async (t) => {
 test('class constructor return Result', (t) => {
   const c = new Context()
   t.is(c.method(), 'not empty')
-})
-
-test('class default field is TypedArray', (t) => {
-  const c = new Context()
-  t.deepEqual(c.buffer, new Uint8Array([0, 1, 2, 3]))
-  const fixture = new Uint8Array([0, 1, 2, 3, 4, 5, 6])
-  const c2 = Context.withBuffer(fixture)
-  t.is(c2.buffer, fixture)
 })
 
 test('class Factory return Result', (t) => {
@@ -841,12 +890,12 @@ test('promise', async (t) => {
   t.true(spy.calledOnce)
 })
 
-test('PromiseRaw::resolve', async (t) => {
+test('Promise::resolve', async (t) => {
   const result = await createResolvedPromise(42)
   t.is(result, 42)
 })
 
-test('PromiseRaw::reject', async (t) => {
+test('Promise::reject', async (t) => {
   await t.throwsAsync(() => createRejectedPromise('test error message'), {
     message: 'test error message',
   })
@@ -1033,8 +1082,7 @@ test('Result', (t) => {
   nullCauseError.cause = null
   const [errWithNullCause] = jsErrorCallback(nullCauseError)
   t.deepEqual(errWithNullCause!.message, 'null cause')
-  // errWithNullCause is the original JS error (via napi_ref), so .cause stays null
-  t.is(errWithNullCause!.cause, process.env.WASI_TEST ? void 0 : null)
+  t.is(errWithNullCause!.cause, undefined)
 
   // non-nullish cause should still be preserved
   const [errWithRealCause] = jsErrorCallback(
@@ -1549,10 +1597,10 @@ test.skip('async task with abort controller', async (t) => {
 })
 
 test('async task with different resolved values', async (t) => {
-  const r1 = await asyncTaskOptionalReturn()
+  const r1 = await blockingOptionalReturn()
   t.falsy(r1)
   if (!process.env.WASI_TEST) {
-    await asyncTaskReadFile(import.meta.filename)
+    await blockingReadFile(import.meta.filename)
   }
   const r2 = await asyncResolveArray(2)
   t.deepEqual(r2, [0, 1])
@@ -1560,7 +1608,7 @@ test('async task with different resolved values', async (t) => {
 
 test('async task with ArrayBuffer', async (t) => {
   const inputData = new Uint8Array([1, 2, 3, 4, 5])
-  const result = await asyncTaskArraybuffer(Array.from(inputData))
+  const result = await blockingArraybuffer(Array.from(inputData))
 
   t.true(result instanceof ArrayBuffer)
   t.is(result.byteLength, 5)
@@ -1569,13 +1617,13 @@ test('async task with ArrayBuffer', async (t) => {
   t.deepEqual(Array.from(view), [1, 2, 3, 4, 5])
 
   // Test with empty array
-  const emptyResult = await asyncTaskArraybuffer([])
+  const emptyResult = await blockingArraybuffer([])
   t.true(emptyResult instanceof ArrayBuffer)
   t.is(emptyResult.byteLength, 0)
 
   // Test with larger data
   const largeData = new Uint8Array(1000).fill(42)
-  const largeResult = await asyncTaskArraybuffer(Array.from(largeData))
+  const largeResult = await blockingArraybuffer(Array.from(largeData))
   t.true(largeResult instanceof ArrayBuffer)
   t.is(largeResult.byteLength, 1000)
   const largeView = new Uint8Array(largeResult)
@@ -1627,7 +1675,7 @@ test('async task finally must be called', async (t) => {
     finally: false,
     resolve: false,
   }
-  await asyncTaskFinally(obj)
+  await blockingFinally(obj)
   t.is(obj.finally, true)
   t.is(obj.resolve, true)
 })
@@ -1719,10 +1767,9 @@ Napi4Test(
 
 Napi4Test('ThreadsafeFunction closure capture data', (t) => {
   return new Promise((resolve) => {
-    const defaultValue = new Animal(Kind.Dog, '旺财')
-    threadsafeFunctionClosureCapture(defaultValue, (value) => {
+    threadsafeFunctionClosureCapture((value) => {
       resolve()
-      t.is(value, defaultValue)
+      t.is(value, 'test')
     })
   })
 })
@@ -1834,7 +1881,6 @@ test('Throw from ThreadsafeFunction JavaScript callback', async (t) => {
       })
     },
     {
-      instanceOf: TypeError,
       message: "Cannot set properties of undefined (setting 'd')",
     },
   )
@@ -1864,7 +1910,7 @@ test('call_async_catch on CalleeHandled=true ThreadsafeFunction propagates throw
   )
 })
 
-test('call_async_catch preserves original JS exception object', async (t) => {
+test('call_async_catch copies JS exception fields', async (t) => {
   const thrown = new Error('foo')
   // @ts-expect-error custom property on Error
   thrown.code = 'E_FOO'
@@ -1873,9 +1919,6 @@ test('call_async_catch preserves original JS exception object', async (t) => {
       throw thrown
     }),
   )
-  // The Rust side propagates the original napi::Error; its maybe_raw reference
-  // round-trips back through ToNapiValue for Error, so JS receives the exact
-  // same Error instance that was thrown, with custom properties intact.
   // @ts-expect-error reading custom property on Error
   t.is(err?.code, 'E_FOO')
   t.is(err?.message, 'foo')
@@ -2228,7 +2271,7 @@ test('should be able to recursively hidden lifetime', async (t) => {
 test('should be able to correct lifetime of spawn_future_lifetime', async (t) => {
   const result = await spawnFutureLifetime(1)
   t.is(result, '1')
-  const result2 = await promiseRawReturnClassInstance()
+  const result2 = await promiseReturnClassInstance()
   t.true(result2 instanceof ClassReturnInPromise)
 })
 

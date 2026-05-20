@@ -47,19 +47,20 @@ fn read_file_content() -> Result<String> {
   ts_args_type = "functionInput: () => T | Promise<T>, callback: (err: Error | null, result: T) => void",
   ts_return_type = "T | Promise<T>"
 )]
-fn callback_return_promise<'env>(
-  env: &'env Env,
-  fn_in: Function<(), Unknown<'env>>,
+fn callback_return_promise<'env, 'scope>(
+  scope: &mut Scope<'env, 'scope>,
+  fn_in: Function<'scope, (), Unknown<'scope>>,
   fn_out: Function<String, ()>,
-) -> Result<Unknown<'env>> {
-  let ret = fn_in.call(())?;
+) -> Result<Unknown<'scope>> {
+  let ret = scope.call(&fn_in, ())?;
   if ret.is_promise()? {
-    let p = Promise::<String>::from_unknown(ret)?;
+    let ret = ret.into_js(scope)?;
+    let p = PromiseFuture::<String>::from_js(scope, ret)?;
     let fn_out_tsfn = fn_out
       .build_threadsafe_function()
       .callee_handled::<true>()
       .build()?;
-    env
+    scope
       .spawn_future(async move {
         let s = p.await;
         fn_out_tsfn.call(s, ThreadsafeFunctionCallMode::NonBlocking);
@@ -72,10 +73,10 @@ fn callback_return_promise<'env>(
 }
 
 #[napi(ts_return_type = "Promise<string>")]
-pub fn callback_return_promise_and_spawn<F: Fn(String) -> Result<Promise<String>>>(
-  env: &Env,
+pub fn callback_return_promise_and_spawn<'env, F: Fn(String) -> Result<PromiseFuture<String>>>(
+  env: &'env Env<'env>,
   js_func: F,
-) -> napi::Result<PromiseRaw<'_, String>> {
+) -> napi::Result<Promise<'env, String>> {
   let promise = js_func("Hello".to_owned())?;
   env.spawn_future(async move {
     let resolved = promise.await?;

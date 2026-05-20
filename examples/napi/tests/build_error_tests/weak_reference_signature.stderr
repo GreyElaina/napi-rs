@@ -1,0 +1,19 @@
+error: WeakReference<T> cannot be used in JavaScript-visible signatures
+ --> tests/build_error_tests/weak_reference_signature.rs:8:34
+  |
+8 | pub fn weak_reference_arg(value: WeakReference<WeakReferenceOwner>) {
+  |                                  ^^^^^^^^^^^^^
+
+error: WeakReference<T> cannot be used in JavaScript-visible signatures
+  --> tests/build_error_tests/weak_reference_signature.rs:13:42
+   |
+13 | pub fn weak_reference_return() -> Option<WeakReference<WeakReferenceOwner>> {
+   |                                          ^^^^^^^^^^^^^
+
+warning: unused import: `napi::bindgen_prelude::WeakReference`
+ --> tests/build_error_tests/weak_reference_signature.rs:1:5
+  |
+1 | use napi::bindgen_prelude::WeakReference;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default

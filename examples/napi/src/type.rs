@@ -1,5 +1,5 @@
 use napi::{
-  bindgen_prelude::{Either, Function, Promise},
+  bindgen_prelude::{Either, Function, PromiseFuture, Scope},
   threadsafe_function::ThreadsafeFunction,
   Result, Status,
 };
@@ -9,7 +9,7 @@ use std::sync::Arc;
 pub type CustomU32 = u32;
 
 #[napi]
-pub type MyPromise = Either<String, Promise<String>>;
+pub type MyPromise = Either<String, PromiseFuture<String>>;
 
 #[napi]
 pub type Nullable<T> = Option<T>;
@@ -30,8 +30,8 @@ pub struct Rule<'a> {
 }
 
 #[napi]
-pub fn call_rule_handler(rule: Rule, arg: u32) -> Result<u32> {
-  rule.handler.call(arg)
+pub fn call_rule_handler(scope: &mut Scope, rule: Rule, arg: u32) -> Result<u32> {
+  scope.call(&rule.handler, arg)
 }
 
 #[napi(object)]

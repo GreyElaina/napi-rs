@@ -69,7 +69,7 @@ impl AnotherClassForEither {
 }
 
 #[napi]
-fn receive_class_or_number(either: Either<u32, &JsClassForEither>) -> u32 {
+fn receive_class_or_number(either: Either<u32, Reference<JsClassForEither>>) -> u32 {
   match either {
     Either::A(n) => n + 1,
     Either::B(_) => 100,
@@ -77,7 +77,7 @@ fn receive_class_or_number(either: Either<u32, &JsClassForEither>) -> u32 {
 }
 
 #[napi]
-fn receive_mut_class_or_number(either: Either<u32, &mut JsClassForEither>) -> u32 {
+fn receive_mut_class_or_number(either: Either<u32, Reference<JsClassForEither>>) -> u32 {
   match either {
     Either::A(n) => n + 1,
     Either::B(_) => 100,
@@ -85,7 +85,9 @@ fn receive_mut_class_or_number(either: Either<u32, &mut JsClassForEither>) -> u3
 }
 
 #[napi]
-fn receive_different_class(either: Either<&JsClassForEither, &AnotherClassForEither>) -> u32 {
+fn receive_different_class(
+  either: Either<Reference<JsClassForEither>, Reference<AnotherClassForEither>>,
+) -> u32 {
   match either {
     Either::A(_) => 42,
     Either::B(_) => 100,
@@ -93,17 +95,17 @@ fn receive_different_class(either: Either<&JsClassForEither, &AnotherClassForEit
 }
 
 #[napi]
-fn return_either_class(input: i32) -> Either<u32, JsClassForEither> {
+fn return_either_class(input: i32) -> Either<u32, ClassInitializer<JsClassForEither>> {
   if input > 0 {
     Either::A(input as u32)
   } else {
-    Either::B(JsClassForEither {})
+    Either::B(ClassInitializer::from(JsClassForEither {}))
   }
 }
 
 #[napi]
-fn either_from_option() -> Either<JsClassForEither, Undefined> {
-  Some(JsClassForEither {}).into()
+fn either_from_option() -> Either<ClassInitializer<JsClassForEither>, Undefined> {
+  Some(ClassInitializer::from(JsClassForEither {})).into()
 }
 
 #[napi(object)]
@@ -134,7 +136,7 @@ pub fn either_from_objects(input: Either3<A, B, C>) -> String {
 pub fn either_bool_or_function(_input: Either<bool, Function>) {}
 
 #[napi]
-pub async fn promise_in_either(input: Either<u32, Promise<u32>>) -> Result<bool> {
+pub async fn promise_in_either(input: Either<u32, PromiseFuture<u32>>) -> Result<bool> {
   match input {
     Either::A(a) => Ok(a > 10),
     Either::B(b) => {
@@ -149,7 +151,7 @@ pub fn either_bool_or_tuple(_input: Either<bool, (bool, String)>) {}
 
 #[napi]
 pub async fn either_promise_in_either_a(
-  input: Either<Either<Promise<u32>, u32>, String>,
+  input: Either<Either<PromiseFuture<u32>, u32>, String>,
 ) -> Result<bool> {
   match input {
     Either::A(a) => match a {

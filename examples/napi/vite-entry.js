@@ -6,7 +6,7 @@ import {
   asyncMultiTwo,
   tsfnReturnPromise,
   __fs,
-  asyncTaskReadFile,
+  blockingReadFile,
   testWorkers,
 } from './example.wasi-browser'
 
@@ -27,7 +27,7 @@ console.info(value)
 
 __fs.writeFileSync('/test.txt', 'Hello, World!')
 
-asyncTaskReadFile('/test.txt')
+blockingReadFile('/test.txt')
   .then((res) => {
     console.log(`readFileAsync: ${res}`)
   })

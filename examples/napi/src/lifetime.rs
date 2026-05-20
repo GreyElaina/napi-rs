@@ -1,6 +1,37 @@
 use std::path::{Path, PathBuf};
 
-use napi::{bindgen_prelude::*, JsString, ScopedTask};
+use napi::{bindgen_prelude::*, threadsafe_function::UnknownReturnValue, JsString};
+
+use crate::{class::Animal, r#enum::Kind};
+
+#[napi]
+pub struct ClassWithLifetime {
+  inner: Reference<Animal>,
+}
+
+#[napi]
+impl ClassWithLifetime {
+  #[napi(constructor)]
+  pub fn new(mut env: Env, mut this: This) -> Result<Self> {
+    env.with_scope(|scope| {
+      let inner = scope.reference(Animal::new(Kind::Cat, "alie".to_owned()))?;
+      this.set("inner", scope.clone_reference(&inner)?)?;
+      Ok(Self { inner })
+    })
+  }
+
+  #[napi]
+  pub fn get_name(&self, mut env: Env) -> Result<String> {
+    env.with_scope(|scope| {
+      let inner = scope.bind_reference(&self.inner)?;
+      let name = {
+        let animal = scope.borrow_class(&inner)?;
+        animal.get_name().to_owned()
+      };
+      Ok(name)
+    })
+  }
+}
 
 #[napi]
 pub struct CreateStringClass {
@@ -10,10 +41,10 @@ pub struct CreateStringClass {
 #[napi]
 impl CreateStringClass {
   #[napi]
-  pub fn new() -> Self {
-    Self {
+  pub fn new() -> ClassInitializer<Self> {
+    ClassInitializer::from(Self {
       inner: PathBuf::from(""),
-    }
+    })
   }
 
   #[napi]
@@ -33,34 +64,26 @@ fn create_string<'env>(env: &'env Env, path: &Path) -> Result<JsString<'env>> {
 }
 
 #[napi]
-pub fn callback_in_spawn(env: &Env, callback: Function<Object, Unknown>) -> Result<()> {
-  let callback_ref = callback.create_ref()?;
-  env
-    .spawn(AsyncTaskInSpawn {})?
-    .promise_object()
-    .then(move |ctx| {
-      let cb = callback_ref.borrow_back(&ctx.env)?;
-      cb.call(ctx.value)?;
-      Ok(())
-    })?;
-  Ok(())
-}
-
-struct AsyncTaskInSpawn {}
-
-impl<'env> ScopedTask<'env> for AsyncTaskInSpawn {
-  type Output = ();
-  type JsValue = Object<'env>;
-
-  fn compute(&mut self) -> Result<Self::Output> {
+pub fn callback_in_spawn<'env>(
+  env: &mut Env<'env>,
+  callback: Function<Object, UnknownReturnValue>,
+) -> Result<()> {
+  env.with_scope(|scope| {
+    let callback_ref = scope.create_ref(&callback)?;
+    scope
+      .blocking(|| Ok(()))
+      .promise(|_, ()| Ok(()))?
+      .then(move |scope, ctx| {
+        let mut obj = Object::new(scope.env())?;
+        obj.set("foo", "bar")?;
+        let cb = scope.borrow_function(&callback_ref)?;
+        scope.call(&cb, obj)?;
+        drop(ctx);
+        Ok(())
+      })?;
     Ok(())
-  }
-
-  fn resolve(&mut self, env: &'env Env, _: Self::Output) -> Result<Self::JsValue> {
-    let mut obj = Object::new(env)?;
-    obj.set("foo", "bar")?;
-    Ok(obj)
-  }
+  })?;
+  Ok(())
 }
 
 #[napi]

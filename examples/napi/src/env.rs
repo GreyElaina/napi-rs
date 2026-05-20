@@ -1,8 +1,11 @@
 use napi::bindgen_prelude::*;
 
 #[napi]
-pub fn run_script(env: &Env, script: String) -> Result<Unknown<'_>> {
-  env.run_script(script)
+pub fn run_script<'env, 'scope>(
+  scope: &mut Scope<'env, 'scope>,
+  script: String,
+) -> Result<Unknown<'scope>> {
+  scope.run_script(script)
 }
 
 #[napi]

@@ -1,0 +1,5 @@
+error: Can't assign ArrayBuffer to a field of napi class struct
+ --> tests/build_error_tests/nested_arraybuffer_class_field.rs:5:44
+  |
+5 |   pub value: Option<napi::bindgen_prelude::ArrayBuffer<'static>>,
+  |                                            ^^^^^^^^^^^

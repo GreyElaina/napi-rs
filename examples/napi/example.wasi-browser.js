@@ -63,24 +63,94 @@ const {
     }
   },
 })
+
+function wireNativeClassPrototypes(binding) {
+  const metadata = binding.__napiClassMetadata
+  if (!Array.isArray(metadata)) {
+    return
+  }
+
+  const classKey = (item) => `${typeof item.module === 'string' ? item.module : ''}\0${item.name}`
+  const exportedClassValue = (item) => {
+    const target =
+      typeof item.module === 'string' && item.module.length > 0
+        ? binding[item.module]
+        : binding
+    return target == null ? undefined : target[item.name]
+  }
+
+  const classes = new Map()
+  for (const item of metadata) {
+    if (item && typeof item.name === 'string' && typeof item.constructor === 'function') {
+      classes.set(classKey(item), item)
+    }
+  }
+
+  for (const item of classes.values()) {
+    if (!item.parent) {
+      continue
+    }
+
+    const parent = classes.get(classKey({ module: item.module, name: item.parent }))
+    if (!parent) {
+      throw new Error(`Native class parent ${item.parent} for ${item.name} is not registered`)
+    }
+
+    Object.setPrototypeOf(item.constructor.prototype, parent.constructor.prototype)
+    if (Object.getPrototypeOf(item.constructor.prototype) !== parent.constructor.prototype) {
+      throw new Error(`Failed to wire native class prototype for ${item.name}`)
+    }
+
+    if (item.constructible && parent.constructible) {
+      const childExport = exportedClassValue(item)
+      const parentExport = exportedClassValue(parent)
+      if (typeof childExport !== 'function' || typeof parentExport !== 'function') {
+        throw new Error(`Native class constructor edge for ${item.name} is not exported as functions`)
+      }
+
+      Object.setPrototypeOf(childExport, parentExport)
+      if (Object.getPrototypeOf(childExport) !== parentExport) {
+        throw new Error(`Failed to wire native class constructor for ${item.name}`)
+      }
+    }
+  }
+
+  const IteratorCtor = globalThis.Iterator
+  if (typeof IteratorCtor === 'function' && IteratorCtor.prototype) {
+    for (const item of classes.values()) {
+      if (!item.iterator || item.parent) {
+        continue
+      }
+
+      Object.setPrototypeOf(item.constructor.prototype, IteratorCtor.prototype)
+      if (Object.getPrototypeOf(item.constructor.prototype) !== IteratorCtor.prototype) {
+        throw new Error(`Failed to wire native iterator prototype for ${item.name}`)
+      }
+    }
+  }
+}
+
+function hideNativeClassMetadata(binding) {
+  if (Object.prototype.hasOwnProperty.call(binding, '__napiClassMetadata')) {
+    delete binding.__napiClassMetadata
+  }
+}
+
+wireNativeClassPrototypes(__napiModule.exports)
+hideNativeClassMetadata(__napiModule.exports)
 export default __napiModule.exports
 export const Animal = __napiModule.exports.Animal
 export const AnimalWithDefaultConstructor = __napiModule.exports.AnimalWithDefaultConstructor
 export const AnotherClassForEither = __napiModule.exports.AnotherClassForEither
 export const AnotherCssStyleSheet = __napiModule.exports.AnotherCssStyleSheet
-export const AnotherCSSStyleSheet = __napiModule.exports.AnotherCSSStyleSheet
 export const Asset = __napiModule.exports.Asset
-export const JsAsset = __napiModule.exports.JsAsset
 export const Assets = __napiModule.exports.Assets
-export const JsAssets = __napiModule.exports.JsAssets
 export const AsyncDataSource = __napiModule.exports.AsyncDataSource
 export const AsyncFib = __napiModule.exports.AsyncFib
 export const AsyncThrowClass = __napiModule.exports.AsyncThrowClass
 export const Bird = __napiModule.exports.Bird
 export const Blake2BHasher = __napiModule.exports.Blake2BHasher
-export const Blake2bHasher = __napiModule.exports.Blake2bHasher
 export const Blake2BKey = __napiModule.exports.Blake2BKey
-export const Blake2bKey = __napiModule.exports.Blake2bKey
 export const CatchOnConstructor = __napiModule.exports.CatchOnConstructor
 export const CatchOnConstructor2 = __napiModule.exports.CatchOnConstructor2
 export const ClassInArray = __napiModule.exports.ClassInArray
@@ -91,9 +161,7 @@ export const Context = __napiModule.exports.Context
 export const CounterRepro = __napiModule.exports.CounterRepro
 export const CreateStringClass = __napiModule.exports.CreateStringClass
 export const CssRuleList = __napiModule.exports.CssRuleList
-export const CSSRuleList = __napiModule.exports.CSSRuleList
 export const CssStyleSheet = __napiModule.exports.CssStyleSheet
-export const CSSStyleSheet = __napiModule.exports.CSSStyleSheet
 export const CustomFinalize = __napiModule.exports.CustomFinalize
 export const CustomStruct = __napiModule.exports.CustomStruct
 export const DefaultUseNullableClass = __napiModule.exports.DefaultUseNullableClass
@@ -104,20 +172,22 @@ export const Fib2 = __napiModule.exports.Fib2
 export const Fib3 = __napiModule.exports.Fib3
 export const Fib4 = __napiModule.exports.Fib4
 export const GetterSetterWithClosures = __napiModule.exports.GetterSetterWithClosures
+export const ImageNode = __napiModule.exports.ImageNode
 export const JsClassForEither = __napiModule.exports.JsClassForEither
 export const JSOnlyMethodsClass = __napiModule.exports.JSOnlyMethodsClass
-export const RustOnlyMethodsClass = __napiModule.exports.RustOnlyMethodsClass
 export const JsRemote = __napiModule.exports.JsRemote
 export const JsRepo = __napiModule.exports.JsRepo
 export const MyJsNamedClass = __napiModule.exports.MyJsNamedClass
-export const OriginalRustNameForJsNamedStruct = __napiModule.exports.OriginalRustNameForJsNamedStruct
 export const NinjaTurtle = __napiModule.exports.NinjaTurtle
 export const NotUseNullableClass = __napiModule.exports.NotUseNullableClass
 export const NotWritableClass = __napiModule.exports.NotWritableClass
 export const Optional = __napiModule.exports.Optional
 export const PackageJsonReader = __napiModule.exports.PackageJsonReader
+export const PngImageNode = __napiModule.exports.PngImageNode
 export const Reader = __napiModule.exports.Reader
+export const RendererNode = __napiModule.exports.RendererNode
 export const Selector = __napiModule.exports.Selector
+export const SelfReferenceField = __napiModule.exports.SelfReferenceField
 export const Thing = __napiModule.exports.Thing
 export const ThingList = __napiModule.exports.ThingList
 export const UseNullableClass = __napiModule.exports.UseNullableClass
@@ -134,7 +204,6 @@ export const acceptUint8ClampedSliceAndBufferSlice = __napiModule.exports.accept
 export const acceptUntypedTypedArray = __napiModule.exports.acceptUntypedTypedArray
 export const add = __napiModule.exports.add
 export const ALIAS = __napiModule.exports.ALIAS
-export const AliasedEnum = __napiModule.exports.AliasedEnum
 export const appendBuffer = __napiModule.exports.appendBuffer
 export const apply0 = __napiModule.exports.apply0
 export const apply1 = __napiModule.exports.apply1
@@ -147,11 +216,11 @@ export const asyncMultiTwo = __napiModule.exports.asyncMultiTwo
 export const asyncPlus100 = __napiModule.exports.asyncPlus100
 export const asyncReduceBuffer = __napiModule.exports.asyncReduceBuffer
 export const asyncResolveArray = __napiModule.exports.asyncResolveArray
-export const asyncTaskArraybuffer = __napiModule.exports.asyncTaskArraybuffer
-export const asyncTaskFinally = __napiModule.exports.asyncTaskFinally
-export const asyncTaskOptionalReturn = __napiModule.exports.asyncTaskOptionalReturn
-export const asyncTaskReadFile = __napiModule.exports.asyncTaskReadFile
-export const asyncTaskVoidReturn = __napiModule.exports.asyncTaskVoidReturn
+export const blockingArraybuffer = __napiModule.exports.blockingArraybuffer
+export const blockingFinally = __napiModule.exports.blockingFinally
+export const blockingOptionalReturn = __napiModule.exports.blockingOptionalReturn
+export const blockingReadFile = __napiModule.exports.blockingReadFile
+export const blockingVoidReturn = __napiModule.exports.blockingVoidReturn
 export const bigintAdd = __napiModule.exports.bigintAdd
 export const bigintFromI128 = __napiModule.exports.bigintFromI128
 export const bigintFromI64 = __napiModule.exports.bigintFromI64

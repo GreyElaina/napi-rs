@@ -50,7 +50,7 @@ pub struct AsyncThrowClass {}
 #[napi]
 impl AsyncThrowClass {
   #[napi]
-  pub async fn async_throw_error(&self) -> Result<()> {
-    Err(Error::new(Status::GenericFailure, "Throw async error"))
+  pub fn async_throw_error<'env>(&self, env: &'env Env<'env>) -> Result<Promise<'env, ()>> {
+    env.spawn_future(async move { Err(Error::new(Status::GenericFailure, "Throw async error")) })
   }
 }

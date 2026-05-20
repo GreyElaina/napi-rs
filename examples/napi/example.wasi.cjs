@@ -107,24 +107,94 @@ const { instance: __napiInstance, module: __wasiModule, napiModule: __napiModule
     }
   },
 })
+
+function wireNativeClassPrototypes(binding) {
+  const metadata = binding.__napiClassMetadata
+  if (!Array.isArray(metadata)) {
+    return
+  }
+
+  const classKey = (item) => `${typeof item.module === 'string' ? item.module : ''}\0${item.name}`
+  const exportedClassValue = (item) => {
+    const target =
+      typeof item.module === 'string' && item.module.length > 0
+        ? binding[item.module]
+        : binding
+    return target == null ? undefined : target[item.name]
+  }
+
+  const classes = new Map()
+  for (const item of metadata) {
+    if (item && typeof item.name === 'string' && typeof item.constructor === 'function') {
+      classes.set(classKey(item), item)
+    }
+  }
+
+  for (const item of classes.values()) {
+    if (!item.parent) {
+      continue
+    }
+
+    const parent = classes.get(classKey({ module: item.module, name: item.parent }))
+    if (!parent) {
+      throw new Error(`Native class parent ${item.parent} for ${item.name} is not registered`)
+    }
+
+    Object.setPrototypeOf(item.constructor.prototype, parent.constructor.prototype)
+    if (Object.getPrototypeOf(item.constructor.prototype) !== parent.constructor.prototype) {
+      throw new Error(`Failed to wire native class prototype for ${item.name}`)
+    }
+
+    if (item.constructible && parent.constructible) {
+      const childExport = exportedClassValue(item)
+      const parentExport = exportedClassValue(parent)
+      if (typeof childExport !== 'function' || typeof parentExport !== 'function') {
+        throw new Error(`Native class constructor edge for ${item.name} is not exported as functions`)
+      }
+
+      Object.setPrototypeOf(childExport, parentExport)
+      if (Object.getPrototypeOf(childExport) !== parentExport) {
+        throw new Error(`Failed to wire native class constructor for ${item.name}`)
+      }
+    }
+  }
+
+  const IteratorCtor = globalThis.Iterator
+  if (typeof IteratorCtor === 'function' && IteratorCtor.prototype) {
+    for (const item of classes.values()) {
+      if (!item.iterator || item.parent) {
+        continue
+      }
+
+      Object.setPrototypeOf(item.constructor.prototype, IteratorCtor.prototype)
+      if (Object.getPrototypeOf(item.constructor.prototype) !== IteratorCtor.prototype) {
+        throw new Error(`Failed to wire native iterator prototype for ${item.name}`)
+      }
+    }
+  }
+}
+
+function hideNativeClassMetadata(binding) {
+  if (Object.prototype.hasOwnProperty.call(binding, '__napiClassMetadata')) {
+    delete binding.__napiClassMetadata
+  }
+}
+
+wireNativeClassPrototypes(__napiModule.exports)
+hideNativeClassMetadata(__napiModule.exports)
 module.exports = __napiModule.exports
 module.exports.Animal = __napiModule.exports.Animal
 module.exports.AnimalWithDefaultConstructor = __napiModule.exports.AnimalWithDefaultConstructor
 module.exports.AnotherClassForEither = __napiModule.exports.AnotherClassForEither
 module.exports.AnotherCssStyleSheet = __napiModule.exports.AnotherCssStyleSheet
-module.exports.AnotherCSSStyleSheet = __napiModule.exports.AnotherCSSStyleSheet
 module.exports.Asset = __napiModule.exports.Asset
-module.exports.JsAsset = __napiModule.exports.JsAsset
 module.exports.Assets = __napiModule.exports.Assets
-module.exports.JsAssets = __napiModule.exports.JsAssets
 module.exports.AsyncDataSource = __napiModule.exports.AsyncDataSource
 module.exports.AsyncFib = __napiModule.exports.AsyncFib
 module.exports.AsyncThrowClass = __napiModule.exports.AsyncThrowClass
 module.exports.Bird = __napiModule.exports.Bird
 module.exports.Blake2BHasher = __napiModule.exports.Blake2BHasher
-module.exports.Blake2bHasher = __napiModule.exports.Blake2bHasher
 module.exports.Blake2BKey = __napiModule.exports.Blake2BKey
-module.exports.Blake2bKey = __napiModule.exports.Blake2bKey
 module.exports.CatchOnConstructor = __napiModule.exports.CatchOnConstructor
 module.exports.CatchOnConstructor2 = __napiModule.exports.CatchOnConstructor2
 module.exports.ClassInArray = __napiModule.exports.ClassInArray
@@ -135,9 +205,7 @@ module.exports.Context = __napiModule.exports.Context
 module.exports.CounterRepro = __napiModule.exports.CounterRepro
 module.exports.CreateStringClass = __napiModule.exports.CreateStringClass
 module.exports.CssRuleList = __napiModule.exports.CssRuleList
-module.exports.CSSRuleList = __napiModule.exports.CSSRuleList
 module.exports.CssStyleSheet = __napiModule.exports.CssStyleSheet
-module.exports.CSSStyleSheet = __napiModule.exports.CSSStyleSheet
 module.exports.CustomFinalize = __napiModule.exports.CustomFinalize
 module.exports.CustomStruct = __napiModule.exports.CustomStruct
 module.exports.DefaultUseNullableClass = __napiModule.exports.DefaultUseNullableClass
@@ -148,20 +216,22 @@ module.exports.Fib2 = __napiModule.exports.Fib2
 module.exports.Fib3 = __napiModule.exports.Fib3
 module.exports.Fib4 = __napiModule.exports.Fib4
 module.exports.GetterSetterWithClosures = __napiModule.exports.GetterSetterWithClosures
+module.exports.ImageNode = __napiModule.exports.ImageNode
 module.exports.JsClassForEither = __napiModule.exports.JsClassForEither
 module.exports.JSOnlyMethodsClass = __napiModule.exports.JSOnlyMethodsClass
-module.exports.RustOnlyMethodsClass = __napiModule.exports.RustOnlyMethodsClass
 module.exports.JsRemote = __napiModule.exports.JsRemote
 module.exports.JsRepo = __napiModule.exports.JsRepo
 module.exports.MyJsNamedClass = __napiModule.exports.MyJsNamedClass
-module.exports.OriginalRustNameForJsNamedStruct = __napiModule.exports.OriginalRustNameForJsNamedStruct
 module.exports.NinjaTurtle = __napiModule.exports.NinjaTurtle
 module.exports.NotUseNullableClass = __napiModule.exports.NotUseNullableClass
 module.exports.NotWritableClass = __napiModule.exports.NotWritableClass
 module.exports.Optional = __napiModule.exports.Optional
 module.exports.PackageJsonReader = __napiModule.exports.PackageJsonReader
+module.exports.PngImageNode = __napiModule.exports.PngImageNode
 module.exports.Reader = __napiModule.exports.Reader
+module.exports.RendererNode = __napiModule.exports.RendererNode
 module.exports.Selector = __napiModule.exports.Selector
+module.exports.SelfReferenceField = __napiModule.exports.SelfReferenceField
 module.exports.Thing = __napiModule.exports.Thing
 module.exports.ThingList = __napiModule.exports.ThingList
 module.exports.UseNullableClass = __napiModule.exports.UseNullableClass
@@ -178,7 +248,6 @@ module.exports.acceptUint8ClampedSliceAndBufferSlice = __napiModule.exports.acce
 module.exports.acceptUntypedTypedArray = __napiModule.exports.acceptUntypedTypedArray
 module.exports.add = __napiModule.exports.add
 module.exports.ALIAS = __napiModule.exports.ALIAS
-module.exports.AliasedEnum = __napiModule.exports.AliasedEnum
 module.exports.appendBuffer = __napiModule.exports.appendBuffer
 module.exports.apply0 = __napiModule.exports.apply0
 module.exports.apply1 = __napiModule.exports.apply1
@@ -191,11 +260,11 @@ module.exports.asyncMultiTwo = __napiModule.exports.asyncMultiTwo
 module.exports.asyncPlus100 = __napiModule.exports.asyncPlus100
 module.exports.asyncReduceBuffer = __napiModule.exports.asyncReduceBuffer
 module.exports.asyncResolveArray = __napiModule.exports.asyncResolveArray
-module.exports.asyncTaskArraybuffer = __napiModule.exports.asyncTaskArraybuffer
-module.exports.asyncTaskFinally = __napiModule.exports.asyncTaskFinally
-module.exports.asyncTaskOptionalReturn = __napiModule.exports.asyncTaskOptionalReturn
-module.exports.asyncTaskReadFile = __napiModule.exports.asyncTaskReadFile
-module.exports.asyncTaskVoidReturn = __napiModule.exports.asyncTaskVoidReturn
+module.exports.blockingArraybuffer = __napiModule.exports.blockingArraybuffer
+module.exports.blockingFinally = __napiModule.exports.blockingFinally
+module.exports.blockingOptionalReturn = __napiModule.exports.blockingOptionalReturn
+module.exports.blockingReadFile = __napiModule.exports.blockingReadFile
+module.exports.blockingVoidReturn = __napiModule.exports.blockingVoidReturn
 module.exports.bigintAdd = __napiModule.exports.bigintAdd
 module.exports.bigintFromI128 = __napiModule.exports.bigintFromI128
 module.exports.bigintFromI64 = __napiModule.exports.bigintFromI64

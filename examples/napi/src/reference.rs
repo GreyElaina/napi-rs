@@ -37,30 +37,30 @@ impl JsRepo {
   }
 
   #[napi]
-  pub fn remote(&self, reference: Reference<JsRepo>, env: Env) -> Result<JsRemote> {
-    Ok(JsRemote {
-      inner: reference.share_with(env, |repo| Ok(repo.inner.remote()))?,
-    })
+  pub fn remote(&self, this: Reference<JsRepo>) -> ClassInitializer<JsRemote> {
+    ClassInitializer::from(JsRemote { repo: this })
   }
 }
 
 #[napi]
 pub struct JsRemote {
-  inner: SharedReference<JsRepo, Remote<'static>>,
+  repo: Reference<JsRepo>,
 }
 
 #[napi]
 impl JsRemote {
   #[napi(constructor)]
-  pub fn new(repo: Reference<JsRepo>, env: Env) -> Result<Self> {
-    Ok(Self {
-      inner: repo.share_with(env, |repo| Ok(repo.inner.remote()))?,
-    })
+  pub fn new(repo: Reference<JsRepo>) -> Self {
+    Self { repo }
   }
 
   #[napi]
-  pub fn name(&self) -> String {
-    self.inner.name()
+  pub fn name(&self, mut env: Env) -> Result<String> {
+    env.with_scope(|scope| {
+      let repo_ref = scope.bind_reference(&self.repo)?;
+      let repo = scope.borrow_class(&repo_ref)?;
+      Ok(repo.inner.remote().name())
+    })
   }
 }
 
@@ -82,18 +82,27 @@ impl CSSRuleList {
   }
 
   #[napi(getter)]
-  pub fn parent_style_sheet(&self) -> WeakReference<CSSStyleSheet> {
-    self.parent.clone()
+  pub fn name(&self, mut env: Env) -> Result<Option<String>> {
+    env.with_scope(|scope| {
+      let Some(stylesheet) = scope.upgrade_reference(&self.parent)? else {
+        return Ok(None);
+      };
+      let stylesheet_ref = scope.bind_reference(&stylesheet)?;
+      let stylesheet = scope.borrow_class(&stylesheet_ref)?;
+      Ok(Some(stylesheet.name.clone()))
+    })
   }
 
   #[napi(getter)]
-  pub fn name(&self, env: Env) -> Result<Option<String>> {
-    Ok(
-      self
-        .parent
-        .upgrade(env)?
-        .map(|stylesheet| stylesheet.name.clone()),
-    )
+  pub fn parent_style_sheet(&self, mut env: Env) -> Result<Reference<CSSStyleSheet>> {
+    env.with_scope(|scope| {
+      scope.upgrade_reference(&self.parent)?.ok_or_else(|| {
+        Error::new(
+          Status::GenericFailure,
+          "Parent stylesheet has been dropped".to_owned(),
+        )
+      })
+    })
   }
 }
 
@@ -113,8 +122,8 @@ pub struct AnotherCSSStyleSheet {
 #[napi]
 impl AnotherCSSStyleSheet {
   #[napi(getter)]
-  pub fn rules(&self, env: Env) -> Result<Reference<CSSRuleList>> {
-    self.rules.clone(env)
+  pub fn rules(&self, mut env: Env) -> Result<Reference<CSSRuleList>> {
+    env.with_scope(|scope| scope.clone_reference(&self.rules))
   }
 }
 
@@ -133,30 +142,35 @@ impl CSSStyleSheet {
   #[napi(getter)]
   pub fn rules(
     &mut self,
-    env: Env,
-    reference: Reference<CSSStyleSheet>,
+    mut env: Env,
+    this: Reference<CSSStyleSheet>,
   ) -> Result<Reference<CSSRuleList>> {
-    if let Some(rules) = &self.rules {
-      return rules.clone(env);
-    }
+    env.with_scope(|scope| {
+      if let Some(rules) = &self.rules {
+        return scope.clone_reference(rules);
+      }
 
-    let rules = CSSRuleList::into_reference(
-      CSSRuleList {
+      let parent = scope.downgrade_reference(&this)?;
+      let rules = scope.reference(CSSRuleList {
         owned: self.inner.clone(),
-        parent: reference.downgrade(),
-      },
-      env,
-    )?;
+        parent,
+      })?;
 
-    self.rules = Some(rules.clone(env)?);
-    Ok(rules)
+      self.rules = Some(scope.clone_reference(&rules)?);
+      Ok(rules)
+    })
   }
 
   #[napi]
-  pub fn another_css_style_sheet(&self, env: Env) -> Result<AnotherCSSStyleSheet> {
-    Ok(AnotherCSSStyleSheet {
-      inner: self.inner.clone(),
-      rules: self.rules.as_ref().unwrap().clone(env)?,
+  pub fn another_css_style_sheet(
+    &self,
+    mut env: Env,
+  ) -> Result<ClassInitializer<AnotherCSSStyleSheet>> {
+    env.with_scope(|scope| {
+      Ok(ClassInitializer::from(AnotherCSSStyleSheet {
+        inner: self.inner.clone(),
+        rules: scope.clone_reference(self.rules.as_ref().unwrap())?,
+      }))
     })
   }
 }

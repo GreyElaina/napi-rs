@@ -1,0 +1,5 @@
+error: Can't assign Ref to a field of napi class struct
+ --> tests/build_error_tests/ref_class_field.rs:8:14
+  |
+8 |   pub value: Ref<Unknown<'static>>,
+  |              ^^^

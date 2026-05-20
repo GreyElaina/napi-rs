@@ -6,8 +6,6 @@ use napi::{
   UnknownRef,
 };
 
-use crate::class::Animal;
-
 #[napi]
 pub fn call_threadsafe_function(
   tsfn: Arc<ThreadsafeFunction<u32, UnknownReturnValue>>,
@@ -80,9 +78,11 @@ pub fn threadsafe_function_throw_error_with_status(
 }
 
 #[napi]
-pub fn threadsafe_function_build_throw_error_with_status(cb: Function<'static>) -> Result<()> {
+pub fn threadsafe_function_build_throw_error_with_status(
+  cb: Function<bool, UnknownReturnValue>,
+) -> Result<()> {
   let tsfn = cb
-    .build_threadsafe_function()
+    .build_threadsafe_function::<bool>()
     .error_status::<ErrorStatus>()
     .callee_handled::<true>()
     .build()?;
@@ -121,20 +121,11 @@ pub fn threadsafe_function_fatal_mode_error(
 }
 
 #[napi]
-fn threadsafe_function_closure_capture(
-  env: Env,
-  default_value: ClassInstance<Animal>,
-  func: Function<Reference<Animal>, ()>,
-) -> napi::Result<()> {
-  let str = "test";
-  let default_value_reference: Reference<Animal> =
-    unsafe { Reference::from_napi_value(env.raw(), default_value.value)? };
+fn threadsafe_function_closure_capture(func: Function<String, ()>) -> napi::Result<()> {
+  let captured = "test".to_owned();
   let tsfn = func
     .build_threadsafe_function::<()>()
-    .build_callback(move |ctx| {
-      println!("Captured in ThreadsafeFunction {}", str); // str is NULL at this point
-      default_value_reference.clone(ctx.env)
-    })?;
+    .build_callback(move |_ctx| Ok(captured.clone()))?;
 
   tsfn.call((), ThreadsafeFunctionCallMode::NonBlocking);
 
@@ -160,7 +151,7 @@ pub fn tsfn_call_with_callback(tsfn: ThreadsafeFunction<(), String>) -> napi::Re
 pub fn tsfn_async_call<'env>(
   env: &'env Env,
   func: Function<FnArgs<(u32, u32, u32)>, String>,
-) -> napi::Result<PromiseRaw<'env, ()>> {
+) -> napi::Result<Promise<'env, ()>> {
   let tsfn = func.build_threadsafe_function().build()?;
 
   env.spawn_future(async move {
@@ -207,14 +198,14 @@ pub fn accept_threadsafe_function_tuple_no_fn_args(func: ThreadsafeFunction<(u32
 }
 
 #[napi]
-pub async fn tsfn_return_promise(func: ThreadsafeFunction<u32, Promise<u32>>) -> Result<u32> {
+pub async fn tsfn_return_promise(func: ThreadsafeFunction<u32, PromiseFuture<u32>>) -> Result<u32> {
   let val = func.call_async(Ok(1)).await?.await?;
   Ok(val + 2)
 }
 
 #[napi]
 pub async fn tsfn_return_promise_timeout(
-  func: ThreadsafeFunction<u32, Promise<u32>>,
+  func: ThreadsafeFunction<u32, PromiseFuture<u32>>,
 ) -> Result<u32> {
   use tokio::time::{self, Duration};
   let promise = func.call_async(Ok(1)).await?;
@@ -233,26 +224,33 @@ pub async fn tsfn_return_promise_timeout(
 pub fn call_async_with_unknown_return_value<'env>(
   env: &'env Env,
   tsfn: ThreadsafeFunction<u32, UnknownRef>,
-) -> Result<PromiseRaw<'env, u32>> {
-  env.spawn_future_with_callback(
-    async move {
-      let return_value = tsfn.call_async(Ok(42)).await?;
-      Ok(return_value)
-    },
-    |env, value| {
-      let return_value = value.get_value(env)?;
-      let return_value = match return_value.get_type()? {
-        ValueType::Object => Ok(110),
-        _ => Ok(100),
+) -> Result<Promise<'env, u32>> {
+  let (deferred, promise) = env.create_deferred::<u32, _>()?;
+  let status = tsfn.call_with_return_value(
+    Ok(42),
+    ThreadsafeFunctionCallMode::NonBlocking,
+    move |value, env| {
+      let value = value?;
+      let return_value = value.get_value(&env)?;
+      let resolved = match return_value.get_type()? {
+        ValueType::Object => 110,
+        _ => 100,
       };
-      value.unref(env)?;
-      return_value
+      value.unref(&env)?;
+      deferred.resolve(move |_| Ok(resolved));
+      Ok(())
     },
-  )
+  );
+  if status != Status::Ok {
+    return Err(Error::from_status(status));
+  }
+  Ok(promise)
 }
 
 #[napi]
-pub async fn tsfn_throw_from_js(tsfn: ThreadsafeFunction<u32, Promise<u32>>) -> napi::Result<u32> {
+pub async fn tsfn_throw_from_js(
+  tsfn: ThreadsafeFunction<u32, PromiseFuture<u32>>,
+) -> napi::Result<u32> {
   tsfn.call_async(Ok(42)).await?.await
 }
 
@@ -287,10 +285,6 @@ pub async fn tsfn_throw_from_js_catch_recover(
           format!("expected PendingException, got {:?}", err.status),
         ));
       }
-      // Propagate the Err. Because err.maybe_raw holds a napi_ref to the
-      // original JS exception object, `ToNapiValue for Error` recovers that
-      // exact object on the way back to JS — so the JS test will see the
-      // original error instance with all custom properties (e.g. `code`).
       Err(err)
     }
   }
@@ -298,7 +292,7 @@ pub async fn tsfn_throw_from_js_catch_recover(
 
 #[napi]
 pub async fn tsfn_throw_from_js_callback_contains_tsfn(
-  tsfn: ThreadsafeFunction<u32, Promise<u32>>,
+  tsfn: ThreadsafeFunction<u32, PromiseFuture<u32>>,
 ) {
   std::thread::spawn(move || {
     if let Err(e) = napi::bindgen_prelude::block_on(async move {

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
-use napi::{bindgen_prelude::*, JsSymbol, JsValue, Unknown};
+use napi::{bindgen_prelude::*, JsSymbol};
 
 #[napi(strict)]
 fn validate_array(arr: Vec<u32>) -> u32 {
@@ -59,8 +59,8 @@ fn validate_external(e: &External<u32>) -> u32 {
 }
 
 #[napi(strict, ts_args_type = "cb: () => number")]
-fn validate_function(cb: Function<(), Unknown>) -> Result<u32> {
-  Ok(cb.call(())?.coerce_to_number()?.get_uint32()? + 3)
+fn validate_function(scope: &mut Scope, cb: Function<(), u32>) -> Result<u32> {
+  Ok(scope.call(&cb, ())? + 3)
 }
 
 #[napi(strict)]
@@ -84,7 +84,7 @@ fn validate_number(i: f64) -> f64 {
 }
 
 #[napi(strict)]
-async fn validate_promise(p: Promise<u32>) -> Result<u32> {
+async fn validate_promise(p: PromiseFuture<u32>) -> Result<u32> {
   Ok(p.await? + 1)
 }
 
@@ -138,7 +138,7 @@ fn return_undefined_if_invalid(input: bool) -> bool {
 }
 
 #[napi(return_if_invalid)]
-async fn return_undefined_if_invalid_promise(input: Promise<bool>) -> Result<bool> {
+async fn return_undefined_if_invalid_promise(input: PromiseFuture<bool>) -> Result<bool> {
   let input_value = input.await?;
   Ok(!input_value)
 }

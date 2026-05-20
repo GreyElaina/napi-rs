@@ -1,9 +1,9 @@
 use napi::{
   bindgen_prelude::{
-    Buffer, ClassInstance, Function, JavaScriptClassExt, JsObjectValue, JsValue, ObjectFinalize,
-    This, Uint8Array, Unknown,
+    Buffer, ClassInitializer, ClassRef, ClassRefMut, Function, JsObjectValue, JsValue, Promise,
+    Reference, This, Unknown,
   },
-  Env, Property, PropertyAttributes, Result,
+  Env, Property, Result,
 };
 
 use crate::r#enum::Kind;
@@ -102,27 +102,30 @@ impl Animal {
   /// \[]{}/\:""{
   /// }
   /// Accept header "*/json" should not break the comment block
-  pub fn return_other_class(&self) -> Dog {
-    Dog {
+  pub fn return_other_class(&self) -> ClassInitializer<Dog> {
+    ClassInitializer::from(Dog {
       name: "Doge".to_owned(),
-    }
+    })
   }
 
   #[napi]
-  pub fn return_other_class_with_custom_constructor(&self) -> Bird {
-    Bird::new("parrot".to_owned())
+  pub fn return_other_class_with_custom_constructor(&self) -> ClassInitializer<Bird> {
+    ClassInitializer::from(Bird::new("parrot".to_owned()))
   }
 
   #[napi]
   pub fn override_individual_arg_on_method(
     &self,
+    mut env: Env,
     normal_ty: String,
     #[napi(ts_arg_type = "{n: string}")] overridden_ty: napi::bindgen_prelude::Object,
-  ) -> Bird {
+  ) -> ClassInitializer<Bird> {
     let obj = overridden_ty.coerce_to_object().unwrap();
-    let the_n: Option<String> = obj.get("n").unwrap();
+    let the_n = env
+      .with_scope(|scope| scope.get_optional_named_property::<String, _>(&obj, "n"))
+      .unwrap();
 
-    Bird::new(format!("{}-{}", normal_ty, the_n.unwrap()))
+    ClassInitializer::from(Bird::new(format!("{}-{}", normal_ty, the_n.unwrap())))
   }
 }
 
@@ -149,9 +152,12 @@ impl Bird {
   }
 
   #[cfg_attr(not(feature = "cfg_attr_napi"), napi_derive::napi)]
-  pub async fn get_name_async(&self) -> &str {
-    tokio::time::sleep(std::time::Duration::new(1, 0)).await;
-    self.name.as_str()
+  pub fn get_name_async<'env>(&self, env: &'env Env<'env>) -> Result<Promise<'env, String>> {
+    let name = self.name.clone();
+    env.spawn_future(async move {
+      tokio::time::sleep(std::time::Duration::new(1, 0)).await;
+      Ok(name)
+    })
   }
 
   #[cfg_attr(not(feature = "cfg_attr_napi"), napi_derive::napi)]
@@ -194,7 +200,6 @@ impl Blake2bKey {
 pub struct Context {
   data: String,
   pub maybe_need: Option<bool>,
-  pub buffer: Uint8Array,
 }
 
 // Test for return `napi::Result` and `Result`
@@ -205,7 +210,6 @@ impl Context {
     Ok(Self {
       data: "not empty".into(),
       maybe_need: None,
-      buffer: Uint8Array::new(vec![0, 1, 2, 3]),
     })
   }
 
@@ -214,17 +218,7 @@ impl Context {
     Ok(Self {
       data,
       maybe_need: Some(true),
-      buffer: Uint8Array::new(vec![0, 1, 2, 3]),
     })
-  }
-
-  #[napi(factory)]
-  pub fn with_buffer(buf: Uint8Array) -> Self {
-    Self {
-      data: "not empty".into(),
-      maybe_need: None,
-      buffer: buf,
-    }
   }
 
   #[napi]
@@ -250,8 +244,8 @@ pub struct NinjaTurtle {
 #[napi]
 impl NinjaTurtle {
   #[napi]
-  pub fn is_instance_of(env: Env, value: Unknown) -> Result<bool> {
-    Self::instance_of(&env, &value)
+  pub fn is_instance_of(mut env: Env, value: Unknown) -> Result<bool> {
+    env.with_scope(|scope| scope.is_class_value::<Self, _>(&value))
   }
 
   /// Create your ninja turtle! 🐢
@@ -300,8 +294,8 @@ impl JsAssets {
   }
 
   #[napi]
-  pub fn get(&mut self, _id: u32) -> Option<JsAsset> {
-    Some(JsAsset {})
+  pub fn get(&mut self, _id: u32) -> Option<ClassInitializer<JsAsset>> {
+    Some(ClassInitializer::from(JsAsset {}))
   }
 }
 
@@ -367,25 +361,142 @@ impl Optional {
 }
 
 #[napi(object)]
-pub struct ObjectFieldClassInstance<'env> {
-  pub bird: ClassInstance<'env, Bird>,
+pub struct ObjectFieldClassReference {
+  pub bird: Reference<Bird>,
 }
 
 #[napi]
-pub fn create_object_with_class_field(env: &Env) -> Result<ObjectFieldClassInstance<'_>> {
-  Ok(ObjectFieldClassInstance {
-    bird: Bird {
-      name: "Carolyn".to_owned(),
-    }
-    .into_instance(env)?,
+pub fn create_object_with_class_field(mut env: Env) -> Result<ObjectFieldClassReference> {
+  env.with_scope(|scope| {
+    Ok(ObjectFieldClassReference {
+      bird: scope.reference(Bird {
+        name: "Carolyn".to_owned(),
+      })?,
+    })
   })
 }
 
 #[napi]
 pub fn receive_object_with_class_field(
-  object: ObjectFieldClassInstance,
-) -> Result<ClassInstance<Bird>> {
+  object: ObjectFieldClassReference,
+) -> Result<Reference<Bird>> {
   Ok(object.bird)
+}
+
+#[napi(subclass)]
+pub struct RendererNode {
+  id: u32,
+}
+
+impl RendererNode {
+  pub fn new(id: u32) -> Self {
+    Self { id }
+  }
+}
+
+#[napi]
+impl RendererNode {
+  #[napi]
+  pub fn id(&self) -> u32 {
+    self.id
+  }
+
+  #[napi]
+  pub fn node_kind(&self) -> &'static str {
+    "renderer"
+  }
+
+  #[napi]
+  pub fn receiver_id(this: ClassRef<Self>) -> u32 {
+    this.id
+  }
+
+  #[napi]
+  pub fn owned_receiver_id(mut env: Env, this: Reference<Self>) -> Result<u32> {
+    env.with_scope(|scope| {
+      let this = scope.bind_reference(&this)?;
+      let this = scope.borrow_class(&this)?;
+      Ok(this.id)
+    })
+  }
+
+  #[napi]
+  pub fn env_mut_marker(&self, env: &mut Env) -> Result<bool> {
+    env.with_scope(|scope| {
+      scope.env().get_global()?;
+      Ok(true)
+    })
+  }
+
+  #[napi]
+  pub fn set_id_from_receiver(mut this: ClassRefMut<Self>, id: u32) {
+    this.id = id;
+  }
+
+  #[napi]
+  pub fn has_same_id(&self, other: ClassRef<Self>) -> bool {
+    self.id == other.id
+  }
+
+  #[napi]
+  pub fn has_same_id_ref(&self, other: &Self) -> bool {
+    self.id == other.id
+  }
+}
+
+#[napi(extends = RendererNode, subclass)]
+pub struct ImageNode {
+  width: u32,
+}
+
+#[napi]
+impl ImageNode {
+  #[napi(constructor)]
+  pub fn new(id: u32, width: u32) -> ClassInitializer<Self> {
+    ClassInitializer::from_parent(
+      ClassInitializer::from(RendererNode::new(id)),
+      Self { width },
+    )
+  }
+
+  #[napi(getter)]
+  pub fn width(&self) -> u32 {
+    self.width
+  }
+
+  #[napi(setter)]
+  pub fn set_width(&mut self, width: u32) {
+    self.width = width;
+  }
+
+  #[napi]
+  pub fn image_kind(&self) -> &'static str {
+    "image"
+  }
+
+  #[napi]
+  pub fn set_super_id(mut this: ClassRefMut<Self>, id: u32) -> Result<()> {
+    this.as_super_mut()?.id = id;
+    Ok(())
+  }
+}
+
+#[napi(extends = ImageNode)]
+pub struct PngImageNode {
+  height: u32,
+}
+
+#[napi]
+impl PngImageNode {
+  #[napi(constructor)]
+  pub fn new(id: u32, width: u32, height: u32) -> ClassInitializer<Self> {
+    ClassInitializer::from_parent(ImageNode::new(id, width), Self { height })
+  }
+
+  #[napi(getter)]
+  pub fn height(&self) -> u32 {
+    self.height
+  }
 }
 
 #[napi(constructor)]
@@ -402,7 +513,7 @@ impl NotWritableClass {
   }
 }
 
-#[napi(custom_finalize)]
+#[napi]
 pub struct CustomFinalize {
   width: u32,
   height: u32,
@@ -412,22 +523,13 @@ pub struct CustomFinalize {
 #[napi]
 impl CustomFinalize {
   #[napi(constructor)]
-  pub fn new(env: Env, width: u32, height: u32) -> Result<Self> {
+  pub fn new(width: u32, height: u32) -> Self {
     let inner = vec![0; (width * height * 4) as usize];
-    let inner_size = inner.len();
-    env.adjust_external_memory(inner_size as i64)?;
-    Ok(Self {
+    Self {
       width,
       height,
       inner,
-    })
-  }
-}
-
-impl ObjectFinalize for CustomFinalize {
-  fn finalize(self, env: Env) -> Result<()> {
-    env.adjust_external_memory(-(self.inner.len() as i64))?;
-    Ok(())
+    }
   }
 }
 
@@ -436,9 +538,39 @@ pub struct Width {
   pub value: i32,
 }
 
+#[napi(constructor)]
+pub struct SelfReferenceField {
+  pub next: Option<Reference<Self>>,
+}
+
 #[napi]
-pub fn plus_one(this: This<&Width>) -> i32 {
-  this.object.value + 1
+impl SelfReferenceField {
+  #[napi]
+  pub fn current(this: Reference<Self>) -> Reference<Self> {
+    this
+  }
+
+  #[napi]
+  pub fn maybe_next(&self, mut env: Env) -> Result<Option<Reference<Self>>> {
+    env.with_scope(|scope| match &self.next {
+      Some(next) => scope.clone_reference(next).map(Some),
+      None => Ok(None),
+    })
+  }
+
+  #[napi]
+  pub fn new_detached() -> ClassInitializer<Self> {
+    ClassInitializer::from(Self { next: None })
+  }
+}
+
+#[napi]
+pub fn plus_one(mut env: Env, this: Reference<Width>) -> Result<i32> {
+  env.with_scope(|scope| {
+    let bound = scope.bind_reference(&this)?;
+    let value = scope.borrow_class(&bound)?.value;
+    Ok(value + 1)
+  })
 }
 
 #[napi]
@@ -457,7 +589,9 @@ impl GetterSetterWithClosures {
           this.set_named_property("_name", format!("I'm {}", value))?;
           Ok(())
         })
-        .with_getter_closure(|_env, this| this.get_named_property_unchecked::<Unknown>("_name")),
+        .with_getter_closure(|mut env, this| {
+          env.with_scope(|scope| scope.get_named_property::<String, _>(&this, "_name"))
+        }),
       Property::new()
         .with_utf8_name("age")?
         .with_getter_closure(|_env, _this| Ok(0.3)),
@@ -490,34 +624,6 @@ impl CatchOnConstructor2 {
   #[napi(constructor, catch_unwind)]
   pub fn new() -> Self {
     panic!("CatchOnConstructor2 panic");
-  }
-}
-
-#[napi]
-pub struct ClassWithLifetime<'a> {
-  inner: ClassInstance<'a, Animal>,
-  inner2: ClassInstance<'a, Animal>,
-}
-
-#[napi]
-impl<'scope> ClassWithLifetime<'scope> {
-  #[napi(constructor)]
-  pub fn new(env: &Env, mut this: This<'scope>) -> Result<Self> {
-    let instance = Animal {
-      kind: Kind::Cat,
-      name: "alie".to_owned(),
-      optional_value: None,
-    }
-    .into_instance(env)?;
-    let inner = instance.assign_to_this("inner", &mut this)?;
-    let inner2 =
-      instance.assign_to_this_with_attributes("inner2", PropertyAttributes::Default, &mut this)?;
-    Ok(Self { inner, inner2 })
-  }
-
-  #[napi]
-  pub fn get_name(&self) -> &str {
-    self.inner.get_name()
   }
 }
 
@@ -578,8 +684,8 @@ impl ThingList {
   }
 
   #[napi(getter)]
-  pub fn thing() -> Thing {
-    Thing
+  pub fn thing() -> ClassInitializer<Thing> {
+    ClassInitializer::from(Thing)
   }
 }
 
@@ -606,6 +712,6 @@ fn rust_class_constructor(value: i32, mut this: This) -> Result<()> {
 }
 
 #[napi(no_export)]
-fn rust_class_method(this: This) -> Result<i32> {
-  this.get_named_property_unchecked::<i32>("dynamicValue")
+fn rust_class_method(mut env: Env, this: This) -> Result<i32> {
+  env.with_scope(|scope| scope.get_named_property(&this, "dynamicValue"))
 }

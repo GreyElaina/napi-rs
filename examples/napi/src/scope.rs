@@ -1,22 +1,31 @@
 use napi::{bindgen_prelude::*, JsString};
 
 #[napi]
-pub fn shorter_scope(env: &Env, arr: Array) -> Result<Vec<u32>> {
+pub fn shorter_scope(env: &mut Env, arr: Array) -> Result<Vec<u32>> {
   let len = arr.len();
   let mut result = Vec::with_capacity(len as usize);
   for i in 0..len {
-    let scope = HandleScope::create(env)?;
-    let value: Unknown = arr.get_element(i)?;
-    let len = unsafe {
-      scope.close(value, |v| match v.get_type()? {
+    let handle_scope = HandleScope::create(env)?;
+    let len = env.with_scope(|scope| {
+      let value = scope
+        .get_optional_element::<Unknown>(&arr, i)?
+        .ok_or_else(|| {
+          Error::new(
+            Status::InvalidArg,
+            format!("Missing array element at index {i}"),
+          )
+        })?;
+      match value.get_type()? {
         ValueType::String => {
-          let string = v.cast::<JsString>()?;
+          let value = value.into_js(scope)?;
+          let string = JsString::from_js(scope, value)?;
           Ok(string.utf8_len()? as u32)
         }
         ValueType::Object => Ok(1),
         _ => Ok(0),
-      })?
-    };
+      }
+    })?;
+    unsafe { handle_scope.close(arr, |_| Ok(()))? };
     result.push(len);
   }
   Ok(result)
@@ -24,38 +33,23 @@ pub fn shorter_scope(env: &Env, arr: Array) -> Result<Vec<u32>> {
 
 #[napi]
 pub fn shorter_escapable_scope<'env>(
-  env: &'env Env,
-  create_string: Function<(), Option<JsString>>,
-) -> Result<JsString<'env>> {
-  let mut longest_string = env.create_string("")?;
+  env: &mut Env<'env>,
+  create_string: Function<(), Option<String>>,
+) -> Result<String> {
+  let mut longest_string = String::new();
   let mut prev_len = 0;
   loop {
-    if let Some(maybe_longest) = EscapableHandleScope::with(
-      env,
-      (create_string, longest_string),
-      move |scope, (create_string, prev)| {
-        let elem = create_string.call(())?;
-        if let Some(string) = elem {
-          let len = string.utf8_len()?;
-          if len > prev.utf8_len()? {
-            return Ok(Some(Either::A(string.escape::<JsString>(scope)?)));
-          }
-        } else {
-          return Ok(Some(Either::B(())));
+    let maybe_longest = env.with_scope(|scope| scope.call(&create_string, ()))?;
+    match maybe_longest {
+      Some(string) => {
+        let len = string.len();
+        if len <= longest_string.len() || len == prev_len {
+          break;
         }
-        Ok(None)
-      },
-    )? {
-      match maybe_longest {
-        Either::A(longest) => {
-          if longest.utf8_len()? == prev_len {
-            break;
-          }
-          prev_len = longest.utf8_len()?;
-          longest_string = longest;
-        }
-        Either::B(_) => break,
+        prev_len = len;
+        longest_string = string;
       }
+      None => break,
     }
   }
   Ok(longest_string)

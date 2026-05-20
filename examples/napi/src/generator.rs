@@ -120,7 +120,7 @@ pub struct Fib4 {
 
 #[napi]
 impl<'a> ScopedGenerator<'a> for Fib4 {
-  type Yield = Unknown<'a>;
+  type Yield = Object<'a>;
   type Next = i32;
   type Return = ();
 
@@ -141,7 +141,7 @@ impl<'a> ScopedGenerator<'a> for Fib4 {
     if let Some(ref mut val) = obj {
       val.set("number", self.current).ok()?;
     }
-    obj.into_unknown(env).ok()
+    obj
   }
 }
 
@@ -171,7 +171,7 @@ impl AsyncGenerator for AsyncFib {
   fn next(
     &mut self,
     value: Option<Self::Next>,
-  ) -> impl Future<Output = Result<Option<Self::Yield>>> + Send + 'static {
+  ) -> impl Future<Output = Result<Option<Self::Yield>>> + Send + 'static + use<> {
     // The returned Future must be 'static, so we cannot borrow `self` in the async block.
     // Instead, we compute the result synchronously here, update `self`, and capture
     // only the computed value in the async block. This is safe because:
@@ -224,7 +224,7 @@ impl AsyncGenerator for DelayedCounter {
   fn next(
     &mut self,
     _value: Option<Self::Next>,
-  ) -> impl Future<Output = Result<Option<Self::Yield>>> + Send + 'static {
+  ) -> impl Future<Output = Result<Option<Self::Yield>>> + Send + 'static + use<> {
     let current = self.current;
     let max = self.max;
     let delay_ms = self.delay_ms;
@@ -273,7 +273,7 @@ impl AsyncGenerator for AsyncDataSource {
   fn next(
     &mut self,
     _value: Option<Self::Next>,
-  ) -> impl Future<Output = Result<Option<Self::Yield>>> + Send + 'static {
+  ) -> impl Future<Output = Result<Option<Self::Yield>>> + Send + 'static + use<> {
     let item = if self.index < self.data.len() {
       Some(self.data[self.index].clone())
     } else {

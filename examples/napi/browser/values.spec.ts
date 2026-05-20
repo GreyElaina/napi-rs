@@ -13,7 +13,7 @@ const {
   GetterSetterWithClosures,
   tsfnReturnPromise,
   tsfnReturnPromiseTimeout,
-  asyncTaskReadFile,
+  blockingReadFile,
   testWorkers,
 }: typeof import('../index.cjs') = await import('../example.wasi-browser')
 
@@ -63,7 +63,7 @@ describe('NAPI-RS wasi browser test', function () {
 
   it('readFileAsync', async () => {
     __fs.writeFileSync('/test.txt', 'hello world')
-    const value = await asyncTaskReadFile('/test.txt')
+    const value = await blockingReadFile('/test.txt')
     expect(value.toString('utf8')).toBe('hello world')
   })
 

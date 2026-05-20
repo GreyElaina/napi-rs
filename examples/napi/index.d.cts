@@ -67,8 +67,11 @@ export declare class AnotherClassForEither {
   constructor()
 }
 
-export declare class AnotherCssStyleSheet {
+export interface AnotherCssStyleSheet {
   get rules(): CssRuleList
+}
+export declare const AnotherCssStyleSheet: {
+  [Symbol.hasInstance](value: unknown): boolean
 }
 export type AnotherCSSStyleSheet = AnotherCssStyleSheet
 
@@ -90,10 +93,13 @@ export type JsAssets = Assets
  *
  * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Iteration_protocols#the_async_iterator_and_async_iterable_protocols
  */
-export declare class AsyncDataSource {
+export interface AsyncDataSource {
   [Symbol.asyncIterator](): AsyncGenerator<string, void, undefined>
   /** Creates an async data source that yields each item with a simulated I/O delay */
-  static fromData(data: Array<string>, delayMs: number): AsyncDataSource
+}
+export declare const AsyncDataSource: {
+  fromData(data: Array<string>, delayMs: number): AsyncDataSource
+  [Symbol.hasInstance](value: unknown): boolean
 }
 
 /**
@@ -122,14 +128,20 @@ export declare class Bird {
 }
 
 /** Smoking test for type generation */
-export declare class Blake2BHasher {
-  static withKey(key: Blake2bKey): Blake2BHasher
+export interface Blake2BHasher {
   update(data: Buffer): void
+}
+export declare const Blake2BHasher: {
+  withKey(key: Blake2bKey): Blake2BHasher
+  [Symbol.hasInstance](value: unknown): boolean
 }
 export type Blake2bHasher = Blake2BHasher
 
-export declare class Blake2BKey {
+export interface Blake2BKey {
 
+}
+export declare const Blake2BKey: {
+  [Symbol.hasInstance](value: unknown): boolean
 }
 export type Blake2bKey = Blake2BKey
 
@@ -145,16 +157,22 @@ export declare class ClassInArray {
   constructor(value: number)
 }
 
-export declare class ClassReturnInPromise {
+export interface ClassReturnInPromise {
 
 }
+export declare const ClassReturnInPromise: {
+  [Symbol.hasInstance](value: unknown): boolean
+}
 
-export declare class ClassWithFactory {
+export interface ClassWithFactory {
   name: string
-  static withName(name: string): ClassWithFactory
-  static with4Name(name: string): Promise<ClassWithFactory>
-  static with4NameResult(name: string): Promise<ClassWithFactory>
   setName(name: string): this
+}
+export declare const ClassWithFactory: {
+  withName(name: string): ClassWithFactory
+  with4Name(name: string): Promise<ClassWithFactory>
+  with4NameResult(name: string): Promise<ClassWithFactory>
+  [Symbol.hasInstance](value: unknown): boolean
 }
 
 export declare class ClassWithLifetime {
@@ -164,10 +182,8 @@ export declare class ClassWithLifetime {
 
 export declare class Context {
   maybeNeed?: boolean
-  buffer: Uint8Array
   constructor()
   static withData(data: string): Context
-  static withBuffer(buf: Uint8Array): Context
   method(): string
 }
 
@@ -182,16 +198,22 @@ export declare class CounterRepro {
   [Symbol.asyncIterator](): AsyncGenerator<number, void, undefined>
 }
 
-export declare class CreateStringClass {
-  static new(): CreateStringClass
+export interface CreateStringClass {
   createString(): string | null
   createStringResult(): string
 }
+export declare const CreateStringClass: {
+  new(): CreateStringClass
+  [Symbol.hasInstance](value: unknown): boolean
+}
 
-export declare class CssRuleList {
+export interface CssRuleList {
   getRules(): Array<string>
-  get parentStyleSheet(): CSSStyleSheet
   get name(): string | null
+  get parentStyleSheet(): CSSStyleSheet
+}
+export declare const CssRuleList: {
+  [Symbol.hasInstance](value: unknown): boolean
 }
 export type CSSRuleList = CssRuleList
 
@@ -255,9 +277,12 @@ export declare class Fib extends Iterator<number, void, number> {
  * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Iterator#iterator_helper_methods
  * @see https://www.typescriptlang.org/docs/handbook/release-notes/typescript-5-6.html#iterator-helper-methods
  */
-export declare class Fib2 extends Iterator<number, void, number> {
-  static create(seed: number): Fib2
-  next(value?: number): IteratorResult<number, void>
+export interface Fib2 extends Iterator<number, void, number> {
+
+}
+export declare const Fib2: {
+  create(seed: number): Fib2
+  [Symbol.hasInstance](value: unknown): boolean
 }
 
 /**
@@ -293,14 +318,26 @@ export declare class GetterSetterWithClosures {
   constructor()
 }
 
+export declare class ImageNode {
+  constructor(id: number, width: number)
+  get width(): number
+  set width(width: number)
+  imageKind(): string
+  setSuperId(id: number): void
+}
+export declare interface ImageNode extends RendererNode {}
+
 export declare class JsClassForEither {
   constructor()
 }
 
-export declare class JSOnlyMethodsClass {
+export interface JSOnlyMethodsClass {
   data: string
   processData(): string
   getLength(): number
+}
+export declare const JSOnlyMethodsClass: {
+  [Symbol.hasInstance](value: unknown): boolean
 }
 export type RustOnlyMethodsClass = JSOnlyMethodsClass
 
@@ -321,14 +358,17 @@ export declare class MyJsNamedClass {
 }
 export type OriginalRustNameForJsNamedStruct = MyJsNamedClass
 
-export declare class NinjaTurtle {
+export interface NinjaTurtle {
   name: string
-  static isInstanceOf(value: unknown): boolean
   /** Create your ninja turtle! 🐢 */
-  static newRaph(): NinjaTurtle
   getMaskColor(): string
   getName(): string
   returnThis(): this
+}
+export declare const NinjaTurtle: {
+  isInstanceOf(value: unknown): boolean
+  newRaph(): NinjaTurtle
+  [Symbol.hasInstance](value: unknown): boolean
 }
 
 export declare class NotUseNullableClass {
@@ -345,11 +385,15 @@ export declare class NotWritableClass {
   setName(name: string): void
 }
 
-export declare class Optional {
-  static optionEnd(required: string, optional?: string | undefined | null): string
-  static optionStart(optional: string | undefined | null, required: string): string
-  static optionStartEnd(optional1: string | undefined | null, required: string, optional2?: string | undefined | null): string
-  static optionOnly(optional?: string | undefined | null): string
+export interface Optional {
+
+}
+export declare const Optional: {
+  optionEnd(required: string, optional?: string | undefined | null): string
+  optionStart(optional: string | undefined | null, required: string): string
+  optionStartEnd(optional1: string | undefined | null, required: string, optional2?: string | undefined | null): string
+  optionOnly(optional?: string | undefined | null): string
+  [Symbol.hasInstance](value: unknown): boolean
 }
 
 export declare class PackageJsonReader {
@@ -357,10 +401,29 @@ export declare class PackageJsonReader {
   read(): any
 }
 
+export declare class PngImageNode extends ImageNode {
+  constructor(id: number, width: number, height: number)
+  get height(): number
+}
+
 export declare class Reader {
 
   constructor()
   read(): Buffer
+}
+
+export interface RendererNode {
+  id(): number
+  nodeKind(): string
+  receiverId(): number
+  ownedReceiverId(): number
+  envMutMarker(): boolean
+  setIdFromReceiver(id: number): void
+  hasSameId(other: RendererNode): boolean
+  hasSameIdRef(other: RendererNode): boolean
+}
+export declare const RendererNode: {
+  [Symbol.hasInstance](value: unknown): boolean
 }
 
 export declare class Selector {
@@ -371,8 +434,19 @@ export declare class Selector {
   constructor(orderBy: Array<string>, select: Array<string>, struct: string, where?: string)
 }
 
-export declare class Thing {
+export declare class SelfReferenceField {
+  next?: SelfReferenceField
+  constructor(next?: SelfReferenceField)
+  current(): SelfReferenceField
+  maybeNext(): SelfReferenceField | null
+  static newDetached(): SelfReferenceField
+}
 
+export interface Thing {
+
+}
+export declare const Thing: {
+  [Symbol.hasInstance](value: unknown): boolean
 }
 
 export declare class ThingList {
@@ -458,15 +532,15 @@ export declare function asyncReduceBuffer(buf: Buffer): Promise<number>
 
 export declare function asyncResolveArray(inner: number): Promise<unknown[]>
 
-export declare function asyncTaskArraybuffer(data: Array<number>): Promise<ArrayBuffer>
+export declare function blockingArraybuffer(data: Array<number>): Promise<ArrayBuffer>
 
-export declare function asyncTaskFinally(inner: object): Promise<void>
+export declare function blockingFinally(inner: object): Promise<void>
 
-export declare function asyncTaskOptionalReturn(): Promise<number | null>
+export declare function blockingOptionalReturn(): Promise<number | null>
 
-export declare function asyncTaskReadFile(path: string): Promise<Buffer>
+export declare function blockingReadFile(path: string): Promise<Buffer>
 
-export declare function asyncTaskVoidReturn(): Promise<void>
+export declare function blockingVoidReturn(): Promise<void>
 
 export interface B {
   bar: number
@@ -661,7 +735,7 @@ export declare function createObj(): object
 
 export declare function createObjectRef(): object
 
-export declare function createObjectWithClassField(): ObjectFieldClassInstance
+export declare function createObjectWithClassField(): ObjectFieldClassReference
 
 export declare function createObjWithProperty(): { value: ArrayBuffer, get getter(): number }
 
@@ -958,7 +1032,7 @@ export interface Obj {
   v: string | number
 }
 
-export interface ObjectFieldClassInstance {
+export interface ObjectFieldClassReference {
   bird: Bird
 }
 
@@ -1080,7 +1154,7 @@ export declare function receiveMutClassOrNumber(either: number | JsClassForEithe
 
 export declare function receiveObjectOnlyFromJs(obj: { count: number, callback: (err: Error | null, count: number) => void }): void
 
-export declare function receiveObjectWithClassField(object: ObjectFieldClassInstance): Bird
+export declare function receiveObjectWithClassField(object: ObjectFieldClassReference): Bird
 
 export declare function receiveStrictObject(strictObject: StrictObject): void
 
@@ -1206,9 +1280,9 @@ export declare function testSerdeRoundtrip(data: any): any
 
 export declare function testWorkers(amount: number, completeCallback: ((err: Error | null, ) => void)): void
 
-export declare function threadsafeFunctionBuildThrowErrorWithStatus(cb: (arg?: unknown) => unknown): void
+export declare function threadsafeFunctionBuildThrowErrorWithStatus(cb: (arg: boolean) => unknown): void
 
-export declare function threadsafeFunctionClosureCapture(defaultValue: Animal, func: (arg: Animal) => void): void
+export declare function threadsafeFunctionClosureCapture(func: (arg: string) => void): void
 
 export declare function threadsafeFunctionFatalMode(cb: ((arg: boolean) => unknown)): void
 

@@ -1,0 +1,11 @@
+error: raw Node-API handles cannot be used in JavaScript-visible signatures
+ --> tests/build_error_tests/raw_napi_handle_signature.rs:4:40
+  |
+4 | pub fn raw_value_arg(value: napi::sys::napi_value) -> u32 {
+  |                                        ^^^^^^^^^^
+
+error: raw Node-API handles cannot be used in JavaScript-visible signatures
+ --> tests/build_error_tests/raw_napi_handle_signature.rs:9:39
+  |
+9 | pub fn raw_ref_return() -> napi::sys::napi_ref {
+  |                                       ^^^^^^^^

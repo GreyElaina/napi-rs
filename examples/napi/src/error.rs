@@ -23,7 +23,7 @@ pub fn receive_string(s: String) -> String {
 }
 
 pub enum CustomError {
-  NapiError(Error<Status>),
+  NapiError(Box<Error<Status>>),
   Panic,
 }
 
@@ -68,14 +68,18 @@ impl CustomStruct {
 }
 
 #[napi]
-pub fn js_error_callback(value: Unknown) -> Result<Vec<JsError>> {
+pub fn js_error_callback(env: Env, value: Unknown) -> Result<Vec<JsError>> {
   let error: Error = value.into();
-  Ok(vec![error.try_clone()?.into(), error.into()])
+  Ok(vec![error.try_clone(&env)?.into(), error.into()])
 }
 
 #[napi]
-pub fn extends_javascript_error(env: Env, error_class: Function<String>) -> Result<()> {
-  let instance = error_class.new_instance("Error message in Rust".to_owned())?;
+pub fn extends_javascript_error(
+  scope: &mut Scope,
+  env: Env,
+  error_class: Function<String>,
+) -> Result<()> {
+  let instance = scope.new_instance(&error_class, "Error message in Rust".to_owned())?;
   let mut error_object = instance.coerce_to_object()?;
   error_object.set("name", "RustError")?;
   error_object.set(

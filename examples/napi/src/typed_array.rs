@@ -8,7 +8,7 @@ fn get_buffer() -> Buffer {
 }
 
 #[napi]
-fn get_buffer_slice(env: &Env) -> Result<BufferSlice<'_>> {
+fn get_buffer_slice<'env>(env: &'env Env<'env>) -> Result<BufferSlice<'env>> {
   BufferSlice::from_data(env, String::from("Hello world").as_bytes().to_vec())
 }
 
@@ -25,21 +25,23 @@ fn get_empty_buffer() -> Buffer {
 }
 
 #[napi]
-pub fn create_external_buffer_slice(env: &Env) -> Result<BufferSlice<'_>> {
+pub fn create_external_buffer_slice<'env>(env: &'env Env<'env>) -> Result<BufferSlice<'env>> {
   let mut data = String::from("Hello world").as_bytes().to_vec();
   let data_ptr = data.as_mut_ptr();
   let len = data.len();
   // Mock the ffi data that not managed by Rust
   std::mem::forget(data);
   unsafe {
-    BufferSlice::from_external(env, data_ptr, len, data_ptr, move |_, ptr| {
+    BufferSlice::from_external(env, data_ptr, len, data_ptr, move |ptr| {
       std::mem::drop(Vec::from_raw_parts(ptr, len, len));
     })
   }
 }
 
 #[napi]
-pub fn create_buffer_slice_from_copied_data(env: &Env) -> Result<BufferSlice<'_>> {
+pub fn create_buffer_slice_from_copied_data<'env>(
+  env: &'env Env<'env>,
+) -> Result<BufferSlice<'env>> {
   BufferSlice::copy_from(env, String::from("Hello world").as_bytes())
 }
 
@@ -76,14 +78,16 @@ async fn buffer_pass_through(buf: Buffer) -> Result<Buffer> {
 }
 
 #[napi]
-fn buffer_with_async_block(env: &Env, buf: Arc<Buffer>) -> Result<AsyncBlock<u32>> {
+fn buffer_with_async_block<'env>(
+  env: &'env Env<'env>,
+  buf: Arc<Buffer>,
+) -> Result<Promise<'env, u32>> {
   let buf_to_dispose = buf.clone();
-  AsyncBlockBuilder::with(async move { Ok(buf.len() as u32) })
-    .with_dispose(move |_| {
-      drop(buf_to_dispose);
-      Ok(())
-    })
-    .build(env)
+  env.spawn_future(async move {
+    let len = buf.len() as u32;
+    drop(buf_to_dispose);
+    Ok(len)
+  })
 }
 
 #[napi]
@@ -102,7 +106,7 @@ fn accept_arraybuffer(fixture: ArrayBuffer) -> Result<usize> {
 }
 
 #[napi]
-fn create_arraybuffer(env: &Env) -> Result<ArrayBuffer<'_>> {
+fn create_arraybuffer<'env>(env: &'env Env<'env>) -> Result<ArrayBuffer<'env>> {
   let buf = ArrayBuffer::from_data(env, vec![1, 2, 3, 4])?;
   Ok(buf)
 }
@@ -167,27 +171,13 @@ fn accept_uint8_clamped_slice_and_buffer_slice(a: BufferSlice, b: Uint8ClampedSl
   a.len() + b.len()
 }
 
-struct AsyncBuffer {
-  buf: Buffer,
-}
-
 #[napi]
-impl Task for AsyncBuffer {
-  type Output = u32;
-  type JsValue = u32;
-
-  fn compute(&mut self) -> Result<Self::Output> {
-    Ok(self.buf.iter().fold(0u32, |a, b| a + *b as u32))
-  }
-
-  fn resolve(&mut self, _env: Env, output: Self::Output) -> Result<Self::JsValue> {
-    Ok(output)
-  }
-}
-
-#[napi]
-fn async_reduce_buffer(buf: Buffer) -> Result<AsyncTask<AsyncBuffer>> {
-  Ok(AsyncTask::new(AsyncBuffer { buf }))
+fn async_reduce_buffer<'env>(env: &mut Env<'env>, buf: Buffer) -> Result<Promise<'env, u32>> {
+  env.with_scope(|scope| {
+    scope
+      .blocking(move || Ok(buf.iter().fold(0u32, |a, b| a + *b as u32)))
+      .promise(|_, output| Ok(output))
+  })
 }
 
 #[napi]
@@ -200,29 +190,11 @@ async fn u_init8_array_from_string() -> Uint8Array {
   Uint8Array::from_string("Hello world".to_owned())
 }
 
-struct AsyncReader {}
-
 struct OutputBuffer {}
 
 impl OutputBuffer {
-  fn into_buffer_slice(self, env: &Env) -> Result<BufferSlice<'_>> {
+  fn into_buffer_slice<'env>(self, env: &'env Env<'env>) -> Result<BufferSlice<'env>> {
     BufferSlice::from_data(env, String::from("Hello world"))
-  }
-}
-
-#[napi]
-impl Task for AsyncReader {
-  type Output = OutputBuffer;
-  type JsValue = Buffer;
-
-  fn compute(&mut self) -> Result<Self::Output> {
-    Ok(OutputBuffer {})
-  }
-
-  fn resolve(&mut self, env: Env, output: Self::Output) -> Result<Self::JsValue> {
-    output
-      .into_buffer_slice(&env)
-      .and_then(|slice| slice.into_buffer(&env))
   }
 }
 
@@ -233,70 +205,74 @@ pub struct Reader {}
 impl Reader {
   #[napi]
   pub fn read<'env>(&'env self, env: &'env Env) -> Result<BufferSlice<'env>> {
-    let output = AsyncReader {}.compute()?;
+    let output = OutputBuffer {};
     output.into_buffer_slice(env)
   }
 }
 
 #[napi]
-pub fn create_uint8_clamped_array_from_data(env: &Env) -> Result<Uint8ClampedSlice<'_>> {
+pub fn create_uint8_clamped_array_from_data<'env>(
+  env: &'env Env<'env>,
+) -> Result<Uint8ClampedSlice<'env>> {
   Uint8ClampedSlice::from_data(env, b"Hello world")
 }
 
 #[napi]
-pub fn create_uint8_clamped_array_from_external(env: &Env) -> Result<Uint8ClampedSlice<'_>> {
+pub fn create_uint8_clamped_array_from_external<'env>(
+  env: &'env Env<'env>,
+) -> Result<Uint8ClampedSlice<'env>> {
   let mut data = b"Hello world".to_vec();
   let data_ptr = data.as_mut_ptr();
   let len = data.len();
   std::mem::forget(data);
   unsafe {
-    Uint8ClampedSlice::from_external(env, data_ptr, len, data_ptr, move |_, ptr| {
+    Uint8ClampedSlice::from_external(env, data_ptr, len, data_ptr, move |ptr| {
       std::mem::drop(Vec::from_raw_parts(ptr, len, len));
     })
   }
 }
 
 #[napi]
-pub fn array_buffer_from_data(env: &Env) -> Result<ArrayBuffer<'_>> {
+pub fn array_buffer_from_data<'env>(env: &'env Env<'env>) -> Result<ArrayBuffer<'env>> {
   ArrayBuffer::from_data(env, b"Hello world")
 }
 
 #[napi]
-pub fn array_buffer_from_external(env: &Env) -> Result<ArrayBuffer<'_>> {
+pub fn array_buffer_from_external<'env>(env: &'env Env<'env>) -> Result<ArrayBuffer<'env>> {
   let mut data = b"Hello world from external".to_vec();
   let data_ptr = data.as_mut_ptr();
   let len = data.len();
   std::mem::forget(data);
   unsafe {
-    ArrayBuffer::from_external(env, data_ptr, len, data_ptr, move |_, ptr| {
+    ArrayBuffer::from_external(env, data_ptr, len, data_ptr, move |ptr| {
       std::mem::drop(Vec::from_raw_parts(ptr, len, len));
     })
   }
 }
 
 #[napi]
-pub fn uint8_array_from_data(env: &Env) -> Result<Uint8ArraySlice<'_>> {
+pub fn uint8_array_from_data<'env>(env: &'env Env<'env>) -> Result<Uint8ArraySlice<'env>> {
   Uint8ArraySlice::from_data(env, b"Hello world")
 }
 
 #[napi]
-pub fn uint8_array_from_external(env: &Env) -> Result<Uint8ArraySlice<'_>> {
+pub fn uint8_array_from_external<'env>(env: &'env Env<'env>) -> Result<Uint8ArraySlice<'env>> {
   let mut data = b"Hello world".to_vec();
   let data_ptr = data.as_mut_ptr();
   let len = data.len();
   std::mem::forget(data);
   unsafe {
-    Uint8ArraySlice::from_external(env, data_ptr, len, data_ptr, move |_, ptr| {
+    Uint8ArraySlice::from_external(env, data_ptr, len, data_ptr, move |ptr| {
       std::mem::drop(Vec::from_raw_parts(ptr, len, len));
     })
   }
 }
 
 #[napi]
-pub fn create_i32_array_from_external(env: &Env) -> Result<Int32ArraySlice<'_>> {
+pub fn create_i32_array_from_external<'env>(env: &'env Env<'env>) -> Result<Int32ArraySlice<'env>> {
   let mut data = vec![-1, -2, 30000, -40, 5];
   unsafe {
-    Int32ArraySlice::from_external(env, data.as_mut_ptr(), data.len(), data, |_, d| {
+    Int32ArraySlice::from_external(env, data.as_mut_ptr(), data.len(), data, |d| {
       drop(d);
     })
   }

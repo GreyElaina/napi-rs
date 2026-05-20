@@ -1,0 +1,5 @@
+error: raw Node-API handles cannot be used in JavaScript-visible signatures
+ --> tests/build_error_tests/raw_napi_class_field.rs:9:13
+  |
+9 |   pub tsfn: napi_threadsafe_function,
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^

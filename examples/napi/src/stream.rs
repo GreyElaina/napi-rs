@@ -4,42 +4,49 @@ use tokio::sync::mpsc::error::TrySendError;
 use tokio_stream::{wrappers::ReceiverStream, StreamExt};
 use tokio_util::io::{read_buf, StreamReader};
 
+pub struct AcceptedStream(BytesMut);
+
+impl<'scope> IntoJs<'scope> for AcceptedStream {
+  type Output = BufferSlice<'scope>;
+
+  fn into_js(mut self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
+    let value_ptr = self.0.as_mut_ptr();
+    unsafe {
+      BufferSlice::from_external(scope.env(), value_ptr, self.0.len(), self.0, move |bytes| {
+        drop(bytes);
+      })?
+      .into_js(scope)
+    }
+  }
+}
+
 #[napi]
-pub fn accept_stream(
-  env: &Env,
+pub fn accept_stream<'env>(
+  env: &'env Env<'env>,
   stream: ReadableStream<Uint8Array>,
-) -> Result<AsyncBlock<BufferSlice<'static>>> {
+) -> Result<Promise<'env, AcceptedStream>> {
   let web_readable_stream = stream.read()?;
   let mut input = StreamReader::new(web_readable_stream.map(|chunk| {
     chunk
       .map(|chunk| bytes::Bytes::copy_from_slice(&chunk))
       .map_err(|e| std::io::Error::other(e.reason.clone()))
   }));
-  AsyncBlockBuilder::build_with_map(
-    env,
-    async move {
-      let mut bytes_mut = BytesMut::new();
-      loop {
-        let n = read_buf(&mut input, &mut bytes_mut).await?;
-        if n == 0 {
-          break;
-        }
+  env.spawn_future(async move {
+    let mut bytes_mut = BytesMut::new();
+    loop {
+      let n = read_buf(&mut input, &mut bytes_mut).await?;
+      if n == 0 {
+        break;
       }
-      Ok(bytes_mut)
-    },
-    |env, mut value| {
-      let value_ptr = value.as_mut_ptr();
-      unsafe {
-        BufferSlice::from_external(&env, value_ptr, value.len(), value, move |_, bytes| {
-          drop(bytes);
-        })
-      }
-    },
-  )
+    }
+    Ok(AcceptedStream(bytes_mut))
+  })
 }
 
 #[napi]
-pub fn create_readable_stream(env: &Env) -> Result<ReadableStream<'_, BufferSlice<'_>>> {
+pub fn create_readable_stream<'env>(
+  env: &'env Env<'env>,
+) -> Result<ReadableStream<'env, BufferSlice<'env>>> {
   let (tx, rx) = tokio::sync::mpsc::channel(100);
   std::thread::spawn(move || {
     for _ in 0..100 {
@@ -76,7 +83,9 @@ pub struct StreamItem {
 /// Creates a ReadableStream that emits StreamItem objects.
 /// This demonstrates streaming custom Rust structs to JavaScript.
 #[napi]
-pub fn create_readable_stream_with_object(env: &Env) -> Result<ReadableStream<'_, StreamItem>> {
+pub fn create_readable_stream_with_object<'env>(
+  env: &'env Env<'env>,
+) -> Result<ReadableStream<'env, StreamItem>> {
   let (tx, rx) = tokio::sync::mpsc::channel(100);
   std::thread::spawn(move || {
     for i in 0..100 {

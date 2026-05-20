@@ -523,6 +523,78 @@ function requireNative() {
   }
 }
 
+function wireNativeClassPrototypes(binding) {
+  const metadata = binding.__napiClassMetadata
+  if (!Array.isArray(metadata)) {
+    return
+  }
+
+  const classKey = (item) => `${typeof item.module === 'string' ? item.module : ''}\0${item.name}`
+  const exportedClassValue = (item) => {
+    const target =
+      typeof item.module === 'string' && item.module.length > 0
+        ? binding[item.module]
+        : binding
+    return target == null ? undefined : target[item.name]
+  }
+
+  const classes = new Map()
+  for (const item of metadata) {
+    if (item && typeof item.name === 'string' && typeof item.constructor === 'function') {
+      classes.set(classKey(item), item)
+    }
+  }
+
+  for (const item of classes.values()) {
+    if (!item.parent) {
+      continue
+    }
+
+    const parent = classes.get(classKey({ module: item.module, name: item.parent }))
+    if (!parent) {
+      throw new Error(`Native class parent ${item.parent} for ${item.name} is not registered`)
+    }
+
+    Object.setPrototypeOf(item.constructor.prototype, parent.constructor.prototype)
+    if (Object.getPrototypeOf(item.constructor.prototype) !== parent.constructor.prototype) {
+      throw new Error(`Failed to wire native class prototype for ${item.name}`)
+    }
+
+    if (item.constructible && parent.constructible) {
+      const childExport = exportedClassValue(item)
+      const parentExport = exportedClassValue(parent)
+      if (typeof childExport !== 'function' || typeof parentExport !== 'function') {
+        throw new Error(`Native class constructor edge for ${item.name} is not exported as functions`)
+      }
+
+      Object.setPrototypeOf(childExport, parentExport)
+      if (Object.getPrototypeOf(childExport) !== parentExport) {
+        throw new Error(`Failed to wire native class constructor for ${item.name}`)
+      }
+    }
+  }
+
+  const IteratorCtor = globalThis.Iterator
+  if (typeof IteratorCtor === 'function' && IteratorCtor.prototype) {
+    for (const item of classes.values()) {
+      if (!item.iterator || item.parent) {
+        continue
+      }
+
+      Object.setPrototypeOf(item.constructor.prototype, IteratorCtor.prototype)
+      if (Object.getPrototypeOf(item.constructor.prototype) !== IteratorCtor.prototype) {
+        throw new Error(`Failed to wire native iterator prototype for ${item.name}`)
+      }
+    }
+  }
+}
+
+function hideNativeClassMetadata(binding) {
+  if (Object.prototype.hasOwnProperty.call(binding, '__napiClassMetadata')) {
+    delete binding.__napiClassMetadata
+  }
+}
+
 nativeBinding = requireNative()
 
 if (!nativeBinding || process.env.NAPI_RS_FORCE_WASI) {
@@ -575,24 +647,22 @@ if (!nativeBinding) {
   throw new Error(`Failed to load native binding`)
 }
 
+wireNativeClassPrototypes(nativeBinding)
+hideNativeClassMetadata(nativeBinding)
+
 module.exports = nativeBinding
 module.exports.Animal = nativeBinding.Animal
 module.exports.AnimalWithDefaultConstructor = nativeBinding.AnimalWithDefaultConstructor
 module.exports.AnotherClassForEither = nativeBinding.AnotherClassForEither
 module.exports.AnotherCssStyleSheet = nativeBinding.AnotherCssStyleSheet
-module.exports.AnotherCSSStyleSheet = nativeBinding.AnotherCSSStyleSheet
 module.exports.Asset = nativeBinding.Asset
-module.exports.JsAsset = nativeBinding.JsAsset
 module.exports.Assets = nativeBinding.Assets
-module.exports.JsAssets = nativeBinding.JsAssets
 module.exports.AsyncDataSource = nativeBinding.AsyncDataSource
 module.exports.AsyncFib = nativeBinding.AsyncFib
 module.exports.AsyncThrowClass = nativeBinding.AsyncThrowClass
 module.exports.Bird = nativeBinding.Bird
 module.exports.Blake2BHasher = nativeBinding.Blake2BHasher
-module.exports.Blake2bHasher = nativeBinding.Blake2bHasher
 module.exports.Blake2BKey = nativeBinding.Blake2BKey
-module.exports.Blake2bKey = nativeBinding.Blake2bKey
 module.exports.CatchOnConstructor = nativeBinding.CatchOnConstructor
 module.exports.CatchOnConstructor2 = nativeBinding.CatchOnConstructor2
 module.exports.ClassInArray = nativeBinding.ClassInArray
@@ -603,9 +673,7 @@ module.exports.Context = nativeBinding.Context
 module.exports.CounterRepro = nativeBinding.CounterRepro
 module.exports.CreateStringClass = nativeBinding.CreateStringClass
 module.exports.CssRuleList = nativeBinding.CssRuleList
-module.exports.CSSRuleList = nativeBinding.CSSRuleList
 module.exports.CssStyleSheet = nativeBinding.CssStyleSheet
-module.exports.CSSStyleSheet = nativeBinding.CSSStyleSheet
 module.exports.CustomFinalize = nativeBinding.CustomFinalize
 module.exports.CustomStruct = nativeBinding.CustomStruct
 module.exports.DefaultUseNullableClass = nativeBinding.DefaultUseNullableClass
@@ -616,20 +684,22 @@ module.exports.Fib2 = nativeBinding.Fib2
 module.exports.Fib3 = nativeBinding.Fib3
 module.exports.Fib4 = nativeBinding.Fib4
 module.exports.GetterSetterWithClosures = nativeBinding.GetterSetterWithClosures
+module.exports.ImageNode = nativeBinding.ImageNode
 module.exports.JsClassForEither = nativeBinding.JsClassForEither
 module.exports.JSOnlyMethodsClass = nativeBinding.JSOnlyMethodsClass
-module.exports.RustOnlyMethodsClass = nativeBinding.RustOnlyMethodsClass
 module.exports.JsRemote = nativeBinding.JsRemote
 module.exports.JsRepo = nativeBinding.JsRepo
 module.exports.MyJsNamedClass = nativeBinding.MyJsNamedClass
-module.exports.OriginalRustNameForJsNamedStruct = nativeBinding.OriginalRustNameForJsNamedStruct
 module.exports.NinjaTurtle = nativeBinding.NinjaTurtle
 module.exports.NotUseNullableClass = nativeBinding.NotUseNullableClass
 module.exports.NotWritableClass = nativeBinding.NotWritableClass
 module.exports.Optional = nativeBinding.Optional
 module.exports.PackageJsonReader = nativeBinding.PackageJsonReader
+module.exports.PngImageNode = nativeBinding.PngImageNode
 module.exports.Reader = nativeBinding.Reader
+module.exports.RendererNode = nativeBinding.RendererNode
 module.exports.Selector = nativeBinding.Selector
+module.exports.SelfReferenceField = nativeBinding.SelfReferenceField
 module.exports.Thing = nativeBinding.Thing
 module.exports.ThingList = nativeBinding.ThingList
 module.exports.UseNullableClass = nativeBinding.UseNullableClass
@@ -646,7 +716,6 @@ module.exports.acceptUint8ClampedSliceAndBufferSlice = nativeBinding.acceptUint8
 module.exports.acceptUntypedTypedArray = nativeBinding.acceptUntypedTypedArray
 module.exports.add = nativeBinding.add
 module.exports.ALIAS = nativeBinding.ALIAS
-module.exports.AliasedEnum = nativeBinding.AliasedEnum
 module.exports.appendBuffer = nativeBinding.appendBuffer
 module.exports.apply0 = nativeBinding.apply0
 module.exports.apply1 = nativeBinding.apply1
@@ -659,11 +728,11 @@ module.exports.asyncMultiTwo = nativeBinding.asyncMultiTwo
 module.exports.asyncPlus100 = nativeBinding.asyncPlus100
 module.exports.asyncReduceBuffer = nativeBinding.asyncReduceBuffer
 module.exports.asyncResolveArray = nativeBinding.asyncResolveArray
-module.exports.asyncTaskArraybuffer = nativeBinding.asyncTaskArraybuffer
-module.exports.asyncTaskFinally = nativeBinding.asyncTaskFinally
-module.exports.asyncTaskOptionalReturn = nativeBinding.asyncTaskOptionalReturn
-module.exports.asyncTaskReadFile = nativeBinding.asyncTaskReadFile
-module.exports.asyncTaskVoidReturn = nativeBinding.asyncTaskVoidReturn
+module.exports.blockingArraybuffer = nativeBinding.blockingArraybuffer
+module.exports.blockingFinally = nativeBinding.blockingFinally
+module.exports.blockingOptionalReturn = nativeBinding.blockingOptionalReturn
+module.exports.blockingReadFile = nativeBinding.blockingReadFile
+module.exports.blockingVoidReturn = nativeBinding.blockingVoidReturn
 module.exports.bigintAdd = nativeBinding.bigintAdd
 module.exports.bigintFromI128 = nativeBinding.bigintFromI128
 module.exports.bigintFromI64 = nativeBinding.bigintFromI64

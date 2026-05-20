@@ -28,7 +28,7 @@ impl AsyncGenerator for CounterRepro {
   fn next(
     &mut self,
     _value: Option<Self::Next>,
-  ) -> impl Future<Output = Result<Option<Self::Yield>>> + Send + 'static {
+  ) -> impl Future<Output = Result<Option<Self::Yield>>> + Send + 'static + use<> {
     let current = self.current;
     let max = self.max;
     self.current += 1;
