@@ -6,7 +6,7 @@ import { bench } from 'vitest'
 const require = createRequire(import.meta.url)
 
 const {
-  benchAsyncTask,
+  benchBlocking,
   benchThreadsafeFunction,
   benchTokioFuture,
 } = require('./index.node')
@@ -15,8 +15,8 @@ const buffer = Buffer.from('hello 🚀 rust!')
 
 const ALL_THREADS = Array.from({ length: cpus().length })
 
-bench('spawn task', async () => {
-  await Promise.all(ALL_THREADS.map(() => benchAsyncTask(buffer)))
+bench('blocking promise', async () => {
+  await Promise.all(ALL_THREADS.map(() => benchBlocking(buffer)))
 })
 
 bench('ThreadSafeFunction', async () => {
