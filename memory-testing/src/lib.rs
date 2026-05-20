@@ -42,7 +42,9 @@ pub struct Room {
 }
 
 #[napi]
-pub fn test_async(env: &Env) -> napi::Result<napi::bindgen_prelude::PromiseRaw<'_, ()>> {
+pub fn test_async<'env>(
+  env: &'env Env<'env>,
+) -> napi::Result<napi::bindgen_prelude::Promise<'env, String>> {
   let data = serde_json::json!({
       "findFirstBooking": {
           "id": "ckovh15xa104945sj64rdk8oas",
@@ -66,10 +68,7 @@ pub fn test_async(env: &Env) -> napi::Result<napi::bindgen_prelude::PromiseRaw<'
   });
   env.spawn_future_with_callback(
     async move { Ok(serde_json::to_string(&data).unwrap()) },
-    |env, res| {
-      env.adjust_external_memory(res.len() as i64)?;
-      Ok(())
-    },
+    |_, res| Ok(res),
   )
 }
 
@@ -79,47 +78,37 @@ pub fn from_js(env: Env, input_object: Object) -> napi::Result<String> {
   Ok(serde_json::to_string(&a)?)
 }
 
-pub struct ChildHolder {
-  inner: &'static MemoryHolder,
-}
-
-impl ChildHolder {
-  fn count(&self) -> usize {
-    self.inner.0.len()
-  }
-}
-
 #[napi]
 pub struct MemoryHolder(Vec<u8>);
 
 #[napi]
 impl MemoryHolder {
   #[napi(constructor)]
-  pub fn new(env: Env, len: u32) -> Result<Self> {
-    env.adjust_external_memory(len as i64)?;
+  pub fn new(len: u32) -> Result<Self> {
     Ok(Self(vec![42; len as usize]))
   }
 
   #[napi]
   pub fn create_reference(
     &self,
-    env: Env,
     holder_ref: Reference<MemoryHolder>,
-  ) -> Result<ChildReference> {
-    let child_holder =
-      holder_ref.share_with(env, |holder_ref| Ok(ChildHolder { inner: holder_ref }))?;
-    Ok(ChildReference(child_holder))
+  ) -> ClassInitializer<ChildReference> {
+    ClassInitializer::from(ChildReference(holder_ref))
   }
 }
 
 #[napi]
-pub struct ChildReference(SharedReference<MemoryHolder, ChildHolder>);
+pub struct ChildReference(Reference<MemoryHolder>);
 
 #[napi]
 impl ChildReference {
   #[napi]
-  pub fn count(&self) -> u32 {
-    self.0.count() as u32
+  pub fn count(&self, mut env: Env) -> Result<u32> {
+    env.with_scope(|scope| {
+      let holder_ref = self.0.bind(scope)?;
+      let holder = scope.borrow_class(&holder_ref)?;
+      Ok(holder.0.len() as u32)
+    })
   }
 }
 
@@ -128,10 +117,7 @@ pub fn leaking_func(func: Function<String, String>) -> napi::Result<()> {
   let tsfn = func
     .build_threadsafe_function()
     .weak::<true>()
-    .build_callback(|ctx: ThreadsafeCallContext<String>| {
-      ctx.env.adjust_external_memory(ctx.value.len() as i64)?;
-      Ok(ctx.value)
-    })?;
+    .build_callback(|ctx: ThreadsafeCallContext<String>| Ok(ctx.value))?;
 
   spawn(move || {
     tsfn.call("foo".into(), ThreadsafeFunctionCallMode::Blocking);

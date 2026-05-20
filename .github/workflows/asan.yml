@@ -75,7 +75,6 @@ jobs:
         if: matrix.os == 'ubuntu-24.04'
         run: |
           yarn workspace @examples/napi build -- -Z build-std
-          yarn workspace @examples/compat-mode build -- -Z build-std
           LD_PRELOAD=/usr/lib/gcc/x86_64-linux-gnu/13/libasan.so yarn test
         env:
           RUST_TARGET: x86_64-unknown-linux-gnu
@@ -96,7 +95,6 @@ jobs:
           # Note: -Z build-std flag cannot be passed through napi CLI on Windows
           # The CARGO_UNSTABLE_BUILD_STD env var provides similar functionality
           yarn workspace @examples/napi build --target x86_64-pc-windows-msvc
-          yarn workspace @examples/compat-mode build --target x86_64-pc-windows-msvc
         env:
           RUSTFLAGS: -Zsanitizer=address
           RUSTDOCFLAGS: -Zsanitizer=address

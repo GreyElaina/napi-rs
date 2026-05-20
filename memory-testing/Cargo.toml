@@ -14,11 +14,8 @@ napi = { path = "../crates/napi", features = [
   "tokio_rt",
   "serde-json",
   "latin1",
-  "compat-mode",
 ] }
-napi-derive = { path = "../crates/macro", default-features = false, features = [
-  "compat-mode",
-] }
+napi-derive = { path = "../crates/macro", default-features = false }
 serde = "1"
 serde_bytes = "0.11"
 serde_derive = "1"

@@ -391,16 +391,6 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@examples/compat-mode@workspace:examples/napi-compat-mode":
-  version: 0.0.0-use.local
-  resolution: "@examples/compat-mode@workspace:examples/napi-compat-mode"
-  dependencies:
-    "@napi-rs/cli": "workspace:*"
-    ava: "npm:^8.0.0"
-    sinon: "npm:^22.0.0"
-  languageName: unknown
-  linkType: soft
-
 "@examples/napi@workspace:examples/napi":
   version: 0.0.0-use.local
   resolution: "@examples/napi@workspace:examples/napi"

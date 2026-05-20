@@ -120,7 +120,6 @@ jobs:
             target: i686-pc-windows-msvc
             build: |
               yarn workspace @examples/napi build --target i686-pc-windows-msvc --release
-              yarn workspace @examples/compat-mode build --target i686-pc-windows-msvc --release
             test: |
               export NODE_OPTIONS="--max-old-space-size=3072"
               yarn workspace @examples/napi test -s
@@ -380,10 +379,6 @@ jobs:
         with:
           name: ${{ matrix.settings.target }}-example
           path: examples/napi/*.node
-      - uses: actions/upload-artifact@v7
-        with:
-          name: ${{ matrix.settings.target }}-example-compat
-          path: examples/napi-compat-mode/index.node
 
   build_musl:
     name: build - ${{ matrix.settings.target }}
@@ -440,11 +435,6 @@ jobs:
         with:
           name: ${{ matrix.settings.target }}-example
           path: examples/napi/*.node
-          if-no-files-found: error
-      - uses: actions/upload-artifact@v7
-        with:
-          name: ${{ matrix.settings.target }}-example-compat
-          path: examples/napi-compat-mode/index.node
           if-no-files-found: error
 
   test_in_docker:
@@ -504,10 +494,6 @@ jobs:
         with:
           name: ${{ matrix.settings.target }}-example
           path: examples/napi/
-      - uses: actions/download-artifact@v8
-        with:
-          name: ${{ matrix.settings.target }}-example-compat
-          path: examples/napi-compat-mode/index.node
       - name: Install dependencies
         if: ${{ matrix.settings.arch != 's390x' }}
         run: |
@@ -638,17 +624,13 @@ jobs:
             package: 'napi'
           - features: 'napi3'
             package: 'napi'
-          - features: 'napi3,compat-mode'
-            package: 'napi'
           - features: 'napi9'
             package: 'napi'
           - features: 'napi3,serde-json'
             package: 'napi'
           - features: 'napi9,serde-json'
             package: 'napi'
-          - features: 'async,compat-mode'
-            package: 'napi'
-          - features: 'compat-mode,strict,type-def,noop,full,default'
+          - features: 'strict,type-def,noop,full,default'
             package: 'napi-derive'
           - features: 'noop'
             package: 'napi-examples'

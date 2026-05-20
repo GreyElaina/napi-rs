@@ -10,7 +10,6 @@
     "triples",
     "memory-testing",
     "examples/napi",
-    "examples/napi-compat-mode",
     "examples/binary"
   ],
   "repository": {

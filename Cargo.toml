@@ -8,7 +8,6 @@ members = [
   "./crates/sys",
   "./examples/napi",
   "./examples/napi-shared",
-  "./examples/napi-compat-mode",
   "./examples/binary",
   "./bench",
   "./memory-testing",

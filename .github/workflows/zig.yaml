@@ -81,12 +81,6 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: compat-${{ matrix.target }}
-          path: ./examples/napi-compat-mode/index.node
-          if-no-files-found: error
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v7
-        with:
           name: napi-${{ matrix.target }}
           path: ./examples/napi/*.node
           if-no-files-found: error
@@ -130,19 +124,12 @@ jobs:
         with:
           name: napi-${{ matrix.settings.target }}
           path: ./examples/napi/
-      - name: Download artifacts
-        uses: actions/download-artifact@v8
-        with:
-          name: compat-${{ matrix.settings.target }}
-          path: ./examples/napi-compat-mode/
       - name: List files
         run: |
           ls ./examples/napi
-          ls ./examples/napi-compat-mode
       - name: Test
         run: |
           yarn workspace @examples/napi test -s --verbose
-          yarn workspace @examples/compat-mode test -s --verbose
         env:
           SKIP_UNWIND_TEST: 1
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
