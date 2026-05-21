@@ -276,6 +276,23 @@ pub mod __private {
     }
   }
 
+  #[doc(hidden)]
+  pub unsafe fn __napi_binding_entry_variadic(
+    raw_env: sys::napi_env,
+    callback_info: sys::napi_callback_info,
+    hint: usize,
+    invoke: impl for<'env, 'scope> FnOnce(CallbackFrame<'env, 'scope>) -> Result<sys::napi_value>,
+  ) -> sys::napi_value {
+    unsafe {
+      crate::bindgen_runtime::callback_info::__napi_binding_entry_variadic(
+        raw_env,
+        callback_info,
+        hint,
+        invoke,
+      )
+    }
+  }
+
   pub unsafe fn log_js_value<V: AsRef<[sys::napi_value]>>(
     // `info`, `log`, `warning` or `error`
     method: &str,

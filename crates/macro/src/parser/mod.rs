@@ -82,7 +82,7 @@ fn parse_arg_attributes(
 
     match &attr.meta {
       syn::Meta::Path(_) | syn::Meta::NameValue(_) => {
-        bail_span!(attr, "Expects #[napi(env)], #[napi(this)], #[napi(scope)], or #[napi(ts_arg_type = \"...\")]")
+        bail_span!(attr, "Expects #[napi(env)], #[napi(this)], #[napi(scope)], #[napi(rest)], or #[napi(ts_arg_type = \"...\")]")
       }
       syn::Meta::List(list) => {
         list
@@ -137,10 +137,15 @@ fn parse_arg_attributes(
                   return Err(syn::Error::new(meta.path().span(), "#[napi(scope)] takes no value"));
                 }
                 inject_attr = Some(InjectKind::Scope);
+              } else if meta.path().is_ident("rest") {
+                if !matches!(meta, Meta::Path(_)) {
+                  return Err(syn::Error::new(meta.path().span(), "#[napi(rest)] takes no value"));
+                }
+                inject_attr = Some(InjectKind::Rest);
               } else {
                 return Err(syn::Error::new(
                   meta.path().span(),
-                  "Unknown parameter attribute, expected one of: env, this, scope, ts_arg_type",
+                  "Unknown parameter attribute, expected one of: env, this, scope, rest, ts_arg_type",
                 ));
               }
             }
@@ -633,6 +638,26 @@ fn napi_fn_from_decl(
     if let NapiFnArgKind::PatType(pat) = &arg.kind {
       if let Some((ident, message)) = forbidden_js_visible_type(&pat.ty) {
         errors.push(Diagnostic::spanned_error(&ident, message));
+      }
+    }
+  }
+
+  {
+    let mut found_rest = false;
+    for arg in &args {
+      if arg.inject == Some(InjectKind::Rest) {
+        if found_rest {
+          errors.push(err_span!(
+            sig.ident,
+            "Only one #[napi(rest)] parameter is allowed"
+          ));
+        }
+        found_rest = true;
+      } else if found_rest && arg.inject.is_none() {
+        errors.push(err_span!(
+          sig.ident,
+          "#[napi(rest)] must be the last positional parameter"
+        ));
       }
     }
   }

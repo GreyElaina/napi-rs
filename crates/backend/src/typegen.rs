@@ -841,6 +841,7 @@ pub fn ty_to_ts_type(
               arg: format!("arg{i}"),
               ts_type,
               is_optional,
+              is_rest: false,
             }
           })
           .collect::<r#fn::FnArgList>();

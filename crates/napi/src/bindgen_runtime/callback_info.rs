@@ -228,7 +228,6 @@ impl<'env, const N: usize> CallbackDecoder<'env, N> {
     })
   }
 
-  #[cfg(feature = "napi5")]
   pub(crate) fn dynamic(
     env: Env<'env>,
     callback_info: sys::napi_callback_info,
@@ -393,6 +392,16 @@ impl<'env, 'scope> CallbackFrame<'env, 'scope> {
         format!("Expect value to be {expected}, but received {received}"),
       ))
     }
+  }
+
+  pub fn rest_args(&self, from: usize) -> JsArgSlice<'scope> {
+    let args = unsafe { &self.values().as_ref().args };
+    let slice = if from < args.len() {
+      &args[from..]
+    } else {
+      &[]
+    };
+    JsArgSlice::new(slice)
   }
 
   pub fn arg<T: FromJs<'env, 'scope>>(&mut self, index: usize) -> Result<T> {
@@ -683,6 +692,26 @@ pub unsafe fn __napi_binding_entry<const N: usize>(
     EnvRecord::enter_scope(raw_env, |scope| {
       let env = *scope.env();
       let mut decoder = CallbackDecoder::<N>::new(env, callback_info, None)?;
+      decoder.with_frame_in_scope(scope, invoke)
+    })
+  }
+  .unwrap_or_else(|error| {
+    unsafe { JsError::from(error).throw_into(raw_env) };
+    ptr::null_mut::<sys::napi_value__>()
+  })
+}
+
+#[doc(hidden)]
+pub unsafe fn __napi_binding_entry_variadic(
+  raw_env: sys::napi_env,
+  callback_info: sys::napi_callback_info,
+  hint: usize,
+  invoke: impl for<'env, 'scope> FnOnce(CallbackFrame<'env, 'scope>) -> Result<sys::napi_value>,
+) -> sys::napi_value {
+  unsafe {
+    EnvRecord::enter_scope(raw_env, |scope| {
+      let env = *scope.env();
+      let mut decoder = CallbackDecoder::<0>::dynamic(env, callback_info, hint)?;
       decoder.with_frame_in_scope(scope, invoke)
     })
   }

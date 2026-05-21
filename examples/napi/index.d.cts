@@ -1169,6 +1169,10 @@ export interface RequestInit {
   headers?: Record<string, string>
 }
 
+export declare function restArgCount(...args: unknown[]): number
+
+export declare function restSum(base: number, ...numbers: number[]): number
+
 export declare function returnCString(): string
 
 export declare function returnEither(input: number): string | number

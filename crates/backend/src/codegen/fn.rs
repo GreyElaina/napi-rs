@@ -38,6 +38,30 @@ fn into_js_frame(value: TokenStream) -> TokenStream {
     }
   }
 }
+fn is_js_arg_slice_type(ty: &syn::Type) -> bool {
+  if let syn::Type::Path(syn::TypePath { path, .. }) = ty {
+    if let Some(seg) = path.segments.last() {
+      return seg.ident == "JsArgSlice";
+    }
+  }
+  false
+}
+
+fn extract_vec_element_type(ty: &syn::Type) -> Option<&syn::Type> {
+  if let syn::Type::Path(syn::TypePath { path, .. }) = ty {
+    if let Some(seg) = path.segments.last() {
+      if seg.ident == "Vec" {
+        if let syn::PathArguments::AngleBracketed(args) = &seg.arguments {
+          if let Some(syn::GenericArgument::Type(elem)) = args.args.first() {
+            return Some(elem);
+          }
+        }
+      }
+    }
+  }
+  None
+}
+
 fn arg_needs_class_context(arg: &crate::NapiFnArg) -> bool {
   match &arg.kind {
     crate::NapiFnArgKind::PatType(path) => path.ty.needs_class_context(),
@@ -123,6 +147,10 @@ impl TryToTokens for NapiFn {
     let name_str = self.name.to_string();
     let intermediate_ident = get_intermediate_ident(&name_str);
     let args_len = self.args.len();
+    let has_rest = self
+      .args
+      .iter()
+      .any(|arg| arg.inject == Some(crate::InjectKind::Rest));
     let needs_class_context = self.needs_class_context();
 
     if self.is_async && self.parent.is_some() && self.fn_self.is_some() {
@@ -318,6 +346,26 @@ impl TryToTokens for NapiFn {
       function_call
     };
 
+    let entry_call = if has_rest {
+      quote! {
+        napi::__private::__napi_binding_entry_variadic(env, cb, #args_len, |mut frame| {
+          #tracing_debug
+          let mut env_wrapper = frame.env();
+          let env = napi::__private::callback_frame_env(&frame);
+          #function_call
+        })
+      }
+    } else {
+      quote! {
+        napi::__private::__napi_binding_entry::<#args_len>(env, cb, |mut frame| {
+          #tracing_debug
+          let mut env_wrapper = frame.env();
+          let env = napi::__private::callback_frame_env(&frame);
+          #function_call
+        })
+      }
+    };
+
     (quote! {
       #(#attrs)*
       #[doc(hidden)]
@@ -328,12 +376,7 @@ impl TryToTokens for NapiFn {
         cb: napi::bindgen_prelude::sys::napi_callback_info
       ) -> napi::bindgen_prelude::sys::napi_value {
         unsafe {
-          napi::__private::__napi_binding_entry::<#args_len>(env, cb, |mut frame| {
-            #tracing_debug
-            let mut env_wrapper = frame.env();
-            let env = napi::__private::callback_frame_env(&frame);
-            #function_call
-          })
+          #entry_call
         }
       }
 
@@ -543,6 +586,47 @@ impl NapiFn {
                 "#[napi(this)] requires a This<T>, ClassRef<T>, ClassRefMut<T>, or similar receiver type"
               );
             }
+            skipped_arg_count += 1;
+          }
+          crate::InjectKind::Rest => {
+            let NapiFnArgKind::PatType(path) = &arg.kind else {
+              unreachable!("#[napi(rest)] is not valid on callback arguments");
+            };
+            let rest_from = js_arg_index;
+            let is_js_arg_slice = is_js_arg_slice_type(&path.ty);
+            let conversion = if is_js_arg_slice {
+              quote! {
+                let #ident = frame.rest_args(#rest_from);
+              }
+            } else {
+              let elem_ty = extract_vec_element_type(&path.ty);
+              match elem_ty {
+                Some(elem) => {
+                  if let Some(scope_arg) = &scope_arg {
+                    quote! {
+                      let #ident = frame.rest_args(#rest_from).collect::<#elem>(#scope_arg)?;
+                    }
+                  } else {
+                    quote! {
+                      let __rest_slice = frame.rest_args(#rest_from);
+                      let #ident = __rest_slice.collect::<#elem>(frame.scope_mut())?;
+                    }
+                  }
+                }
+                None => {
+                  bail_span!(
+                    path.ty,
+                    "#[napi(rest)] parameter must be Vec<T> or JsArgSlice"
+                  );
+                }
+              }
+            };
+            if scope_arg.is_some() {
+              after_scope_arg_conversions.push(conversion);
+            } else {
+              arg_conversions.push(conversion);
+            }
+            args.push(quote! { #ident });
             skipped_arg_count += 1;
           }
         }

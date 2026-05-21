@@ -1,5 +1,5 @@
 use napi::{
-  bindgen_prelude::{Array, Object},
+  bindgen_prelude::{Array, JsArgSlice, Object},
   Env,
 };
 
@@ -84,4 +84,14 @@ pub fn get_class_from_array(#[napi(env)] mut env: Env, arr: Array<'_>) -> napi::
     let value = scope.borrow_class(&bound)?.value;
     Ok(Some(value))
   })
+}
+
+#[napi]
+fn rest_sum(base: f64, #[napi(rest)] numbers: Vec<f64>) -> f64 {
+  base + numbers.iter().sum::<f64>()
+}
+
+#[napi]
+fn rest_arg_count(#[napi(rest)] args: JsArgSlice) -> u32 {
+  args.len() as u32
 }

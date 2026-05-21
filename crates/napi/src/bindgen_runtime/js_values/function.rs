@@ -100,7 +100,6 @@ pub struct JsArgSlice<'scope> {
 }
 
 impl<'scope> JsArgSlice<'scope> {
-  #[cfg(feature = "napi5")]
   pub(crate) fn new(values: &'scope [sys::napi_value]) -> Self {
     Self { values }
   }

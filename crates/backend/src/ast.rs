@@ -50,6 +50,7 @@ pub enum InjectKind {
   Env,
   This,
   Scope,
+  Rest,
 }
 
 #[derive(Debug, Clone)]

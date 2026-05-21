@@ -9,10 +9,35 @@ use crate::{
   type_semantics::NapiTypeExt, typegen::JSDoc, util::to_case, CallbackArg, FnKind, NapiFn,
 };
 
+fn is_js_arg_slice_type(ty: &Type) -> bool {
+  if let Type::Path(syn::TypePath { path, .. }) = ty {
+    if let Some(seg) = path.segments.last() {
+      return seg.ident == "JsArgSlice";
+    }
+  }
+  false
+}
+
+fn extract_vec_element_type(ty: &Type) -> Option<&Type> {
+  if let Type::Path(syn::TypePath { path, .. }) = ty {
+    if let Some(seg) = path.segments.last() {
+      if seg.ident == "Vec" {
+        if let syn::PathArguments::AngleBracketed(args) = &seg.arguments {
+          if let Some(syn::GenericArgument::Type(elem)) = args.args.first() {
+            return Some(elem);
+          }
+        }
+      }
+    }
+  }
+  None
+}
+
 pub(crate) struct FnArg {
   pub(crate) arg: String,
   pub(crate) ts_type: String,
   pub(crate) is_optional: bool,
+  pub(crate) is_rest: bool,
 }
 
 pub(crate) struct FnArgList {
@@ -110,7 +135,9 @@ impl Display for FnArgList {
         && self
           .last_required
           .is_none_or(|last_required| i > last_required);
-      if is_optional {
+      if arg.is_rest {
+        write!(f, "...{}: {}[]", arg.arg, arg.ts_type)?;
+      } else if is_optional {
         write!(f, "{}?: {}", arg.arg, arg.ts_type)?;
       } else {
         write!(f, "{}: {}", arg.arg, arg.ts_type)?;
@@ -200,6 +227,7 @@ fn gen_callback_type(callback: &CallbackArg) -> String {
           arg: format!("arg{i}"),
           ts_type,
           is_optional,
+          is_rest: false,
         }
       })
       .collect::<FnArgList>(),
@@ -269,6 +297,30 @@ impl NapiFn {
           if let Some(inject) = arg.inject {
             match inject {
               crate::InjectKind::Env | crate::InjectKind::Scope => return None,
+              crate::InjectKind::Rest => {
+                let crate::NapiFnArgKind::PatType(path) = &arg.kind else {
+                  return None;
+                };
+                let mut path = path.clone();
+                if let Pat::Ident(i) = path.pat.as_mut() {
+                  i.mutability = None;
+                }
+                let arg_name = gen_ts_func_arg(&path.pat);
+                let ts_type = if is_js_arg_slice_type(&path.ty) {
+                  arg.use_overridden_type_or(|| "unknown".to_owned())
+                } else if let Some(elem) = extract_vec_element_type(&path.ty) {
+                  let (elem_ts, _) = ty_to_ts_type(elem, false, false, false);
+                  arg.use_overridden_type_or(|| elem_ts)
+                } else {
+                  arg.use_overridden_type_or(|| "unknown".to_owned())
+                };
+                return Some(FnArg {
+                  arg: arg_name,
+                  ts_type,
+                  is_optional: false,
+                  is_rest: true,
+                });
+              }
               crate::InjectKind::This => {
                 let crate::NapiFnArgKind::PatType(path) = &arg.kind else {
                   return None;
@@ -283,6 +335,7 @@ impl NapiFn {
                     arg: "this".to_owned(),
                     ts_type,
                     is_optional: false,
+                    is_rest: false,
                   });
                 }
                 if let Some(this_ty) = path.ty.this_inner() {
@@ -291,6 +344,7 @@ impl NapiFn {
                     arg: "this".to_owned(),
                     ts_type,
                     is_optional: false,
+                    is_rest: false,
                   });
                 }
                 if path.ty.is_bare_this() {
@@ -298,6 +352,7 @@ impl NapiFn {
                     arg: "this".to_owned(),
                     ts_type: "this".to_owned(),
                     is_optional: false,
+                    is_rest: false,
                   });
                 }
                 return None;
@@ -320,6 +375,7 @@ impl NapiFn {
                 arg,
                 ts_type,
                 is_optional,
+                is_rest: false,
               })
             }
             crate::NapiFnArgKind::Callback(cb) => {
@@ -330,6 +386,7 @@ impl NapiFn {
                 arg,
                 ts_type,
                 is_optional: false,
+                is_rest: false,
               })
             }
           }
