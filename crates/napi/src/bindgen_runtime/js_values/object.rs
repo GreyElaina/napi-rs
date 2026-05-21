@@ -4,8 +4,12 @@ use std::convert::TryFrom;
 use std::ffi::{c_void, CStr, CString};
 use std::marker::PhantomData;
 use std::ptr;
-use std::rc::{Rc, Weak};
+use std::rc::Rc;
 
+use super::value_ref::{
+  create_reference, delete_reference, ensure_record_match, ensure_same_record, reference_value,
+  RefState,
+};
 use crate::{bindgen_prelude::*, check_status, raw_finalize, sys, Callback, TaggedObject, Value};
 #[cfg(feature = "napi5")]
 use crate::{Env, PropertyClosures};
@@ -607,66 +611,35 @@ impl Object<'_> {
   }
 }
 
-impl<'scope, const LEAK_CHECK: bool> JsRefTarget<'scope, ObjectRef<LEAK_CHECK>> for &Object<'_> {
-  fn create_ref(self, scope: &mut Scope<'_, 'scope>) -> Result<ObjectRef<LEAK_CHECK>> {
+pub type ObjectRef = Ref<Obj>;
+
+impl<'scope> JsRefTarget<'scope, Ref<Obj>> for &Object<'_> {
+  fn create_ref(self, scope: &mut Scope<'_, 'scope>) -> Result<Ref<Obj>> {
     scope.ensure_value_env(self.0.env, "Object")?;
-    let mut ref_ = ptr::null_mut();
-    check_status!(
-      unsafe { sys::napi_create_reference(scope.env().raw(), self.0.value, 1, &mut ref_) },
-      "Failed to create reference"
-    )?;
-    Ok(ObjectRef {
-      inner: ref_,
-      record: Rc::downgrade(scope.record()),
-      not_send: PhantomData,
-    })
+    let raw = create_reference(scope.env().raw(), self.0.value, 1)?;
+    Ok(Ref::new(
+      RefState::new(raw, Rc::downgrade(scope.record())),
+      (),
+    ))
   }
 }
 
-/// A reference to a JavaScript object.
-///
-/// You must call the `unref` method to release the reference, or the object under the hood will be leaked forever.
-///
-/// Set the `LEAK_CHECK` to `false` to disable the leak check during the `Drop`
-pub struct ObjectRef<const LEAK_CHECK: bool = true> {
-  pub(crate) inner: sys::napi_ref,
-  record: Weak<EnvRecord>,
-  not_send: PhantomData<Rc<()>>,
-}
-
-impl<const LEAK_CHECK: bool> Drop for ObjectRef<LEAK_CHECK> {
-  fn drop(&mut self) {
-    if LEAK_CHECK && !self.inner.is_null() {
-      eprintln!("ObjectRef is not unref, it considered as a memory leak");
-    }
-  }
-}
-
-impl<const LEAK_CHECK: bool> ObjectRef<LEAK_CHECK> {
-  /// Get the object from the reference
+impl Ref<Obj> {
   pub fn get_value<'env>(&self, env: &'env Env) -> Result<Object<'env>> {
-    ensure_object_ref_owner(&self.record, env)?;
-    let mut result = ptr::null_mut();
-    check_status!(
-      unsafe { sys::napi_get_reference_value(env.0, self.inner, &mut result) },
-      "Failed to get reference value"
-    )?;
+    let record = self.state.owner_record()?;
+    ensure_record_match(&record, &env.record())?;
+    let result = reference_value(env.0, self.state.raw_ref()?)?;
     Ok(unsafe { Object::from_raw(env.0, result) })
   }
 
-  /// Unref the reference
-  pub fn unref(mut self, env: &Env) -> Result<()> {
-    ensure_object_ref_owner(&self.record, env)?;
-    check_status!(
-      unsafe { sys::napi_delete_reference(env.0, self.inner) },
-      "delete Ref failed"
-    )?;
-    self.inner = ptr::null_mut();
-    Ok(())
+  pub fn unref(self, env: &Env) -> Result<()> {
+    let record = self.state.owner_record()?;
+    ensure_record_match(&record, &env.record())?;
+    delete_reference(env.0, self.state.take_raw()?)
   }
 }
 
-impl<'env, 'scope, const LEAK_CHECK: bool> FromJs<'env, 'scope> for ObjectRef<LEAK_CHECK> {
+impl<'env, 'scope> FromJs<'env, 'scope> for Ref<Obj> {
   fn from_js(
     scope: &mut Scope<'env, 'scope>,
     value: Local<'scope, Unknown<'scope>>,
@@ -676,61 +649,27 @@ impl<'env, 'scope, const LEAK_CHECK: bool> FromJs<'env, 'scope> for ObjectRef<LE
   }
 }
 
-impl<'scope, const LEAK_CHECK: bool> IntoJs<'scope> for &ObjectRef<LEAK_CHECK> {
+impl<'scope> IntoJs<'scope> for &Ref<Obj> {
   type Output = Object<'scope>;
 
   fn into_js(self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
-    let env = scope.env().raw();
-    ensure_object_ref_owner_record(&self.record, scope.record())?;
-    let mut result = ptr::null_mut();
-    check_status!(
-      unsafe { sys::napi_get_reference_value(env, self.inner, &mut result) },
-      "Failed to get reference value"
-    )?;
+    let record = self.state.owner_record()?;
+    ensure_same_record(&record, scope)?;
+    let result = reference_value(scope.env().raw(), self.state.raw_ref()?)?;
     Ok(unsafe { Local::from_raw(result) })
   }
 }
 
-impl<'scope, const LEAK_CHECK: bool> IntoJs<'scope> for ObjectRef<LEAK_CHECK> {
+impl<'scope> IntoJs<'scope> for Ref<Obj> {
   type Output = Object<'scope>;
 
-  fn into_js(mut self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
-    let env = scope.env().raw();
-    ensure_object_ref_owner_record(&self.record, scope.record())?;
-    let mut result = ptr::null_mut();
-    check_status!(
-      unsafe { sys::napi_get_reference_value(env, self.inner, &mut result) },
-      "Failed to get reference value"
-    )?;
-    check_status!(
-      unsafe { sys::napi_delete_reference(env, self.inner) },
-      "delete Ref failed"
-    )?;
-    self.inner = ptr::null_mut();
-    drop(self);
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
+    let record = self.state.owner_record()?;
+    ensure_same_record(&record, scope)?;
+    let raw_ref = self.state.raw_ref()?;
+    let result = reference_value(scope.env().raw(), raw_ref)?;
+    delete_reference(scope.env().raw(), self.state.take_raw()?)?;
     Ok(unsafe { Local::from_raw(result) })
-  }
-}
-
-fn ensure_object_ref_owner(record: &Weak<EnvRecord>, env: &Env) -> Result<()> {
-  let current = env.record();
-  ensure_object_ref_owner_record(record, &current)
-}
-
-fn ensure_object_ref_owner_record(record: &Weak<EnvRecord>, current: &Rc<EnvRecord>) -> Result<()> {
-  let owner = record.upgrade().ok_or_else(|| {
-    Error::new(
-      Status::InvalidArg,
-      "ObjectRef owner environment is no longer available",
-    )
-  })?;
-  if Rc::ptr_eq(&owner, current) {
-    Ok(())
-  } else {
-    Err(Error::new(
-      Status::InvalidArg,
-      "ObjectRef owner environment does not match the current environment",
-    ))
   }
 }
 

@@ -19,7 +19,7 @@ pub(crate) mod callback_info;
 mod env;
 mod error;
 pub mod iterator;
-mod js_values;
+pub(crate) mod js_values;
 mod module_register;
 
 pub trait ObjectFinalize: Sized {

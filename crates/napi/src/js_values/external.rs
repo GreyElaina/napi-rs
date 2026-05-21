@@ -1,10 +1,11 @@
-use std::{cell::Cell, marker::PhantomData, ptr, rc::Rc};
+use std::{marker::PhantomData, ptr, rc::Rc};
 
 use crate::{
   bindgen_prelude::{
-    sys, External, ExternalRef, FromJs, IntoJs, Local, Result, Scope, Status, TypeName, Unknown,
+    sys, Ext, External, FromJs, IntoJs, Local, Ref, Result, Scope, Status, TypeName, Unknown,
     ValidateNapiValue,
   },
+  bindgen_runtime::js_values::value_ref::{create_reference, RefState},
   check_status, Error, JsValue, Value, ValueType,
 };
 
@@ -109,39 +110,29 @@ impl<'env> JsExternal<'env> {
   }
 }
 
-impl<'scope, T: 'static> crate::bindgen_runtime::JsRefTarget<'scope, ExternalRef<T>>
+impl<'scope, T: 'static> crate::bindgen_runtime::JsRefTarget<'scope, Ref<Ext<T>>>
   for &JsExternal<'_>
 {
-  fn create_ref(self, scope: &mut Scope<'_, 'scope>) -> Result<ExternalRef<T>> {
+  fn create_ref(self, scope: &mut Scope<'_, 'scope>) -> Result<Ref<Ext<T>>> {
     scope.ensure_value_env(self.0.env, "External")?;
-    let mut ref_ = ptr::null_mut();
     self.validate_type::<T>()?;
-    check_status!(
-      unsafe { sys::napi_create_reference(scope.env().raw(), self.0.value, 1, &mut ref_) },
-      "Failed to create reference on external value"
-    )?;
-    Ok(ExternalRef {
-      raw: Cell::new(ref_),
-      record: Rc::downgrade(scope.record()),
-      marker: PhantomData,
-    })
+    let raw = create_reference(scope.env().raw(), self.0.value, 1)?;
+    Ok(Ref::new(
+      RefState::new(raw, Rc::downgrade(scope.record())),
+      (),
+    ))
   }
 }
 
-impl<'scope, T: 'static> crate::bindgen_runtime::JsRefTarget<'scope, ExternalRef<T>>
+impl<'scope, T: 'static> crate::bindgen_runtime::JsRefTarget<'scope, Ref<Ext<T>>>
   for External<T>
 {
-  fn create_ref(self, scope: &mut Scope<'_, 'scope>) -> Result<ExternalRef<T>> {
+  fn create_ref(self, scope: &mut Scope<'_, 'scope>) -> Result<Ref<Ext<T>>> {
     let value = self.into_js(scope)?;
-    let mut ref_ = ptr::null_mut();
-    check_status!(
-      unsafe { sys::napi_create_reference(scope.env().raw(), value.raw(), 1, &mut ref_) },
-      "Failed to create reference on external value"
-    )?;
-    Ok(ExternalRef {
-      raw: Cell::new(ref_),
-      record: Rc::downgrade(scope.record()),
-      marker: PhantomData,
-    })
+    let raw = create_reference(scope.env().raw(), value.raw(), 1)?;
+    Ok(Ref::new(
+      RefState::new(raw, Rc::downgrade(scope.record())),
+      (),
+    ))
   }
 }

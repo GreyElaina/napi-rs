@@ -1,19 +1,18 @@
-use std::{
-  cell::Cell,
-  marker::PhantomData,
-  ptr,
-  rc::{Rc, Weak as RcWeak},
-};
+use std::{marker::PhantomData, ptr, rc::Rc};
 
 use super::{
-  Either, FromJs, IntoJs, JsRefTarget, Local, Scope, TypeName, Unknown, ValidateNapiValue,
+  value_ref::{
+    create_reference, ensure_same_record, reference_value, RefState,
+  },
+  Either, FromJs, Func, IntoJs, JsRefTarget, Local, Ref, Scope, TypeName, Unknown,
+  ValidateNapiValue,
 };
 
 #[cfg(feature = "napi4")]
 use crate::threadsafe_function::{ThreadsafeCallContext, ThreadsafeFunction};
 use crate::{
-  bindgen_runtime::{EnvRecord, JsObjectValue},
-  check_pending_exception, check_status, sys, Env, Error, JsValue, Result, Status, ValueType,
+  bindgen_runtime::JsObjectValue,
+  check_pending_exception, check_status, sys, Env, JsValue, Result, Status, ValueType,
 };
 
 pub trait IntoJsArgs<'scope> {
@@ -367,22 +366,18 @@ impl<Args, Return> Function<'_, Args, Return> {
   }
 }
 
-impl<'scope, Args, Return> JsRefTarget<'scope, FunctionRef<Args, Return>>
+pub type FunctionRef<Args, Return> = Ref<Func<Args, Return>>;
+
+impl<'scope, Args, Return> JsRefTarget<'scope, Ref<Func<Args, Return>>>
   for &Function<'_, Args, Return>
 {
-  fn create_ref(self, scope: &mut Scope<'_, 'scope>) -> Result<FunctionRef<Args, Return>> {
+  fn create_ref(self, scope: &mut Scope<'_, 'scope>) -> Result<Ref<Func<Args, Return>>> {
     scope.ensure_value_env(self.env, "Function")?;
-    let mut reference = ptr::null_mut();
-    check_status!(
-      unsafe { sys::napi_create_reference(scope.env().raw(), self.value, 1, &mut reference) },
-      "Create reference failed"
-    )?;
-    Ok(FunctionRef {
-      inner: Cell::new(reference),
-      record: Rc::downgrade(scope.record()),
-      _args: std::marker::PhantomData,
-      _return: std::marker::PhantomData,
-    })
+    let raw = create_reference(scope.env().raw(), self.value, 1)?;
+    Ok(Ref::new(
+      RefState::new(raw, Rc::downgrade(scope.record())),
+      (),
+    ))
   }
 }
 
@@ -510,7 +505,7 @@ impl<'env, 'scope> Scope<'env, 'scope> {
 
   pub fn borrow_function<Args, Return>(
     &mut self,
-    function: &FunctionRef<Args, Return>,
+    function: &Ref<Func<Args, Return>>,
   ) -> Result<Function<'scope, Args, Return>> {
     function.borrow(self)
   }
@@ -696,81 +691,25 @@ where
   }
 }
 
-/// A reference to a JavaScript function.
-/// It can be used to outlive the scope of the function.
-pub struct FunctionRef<Args, Return> {
-  pub(crate) inner: Cell<sys::napi_ref>,
-  pub(crate) record: RcWeak<EnvRecord>,
-  _args: std::marker::PhantomData<Args>,
-  _return: std::marker::PhantomData<Return>,
-}
-
-impl<Args, Return> FunctionRef<Args, Return> {
+impl<Args, Return> Ref<Func<Args, Return>> {
   pub(crate) fn borrow<'env, 'scope>(
     &self,
     scope: &mut Scope<'env, 'scope>,
   ) -> Result<Function<'scope, Args, Return>> {
-    self.borrow_in_env(scope.env().raw(), scope.record())
-  }
-
-  fn borrow_in_env<'scope>(
-    &self,
-    raw_env: sys::napi_env,
-    current: &Rc<EnvRecord>,
-  ) -> Result<Function<'scope, Args, Return>> {
-    let record = self.owner_record()?;
-    if !Rc::ptr_eq(&record, current) {
-      return Err(owner_mismatch());
-    }
-    let mut value = ptr::null_mut();
-    check_status!(
-      unsafe { sys::napi_get_reference_value(raw_env, self.raw_ref()?, &mut value) },
-      "Get reference value failed"
-    )?;
+    let record = self.state.owner_record()?;
+    ensure_same_record(&record, scope)?;
+    let value = reference_value(scope.env().raw(), self.state.raw_ref()?)?;
     Ok(Function {
-      env: raw_env,
+      env: scope.env().raw(),
       value,
       _args: std::marker::PhantomData,
       _return: std::marker::PhantomData,
       _scope: std::marker::PhantomData,
     })
   }
-
-  fn owner_record(&self) -> Result<Rc<EnvRecord>> {
-    self.record.upgrade().ok_or_else(|| {
-      Error::new(
-        Status::InvalidArg,
-        "Function reference owner environment is no longer available".to_owned(),
-      )
-    })
-  }
-
-  fn raw_ref(&self) -> Result<sys::napi_ref> {
-    let raw = self.inner.get();
-    if raw.is_null() {
-      Err(Error::new(
-        Status::InvalidArg,
-        "Function reference is already closed".to_owned(),
-      ))
-    } else {
-      Ok(raw)
-    }
-  }
 }
 
-impl<Args, Return> Drop for FunctionRef<Args, Return> {
-  fn drop(&mut self) {
-    let raw = self.inner.replace(ptr::null_mut());
-    if raw.is_null() {
-      return;
-    }
-    if let Some(record) = self.record.upgrade() {
-      record.deferred_refs().push(raw);
-    }
-  }
-}
-
-impl<Args, Return> TypeName for FunctionRef<Args, Return> {
+impl<Args, Return> TypeName for Ref<Func<Args, Return>> {
   fn type_name() -> &'static str {
     "Function"
   }
@@ -780,24 +719,18 @@ impl<Args, Return> TypeName for FunctionRef<Args, Return> {
   }
 }
 
-impl<'env, 'scope, Args, Return> FromJs<'env, 'scope> for FunctionRef<Args, Return> {
+impl<'env, 'scope, Args, Return> FromJs<'env, 'scope> for Ref<Func<Args, Return>>
+{
   fn from_js(
-    scope: &mut super::Scope<'env, 'scope>,
-    value: super::Local<'scope, Unknown<'scope>>,
+    scope: &mut Scope<'env, 'scope>,
+    value: Local<'scope, Unknown<'scope>>,
   ) -> Result<Self> {
     let function = Function::from_js(scope, value)?;
     scope.create_ref(&function)
   }
 }
 
-impl<Args, Return> ValidateNapiValue for FunctionRef<Args, Return> {}
-
-fn owner_mismatch() -> Error {
-  Error::new(
-    Status::InvalidArg,
-    "Function reference owner environment does not match the current environment".to_owned(),
-  )
-}
+impl<Args, Return> ValidateNapiValue for Ref<Func<Args, Return>> {}
 
 pub struct FunctionCallContext<'env, 'scope, 'context> {
   pub(crate) args: JsArgSlice<'scope>,

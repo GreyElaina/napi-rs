@@ -1,16 +1,17 @@
 use std::{
   any::TypeId,
-  cell::Cell,
   ffi::c_void,
-  marker::PhantomData,
   ops::{Deref, DerefMut},
   ptr,
-  rc::{Rc, Weak},
+  rc::Rc,
 };
 
+use super::value_ref::{
+  create_reference, ensure_record_match, ensure_same_record, reference_value, RefState,
+};
 use crate::{
   bindgen_runtime::{
-    Env, EnvRecord, FromJs, IntoJs, Local, Result, Scope, TypeName, Unknown, ValidateNapiValue,
+    Env, Ext, FromJs, IntoJs, Local, Ref, Result, Scope, TypeName, Unknown, ValidateNapiValue,
   },
   check_status, sys, Error, JsExternal, Status,
 };
@@ -261,14 +262,29 @@ impl<'scope, T: 'static> IntoJs<'scope> for External<T> {
   }
 }
 
-/// `ExternalRef` is an explicit handle to an `External` object.
-pub struct ExternalRef<T: 'static> {
-  pub(crate) raw: Cell<sys::napi_ref>,
-  pub(crate) record: Weak<EnvRecord>,
-  pub(crate) marker: PhantomData<fn() -> T>,
+pub type ExternalRef<T> = Ref<Ext<T>>;
+
+impl<T: 'static> Ref<Ext<T>> {
+  pub fn new_external(env: &Env, value: T) -> Result<Self> {
+    let external = External::new(value);
+    let external_value = unsafe { external.create_external_value(env.0)? };
+    let napi_val = external_value.0;
+    let raw = create_reference(env.0, napi_val, 1)?;
+    Ok(Ref::new(
+      RefState::new(raw, Rc::downgrade(&env.record())),
+      (),
+    ))
+  }
+
+  pub fn get_value<'env>(&self, env: &'env Env<'env>) -> Result<JsExternal<'env>> {
+    let record = self.state.owner_record()?;
+    ensure_record_match(&record, &env.record())?;
+    let result = reference_value(env.0, self.state.raw_ref()?)?;
+    Ok(unsafe { JsExternal::from_raw(env.0, result) })
+  }
 }
 
-impl<T: 'static> TypeName for ExternalRef<T> {
+impl<T: 'static> TypeName for Ref<Ext<T>> {
   fn type_name() -> &'static str {
     "External"
   }
@@ -278,74 +294,9 @@ impl<T: 'static> TypeName for ExternalRef<T> {
   }
 }
 
-impl<T: 'static> ValidateNapiValue for ExternalRef<T> {}
+impl<T: 'static> ValidateNapiValue for Ref<Ext<T>> {}
 
-impl<T: 'static> Drop for ExternalRef<T> {
-  fn drop(&mut self) {
-    let raw = self.raw.replace(ptr::null_mut());
-    if raw.is_null() {
-      return;
-    }
-    if let Some(record) = self.record.upgrade() {
-      record.deferred_refs().push(raw);
-    }
-  }
-}
-
-impl<T: 'static> ExternalRef<T> {
-  pub fn new(env: &Env, value: T) -> Result<Self> {
-    let external = External::new(value);
-    let mut ref_ptr = ptr::null_mut();
-    let external_value = unsafe { external.create_external_value(env.0)? };
-    let napi_val = external_value.0;
-    check_status!(
-      unsafe { sys::napi_create_reference(env.0, napi_val, 1, &mut ref_ptr) },
-      "Failed to create reference on external value"
-    )?;
-    Ok(ExternalRef {
-      raw: Cell::new(ref_ptr),
-      record: Rc::downgrade(&env.record()),
-      marker: PhantomData,
-    })
-  }
-
-  /// Get the raw JsExternal value from the reference
-  pub fn get_value<'env>(&self, env: &'env Env<'env>) -> Result<JsExternal<'env>> {
-    let record = self.owner_record()?;
-    if !Rc::ptr_eq(&record, &env.record()) {
-      return Err(owner_mismatch());
-    }
-    let mut napi_val = ptr::null_mut();
-    check_status!(
-      unsafe { sys::napi_get_reference_value(env.0, self.raw_ref()?, &mut napi_val) },
-      "Failed to get reference value on external value"
-    )?;
-    Ok(unsafe { JsExternal::from_raw(env.0, napi_val) })
-  }
-
-  fn owner_record(&self) -> Result<Rc<EnvRecord>> {
-    self.record.upgrade().ok_or_else(|| {
-      Error::new(
-        Status::InvalidArg,
-        "External reference owner environment is no longer available".to_owned(),
-      )
-    })
-  }
-
-  fn raw_ref(&self) -> Result<sys::napi_ref> {
-    let raw = self.raw.get();
-    if raw.is_null() {
-      Err(Error::new(
-        Status::InvalidArg,
-        "External reference is already closed".to_owned(),
-      ))
-    } else {
-      Ok(raw)
-    }
-  }
-}
-
-impl<'env, 'scope, T: 'static> FromJs<'env, 'scope> for ExternalRef<T> {
+impl<'env, 'scope, T: 'static> FromJs<'env, 'scope> for Ref<Ext<T>> {
   fn from_js(
     scope: &mut Scope<'env, 'scope>,
     value: Local<'scope, Unknown<'scope>>,
@@ -355,45 +306,24 @@ impl<'env, 'scope, T: 'static> FromJs<'env, 'scope> for ExternalRef<T> {
   }
 }
 
-impl<'scope, T: 'static> IntoJs<'scope> for ExternalRef<T> {
+impl<'scope, T: 'static> IntoJs<'scope> for Ref<Ext<T>> {
   type Output = JsExternal<'scope>;
 
   fn into_js(self, scope: &mut Scope<'_, 'scope>) -> crate::Result<Local<'scope, Self::Output>> {
-    let env = scope.env().raw();
-    let record = self.owner_record()?;
-    if !Rc::ptr_eq(&record, scope.record()) {
-      return Err(owner_mismatch());
-    }
-    let mut value = ptr::null_mut();
-    check_status!(
-      unsafe { sys::napi_get_reference_value(env, self.raw_ref()?, &mut value) },
-      "Failed to get reference value on external value"
-    )?;
-    Ok(unsafe { Local::from_raw(value) })
+    let record = self.state.owner_record()?;
+    ensure_same_record(&record, scope)?;
+    let result = reference_value(scope.env().raw(), self.state.raw_ref()?)?;
+    Ok(unsafe { Local::from_raw(result) })
   }
 }
 
-impl<'scope, T: 'static> IntoJs<'scope> for &ExternalRef<T> {
+impl<'scope, T: 'static> IntoJs<'scope> for &Ref<Ext<T>> {
   type Output = JsExternal<'scope>;
 
   fn into_js(self, scope: &mut Scope<'_, 'scope>) -> crate::Result<Local<'scope, Self::Output>> {
-    let env = scope.env().raw();
-    let record = self.owner_record()?;
-    if !Rc::ptr_eq(&record, scope.record()) {
-      return Err(owner_mismatch());
-    }
-    let mut value = ptr::null_mut();
-    check_status!(
-      unsafe { sys::napi_get_reference_value(env, self.raw_ref()?, &mut value) },
-      "Failed to get reference value on external value"
-    )?;
-    Ok(unsafe { Local::from_raw(value) })
+    let record = self.state.owner_record()?;
+    ensure_same_record(&record, scope)?;
+    let result = reference_value(scope.env().raw(), self.state.raw_ref()?)?;
+    Ok(unsafe { Local::from_raw(result) })
   }
-}
-
-fn owner_mismatch() -> Error {
-  Error::new(
-    Status::InvalidArg,
-    "External reference owner environment does not match the current environment".to_owned(),
-  )
 }

@@ -36,7 +36,7 @@ mod string;
 mod symbol;
 mod task;
 mod this;
-mod value_ref;
+pub(crate) mod value_ref;
 
 pub use crate::js_values::Unknown;
 #[cfg(feature = "napi5")]
