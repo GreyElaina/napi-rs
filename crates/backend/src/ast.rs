@@ -36,6 +36,7 @@ pub struct NapiFn {
   pub unsafe_: bool,
   pub register_name: Ident,
   pub no_export: bool,
+  pub post_init_chain: Vec<Ident>,
 }
 
 #[derive(Debug, Clone)]
@@ -80,6 +81,7 @@ pub enum FnKind {
   Factory,
   Getter,
   Setter,
+  PostInit,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

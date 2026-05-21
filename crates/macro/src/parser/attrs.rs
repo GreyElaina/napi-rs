@@ -25,6 +25,8 @@ struct StructParseState {
 struct ParsedStruct {
   js_name: String,
   ctor_defined: bool,
+  post_init_method: Option<String>,
+  parent: Option<String>,
 }
 
 #[derive(Default)]
@@ -89,6 +91,7 @@ macro_rules! attrgen {
       // impl later
       // (inspectable, Inspectable(Span)),
       // (typescript_custom_section, TypescriptCustomSection(Span)),
+      (post_init, PostInit(Span)),
       (skip_typescript, SkipTypescript(Span)),
       // (getter_with_clone, GetterWithClone(Span)),
 
@@ -360,11 +363,17 @@ pub fn record_struct(ident: &Ident, js_name: String, opts: &BindgenAttrs) {
   let mut map = state.parsed.lock().unwrap();
   let struct_name = ident.to_string();
 
+  let parent = opts.extends().and_then(|p| {
+    p.segments.last().map(|seg| seg.ident.to_string())
+  });
+
   map.insert(
     struct_name,
     ParsedStruct {
       js_name,
       ctor_defined: opts.constructor().is_some(),
+      post_init_method: None,
+      parent,
     },
   );
 }
@@ -394,6 +403,30 @@ pub fn check_recorded_struct_for_impl(ident: &Ident, opts: &BindgenAttrs) -> Bin
       &struct_name,
     )
   }
+}
+
+pub fn record_post_init(struct_name: &str, method_name: String) {
+  let state = STRUCTS.get_or_init(StructParseState::default);
+  let mut map = state.parsed.lock().unwrap();
+  if let Some(parsed) = map.get_mut(struct_name) {
+    parsed.post_init_method = Some(method_name);
+  }
+}
+
+pub fn collect_post_init_chain(struct_name: &str) -> Vec<String> {
+  let state = STRUCTS.get_or_init(StructParseState::default);
+  let map = state.parsed.lock().unwrap();
+  let mut chain = Vec::new();
+  let mut current = Some(struct_name.to_string());
+  while let Some(name) = current {
+    let Some(parsed) = map.get(&name) else { break };
+    if parsed.post_init_method.is_some() {
+      chain.push(name.clone());
+    }
+    current = parsed.parent.clone();
+  }
+  chain.reverse();
+  chain
 }
 
 pub fn recorded_struct_js_name(ident: &Ident) -> Option<String> {

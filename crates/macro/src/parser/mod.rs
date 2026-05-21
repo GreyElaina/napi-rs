@@ -25,7 +25,8 @@ use syn::{
 };
 
 use crate::parser::attrs::{
-  check_recorded_struct_for_impl, record_struct, recorded_struct_js_name,
+  check_recorded_struct_for_impl, collect_post_init_chain, record_post_init, record_struct,
+  recorded_struct_js_name,
 };
 
 /// Stores (is_sync_generator, is_async_generator) for each struct
@@ -871,12 +872,16 @@ fn napi_fn_from_decl(
     if !matches!(kind, FnKind::Normal) && parent.is_none() {
       bail_span!(
         sig.ident,
-        "Only fn in impl block can be marked as factory, constructor, getter or setter"
+        "Only fn in impl block can be marked as factory, constructor, getter, setter or post_init"
       );
     }
 
     if matches!(kind, FnKind::Constructor) && asyncness.is_some() {
       bail_span!(sig.ident, "Constructor don't support asynchronous function");
+    }
+
+    if matches!(kind, FnKind::PostInit) && asyncness.is_some() {
+      bail_span!(sig.ident, "post_init don't support asynchronous function");
     }
 
     Ok(NapiFn {
@@ -912,6 +917,7 @@ fn napi_fn_from_decl(
       unsafe_: sig.unsafety.is_some(),
       register_name: get_register_ident(ident.to_string().as_str()),
       no_export: opts.no_export().is_some(),
+      post_init_chain: Vec::new(),
     })
   })
 }
@@ -1158,6 +1164,10 @@ fn fn_kind(opts: &BindgenAttrs) -> FnKind {
 
   if opts.factory().is_some() {
     kind = FnKind::Factory;
+  }
+
+  if opts.post_init().is_some() {
+    kind = FnKind::PostInit;
   }
 
   kind
@@ -1716,7 +1726,24 @@ impl ConvertToAST for syn::ItemImpl {
           Some(struct_js_name.clone()),
         )?;
 
+        if func.kind == FnKind::PostInit {
+          record_post_init(&struct_name.to_string(), func.name.to_string());
+        }
+
         items.push(func);
+      }
+    }
+
+    let chain = collect_post_init_chain(&struct_name.to_string());
+    if !chain.is_empty() {
+      for item in items.iter_mut() {
+        if item.kind == FnKind::Constructor {
+          item.post_init_chain = chain
+            .iter()
+            .map(|name| Ident::new(name, Span::call_site()))
+            .collect();
+          break;
+        }
       }
     }
 

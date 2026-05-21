@@ -1824,6 +1824,7 @@ impl NapiStruct {
 impl TryToTokens for NapiImpl {
   fn try_to_tokens(&self, tokens: &mut TokenStream) -> BindgenResult<()> {
     self.gen_helper_mod()?.to_tokens(tokens);
+    self.gen_post_init_shim()?.to_tokens(tokens);
 
     Ok(())
   }
@@ -1850,9 +1851,13 @@ impl NapiImpl {
     let register_name = &self.register_name;
 
     let mut methods = vec![];
-    let mut props = HashMap::new();
+    let mut props: HashMap<String, TokenStream> = HashMap::new();
 
     for item in self.items.iter() {
+      if item.kind == FnKind::PostInit {
+        continue;
+      }
+
       let js_name = Literal::string(&item.js_name);
       let item_str = item.name.to_string();
       let intermediate_name = get_intermediate_ident(&item_str);
@@ -1869,7 +1874,7 @@ impl NapiImpl {
         attribute |= super::PROPERTY_ATTRIBUTE_CONFIGURABLE;
       }
 
-      let prop = props.entry(&item.js_name).or_insert_with(|| {
+      let prop = props.entry(item.js_name.clone()).or_insert_with(|| {
         quote! {
           napi::bindgen_prelude::Property::new().with_utf8_name(#js_name).unwrap().with_property_attributes(napi::bindgen_prelude::PropertyAttributes::from_bits(#attribute).unwrap())
         }
@@ -1879,8 +1884,9 @@ impl NapiImpl {
         FnKind::Constructor => quote! { .with_ctor(#intermediate_name) },
         FnKind::Getter => quote! { .with_getter(#intermediate_name) },
         FnKind::Setter => quote! { .with_setter(#intermediate_name) },
+        FnKind::PostInit => unreachable!(),
         _ => {
-          if item.fn_self.is_some() || has_receiver_frame_input_arg(item) {
+          if item.fn_self.is_some() || has_receiver_frame_input_arg(&item) {
             quote! { .with_method(#intermediate_name) }
           } else {
             quote! { .with_method(#intermediate_name).with_property_attributes(napi::bindgen_prelude::PropertyAttributes::Static) }
@@ -1925,6 +1931,41 @@ impl NapiImpl {
             vec![#(#props_wasm),*],
             false,
           );
+        }
+      }
+    })
+  }
+
+  fn gen_post_init_shim(&self) -> BindgenResult<TokenStream> {
+    let Some(post_init_fn) = self.items.iter().find(|item| item.kind == FnKind::PostInit) else {
+      return Ok(quote! {});
+    };
+
+    let name = &self.name;
+
+    let super::r#fn::ArgConversions {
+      arg_conversions,
+      args: arg_names,
+      ..
+    } = post_init_fn.gen_arg_conversions()?;
+    let receiver = post_init_fn.gen_fn_receiver()?;
+
+    let call = quote! { #receiver(#(#arg_names),*) };
+    let call = if post_init_fn.is_ret_result {
+      quote! { #call?; }
+    } else {
+      quote! { #call; }
+    };
+
+    Ok(quote! {
+      impl #name {
+        #[doc(hidden)]
+        pub fn __napi_post_init<'env, 'scope>(
+          frame: &mut napi::bindgen_prelude::CallbackFrame<'env, 'scope>,
+        ) -> napi::Result<()> {
+          #(#arg_conversions)*
+          #call
+          Ok(())
         }
       }
     })

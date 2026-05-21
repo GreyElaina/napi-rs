@@ -1,4 +1,5 @@
-use std::{cell::RefCell, rc::Rc};
+use std::cell::{Cell, OnceCell, RefCell};
+use std::rc::Rc;
 
 use napi::bindgen_prelude::*;
 
@@ -172,5 +173,112 @@ impl CSSStyleSheet {
         rules: scope.clone_reference(self.rules.as_ref().unwrap())?,
       }))
     })
+  }
+}
+
+#[napi]
+pub struct SelfReferential {
+  weak_self: OnceCell<WeakReference<SelfReferential>>,
+  name: String,
+}
+
+#[napi]
+impl SelfReferential {
+  #[napi(constructor)]
+  pub fn new(name: String) -> Self {
+    SelfReferential {
+      weak_self: OnceCell::new(),
+      name,
+    }
+  }
+
+  #[napi(post_init)]
+  pub fn post_init(
+    &self,
+    #[napi(this)] this: Reference<SelfReferential>,
+    #[napi(env)] mut env: Env,
+  ) -> Result<()> {
+    let weak = env.with_scope(|scope| scope.downgrade_reference(&this))?;
+    let _ = self.weak_self.set(weak);
+    Ok(())
+  }
+
+  #[napi(getter)]
+  pub fn name(&self) -> &str {
+    &self.name
+  }
+
+  #[napi]
+  pub fn get_weak_name(&self, #[napi(env)] mut env: Env) -> Result<String> {
+    let weak = self.weak_self.get().unwrap();
+    env.with_scope(|scope| {
+      let strong = scope.upgrade_reference(weak)?.ok_or_else(|| {
+        Error::new(Status::GenericFailure, "Self reference expired".to_owned())
+      })?;
+      let bound = scope.bind_reference(&strong)?;
+      let this = scope.borrow_class(&bound)?;
+      Ok(this.name.clone())
+    })
+  }
+}
+
+#[napi(subclass)]
+pub struct PostInitBase {
+  initialized: Cell<bool>,
+}
+
+impl PostInitBase {
+  pub fn new() -> Self {
+    PostInitBase {
+      initialized: Cell::new(false),
+    }
+  }
+}
+
+#[napi]
+impl PostInitBase {
+  #[napi(post_init)]
+  pub fn post_init(&self) {
+    self.initialized.set(true);
+  }
+
+  #[napi]
+  pub fn base_initialized(&self) -> bool {
+    self.initialized.get()
+  }
+}
+
+#[napi(extends = PostInitBase)]
+pub struct PostInitChild {
+  child_initialized: Cell<bool>,
+  label: String,
+}
+
+#[napi]
+impl PostInitChild {
+  #[napi(constructor)]
+  pub fn new(label: String) -> ClassInitializer<Self> {
+    ClassInitializer::from_parent(
+      ClassInitializer::from(PostInitBase::new()),
+      Self {
+        child_initialized: Cell::new(false),
+        label,
+      },
+    )
+  }
+
+  #[napi(post_init)]
+  pub fn post_init(&self) {
+    self.child_initialized.set(true);
+  }
+
+  #[napi(getter)]
+  pub fn label(&self) -> &str {
+    &self.label
+  }
+
+  #[napi]
+  pub fn child_initialized(&self) -> bool {
+    self.child_initialized.get()
   }
 }

@@ -401,7 +401,7 @@ impl NapiFn {
       || self.args.iter().any(arg_needs_class_context)
   }
 
-  fn gen_arg_conversions(&self) -> BindgenResult<ArgConversions> {
+  pub(crate) fn gen_arg_conversions(&self) -> BindgenResult<ArgConversions> {
     let needs_class_context = self.needs_class_context();
     let cb_this = callback_this_expr();
     let mut arg_conversions = vec![];
@@ -995,7 +995,7 @@ impl NapiFn {
     })
   }
 
-  fn gen_fn_receiver(&self) -> BindgenResult<TokenStream> {
+  pub(crate) fn gen_fn_receiver(&self) -> BindgenResult<TokenStream> {
     let name = &self.name;
 
     match self.fn_self {
@@ -1033,16 +1033,19 @@ impl NapiFn {
           } else if self.parent_is_async_generator {
             Ok(quote! { #cb_access.construct_async_generator::<false, _>(#js_name, #ret?) })
           } else {
+            let post_init_call = self.gen_post_init_call()?;
             Ok(quote! {
               match #ret {
                 Ok(value) => {
                   let __class_init =
                     napi::bindgen_prelude::IntoClassInitializer::<#parent>::into_class_initializer(value);
                   let __napi_constructor_receiver = #cb_access.constructor_receiver::<#parent>()?;
-                  <#parent as napi::bindgen_prelude::NapiClass>::CLASS.wrap_receiver(
+                  let __napi_result = <#parent as napi::bindgen_prelude::NapiClass>::CLASS.wrap_receiver(
                     __napi_constructor_receiver,
                     __class_init,
-                  )
+                  )?;
+                  #post_init_call
+                  Ok(__napi_result)
                 }
                 Err(err) => {
                   napi::bindgen_prelude::JsError::from(err).throw_into(#raw_env);
@@ -1056,15 +1059,18 @@ impl NapiFn {
         } else if self.parent_is_async_generator {
           Ok(quote! { #cb_access.construct_async_generator::<false, #parent>(#js_name, #ret) })
         } else {
+          let post_init_call = self.gen_post_init_call()?;
           Ok(quote! {
             {
               let __class_init =
                 napi::bindgen_prelude::IntoClassInitializer::<#parent>::into_class_initializer(#ret);
               let __napi_constructor_receiver = #cb_access.constructor_receiver::<#parent>()?;
-              <#parent as napi::bindgen_prelude::NapiClass>::CLASS.wrap_receiver(
+              let __napi_result = <#parent as napi::bindgen_prelude::NapiClass>::CLASS.wrap_receiver(
                 __napi_constructor_receiver,
                 __class_init,
-              )
+              )?;
+              #post_init_call
+              Ok(__napi_result)
             }
           })
         }
@@ -1255,6 +1261,20 @@ impl NapiFn {
     }
   }
 
+  fn gen_post_init_call(&self) -> BindgenResult<TokenStream> {
+    if self.post_init_chain.is_empty() {
+      return Ok(quote! {});
+    }
+
+    let calls: Vec<_> = self
+      .post_init_chain
+      .iter()
+      .map(|cls| quote! { #cls::__napi_post_init(&mut frame)?; })
+      .collect();
+
+    Ok(quote! { #(#calls)* })
+  }
+
   fn gen_fn_register(&self) -> TokenStream {
     if self.parent.is_some() || cfg!(test) {
       quote! {}
@@ -1395,7 +1415,7 @@ fn make_ref(input: TokenStream) -> TokenStream {
   }
 }
 
-struct ArgConversions {
+pub(crate) struct ArgConversions {
   pub args: Vec<TokenStream>,
   pub arg_conversions: Vec<TokenStream>,
   pub refs: Vec<TokenStream>,

@@ -406,6 +406,22 @@ export declare class PngImageNode extends ImageNode {
   get height(): number
 }
 
+export interface PostInitBase {
+
+  baseInitialized(): boolean
+}
+export declare const PostInitBase: {
+  [Symbol.hasInstance](value: unknown): boolean
+}
+
+export declare class PostInitChild {
+  constructor(label: string)
+
+  get label(): string
+  childInitialized(): boolean
+}
+export declare interface PostInitChild extends PostInitBase {}
+
 export declare class Reader {
 
   constructor()
@@ -440,6 +456,13 @@ export declare class SelfReferenceField {
   current(): SelfReferenceField
   maybeNext(): SelfReferenceField | null
   static newDetached(): SelfReferenceField
+}
+
+export declare class SelfReferential {
+  constructor(name: string)
+
+  get name(): string
+  getWeakName(): string
 }
 
 export interface Thing {

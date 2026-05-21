@@ -304,6 +304,8 @@ import {
   ImageNode,
   PngImageNode,
   SelfReferenceField,
+  SelfReferential,
+  PostInitChild,
 } from '../index.cjs'
 // import other stuff in `#[napi(module_exports)]`
 import nativeAddon from '../index.cjs'
@@ -827,6 +829,19 @@ test('should be able to into_reference', (t) => {
   t.is(sheet.rules.name, 'test.css')
   const anotherStyleSheet = sheet.anotherCssStyleSheet()
   t.is(anotherStyleSheet.rules, sheet.rules)
+})
+
+test('post_init should inject weak self reference', (t) => {
+  const obj = new SelfReferential('hello')
+  t.is(obj.name, 'hello')
+  t.is(obj.getWeakName(), 'hello')
+})
+
+test('post_init chain should call parent and child post_init', (t) => {
+  const child = new PostInitChild('test')
+  t.is(child.label, 'test')
+  t.is(child.baseInitialized(), true)
+  t.is(child.childInitialized(), true)
 })
 
 test('callback', (t) => {

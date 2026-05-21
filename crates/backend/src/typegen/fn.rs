@@ -174,7 +174,11 @@ impl FromIterator<FnArg> for FnArgList {
 
 impl ToTypeDef for NapiFn {
   fn to_type_def(&self) -> Option<TypeDef> {
-    if self.skip_typescript || self.module_exports || self.no_export {
+    if self.skip_typescript
+      || self.module_exports
+      || self.no_export
+      || self.kind == crate::FnKind::PostInit
+    {
       return None;
     }
 
@@ -408,6 +412,7 @@ impl NapiFn {
         crate::FnKind::Constructor => "",
         crate::FnKind::Getter => "get",
         crate::FnKind::Setter => "set",
+        crate::FnKind::PostInit => unreachable!("post_init should not generate TypeScript"),
       }
     } else {
       "function"
