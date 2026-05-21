@@ -74,20 +74,14 @@ fn object_field_getter_from_scope(
   target: TokenStream,
   field_js_name: &str,
   missing_is_none: bool,
-  missing_context: TokenStream,
 ) -> TokenStream {
-  if missing_is_none {
-    let decode_ty = ty.option_inner().unwrap_or(ty);
-    quote! {
-      scope.get_optional_named_property::<#decode_ty, _>(&#target, #field_js_name)
-    }
+  let decode_ty = if missing_is_none {
+    ty.option_inner().unwrap_or(ty).clone()
   } else {
-    quote! {
-      scope.get_optional_named_property::<#ty, _>(&#target, #field_js_name)?.ok_or_else(|| napi::bindgen_prelude::Error::new(
-        napi::bindgen_prelude::Status::InvalidArg,
-        #missing_context,
-      ))
-    }
+    ty.clone()
+  };
+  quote! {
+    scope.get_optional_named_property::<#decode_ty, _>(&#target, #field_js_name)
   }
 }
 
@@ -815,14 +809,21 @@ impl NapiStruct {
               quote! { format!("Missing field `{}`", #field_js_name) },
             )
             .unwrap_or_else(|| {
-              object_field_getter_from_scope(
-                &ty,
-                quote! { obj },
-                field_js_name,
-                true,
-                quote! { format!("Missing field `{}`", #field_js_name) },
-              )
+              object_field_getter_from_scope(&ty, quote! { obj }, field_js_name, true)
             });
+            js_obj_field_getters.push(quote! {
+              let #alias_ident: #ty = #js_getter.map_err(|mut err| {
+                err.reason = format!("{} on {}.{}", err.reason, #name_str, #field_js_name);
+                err
+              })?;
+            });
+          } else if let Some(js_getter) = class_field_from_object_scope(
+            &ty,
+            field_js_name,
+            name,
+            false,
+            quote! { format!("Missing field `{}`", #field_js_name) },
+          ) {
             js_obj_field_getters.push(quote! {
               let #alias_ident: #ty = #js_getter.map_err(|mut err| {
                 err.reason = format!("{} on {}.{}", err.reason, #name_str, #field_js_name);
@@ -830,27 +831,16 @@ impl NapiStruct {
               })?;
             });
           } else {
-            let js_getter = class_field_from_object_scope(
-              &ty,
-              field_js_name,
-              name,
-              false,
-              quote! { format!("Missing field `{}`", #field_js_name) },
-            )
-            .unwrap_or_else(|| {
-              object_field_getter_from_scope(
-                &ty,
-                quote! { obj },
-                field_js_name,
-                false,
-                quote! { format!("Missing field `{}`", #field_js_name) },
-              )
-            });
+            let js_getter =
+              object_field_getter_from_scope(&ty, quote! { obj }, field_js_name, false);
             js_obj_field_getters.push(quote! {
               let #alias_ident: #ty = #js_getter.map_err(|mut err| {
                 err.reason = format!("{} on {}.{}", err.reason, #name_str, #field_js_name);
                 err
-              })?;
+              })?.ok_or_else(|| napi::bindgen_prelude::Error::new(
+                napi::bindgen_prelude::Status::InvalidArg,
+                format!("Missing field `{}`", #field_js_name),
+              ))?;
             });
           }
         }
@@ -911,33 +901,26 @@ impl NapiStruct {
               quote! { format!("Missing field `{}`", #field_js_name) },
             )
             .unwrap_or_else(|| {
-              object_field_getter_from_scope(
-                &ty,
-                quote! { obj },
-                field_js_name,
-                true,
-                quote! { format!("Missing field `{}`", #field_js_name) },
-              )
+              object_field_getter_from_scope(&ty, quote! { obj }, field_js_name, true)
             });
+            js_obj_field_getters.push(quote! { let #arg_name: #ty = #js_getter?; });
+          } else if let Some(js_getter) = class_field_from_object_scope(
+            &ty,
+            field_js_name,
+            name,
+            false,
+            quote! { format!("Missing field `{}`", #field_js_name) },
+          ) {
             js_obj_field_getters.push(quote! { let #arg_name: #ty = #js_getter?; });
           } else {
-            let js_getter = class_field_from_object_scope(
-              &ty,
-              field_js_name,
-              name,
-              false,
-              quote! { format!("Missing field `{}`", #field_js_name) },
-            )
-            .unwrap_or_else(|| {
-              object_field_getter_from_scope(
-                &ty,
-                quote! { obj },
-                field_js_name,
-                false,
-                quote! { format!("Missing field `{}`", #field_js_name) },
-              )
+            let js_getter =
+              object_field_getter_from_scope(&ty, quote! { obj }, field_js_name, false);
+            js_obj_field_getters.push(quote! {
+              let #arg_name: #ty = #js_getter?.ok_or_else(|| napi::bindgen_prelude::Error::new(
+                napi::bindgen_prelude::Status::InvalidArg,
+                format!("Missing field `{}`", #field_js_name),
+              ))?;
             });
-            js_obj_field_getters.push(quote! { let #arg_name: #ty = #js_getter?; });
           }
         }
       }
