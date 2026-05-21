@@ -138,8 +138,8 @@ fn object_get_named_property_should_perform_typecheck(
   scope: &mut Scope,
   obj: Object,
 ) -> Result<()> {
-  let _: u32 = scope.get_named_property(&obj, "foo")?;
-  let _: String = scope.get_named_property(&obj, "bar")?;
+  let _: u32 = scope.get_named_property_checked(&obj, "foo")?;
+  let _: String = scope.get_named_property_checked(&obj, "bar")?;
   Ok(())
 }
 

@@ -126,13 +126,13 @@ pub fn blocking_finally<'env>(env: &mut Env<'env>, inner: ObjectRef) -> Result<P
 pub fn blocking_arraybuffer<'env>(
   env: &mut Env<'env>,
   data: Vec<u8>,
-) -> Result<Promise<'env, Buffer>> {
+) -> Result<Promise<'env, ArrayBuffer<'env>>> {
   env.with_scope(|scope| {
     scope
       .blocking(move || {
         sleep(Duration::from_millis(10));
         Ok(data)
       })
-      .promise(|_, output| Ok(Buffer::from(output)))
+      .promise(|scope, output| ArrayBuffer::from_data(scope.env(), output))
   })
 }

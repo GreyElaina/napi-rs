@@ -23,7 +23,7 @@ pub fn call2(
   arg1: u32,
   arg2: u32,
 ) -> Result<u32> {
-  scope.call(&callback, (arg1, arg2))
+  scope.call(&callback, FnArgs::from((arg1, arg2)))
 }
 
 #[napi]
@@ -73,7 +73,7 @@ pub fn call_function_with_arg(
   arg0: u32,
   arg1: u32,
 ) -> Result<u32> {
-  scope.call(&cb, (arg0, arg1))
+  scope.call(&cb, FnArgs::from((arg0, arg1)))
 }
 
 #[napi(ts_return_type = "Promise<void>")]
@@ -107,7 +107,7 @@ pub fn reference_as_callback(
   arg1: u32,
 ) -> Result<u32> {
   let callback = scope.borrow_function(&callback)?;
-  scope.call(&callback, (arg0, arg1))
+  scope.call(&callback, FnArgs::from((arg0, arg1)))
 }
 
 #[napi]

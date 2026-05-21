@@ -168,3 +168,4 @@ bench.txt
 !.yarn/versions
 .vscode/
 .claude/
+.wasi-sdk/

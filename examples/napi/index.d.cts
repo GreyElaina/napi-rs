@@ -116,7 +116,7 @@ export declare class AsyncFib {
 export declare class AsyncThrowClass {
 
   constructor()
-  asyncThrowError(): Promise<void>
+  asyncThrowError(): Promise<undefined>
 }
 
 export declare class Bird {
@@ -306,12 +306,12 @@ export declare class Fib3 extends Iterator<number, void, number> {
  * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Iterator#iterator_helper_methods
  * @see https://www.typescriptlang.org/docs/handbook/release-notes/typescript-5-6.html#iterator-helper-methods
  */
-export declare class Fib4 extends Iterator<unknown, void, number> {
+export declare class Fib4 extends Iterator<object, void, number> {
   current: number
   nextItem: number
   constructor(current: number, nextItem: number)
   toJSON(): Array<number>
-  next(value?: number): IteratorResult<unknown, void>
+  next(value?: number): IteratorResult<object, void>
 }
 
 export declare class GetterSetterWithClosures {
@@ -475,7 +475,7 @@ export declare function acceptArraybuffer(fixture: ArrayBuffer): bigint
 
 export declare function acceptSlice(fixture: Uint8Array): bigint
 
-export declare function acceptStream(stream: ReadableStream<Uint8Array>): Promise<Buffer>
+export declare function acceptStream(stream: ReadableStream<Uint8Array>): Promise<AcceptedStream>
 
 export declare function acceptThreadsafeFunction(func: ((err: Error | null, arg: number) => any)): void
 
@@ -530,17 +530,7 @@ export declare function asyncPlus100(p: Promise<number>): Promise<number>
 
 export declare function asyncReduceBuffer(buf: Buffer): Promise<number>
 
-export declare function asyncResolveArray(inner: number): Promise<unknown[]>
-
-export declare function blockingArraybuffer(data: Array<number>): Promise<ArrayBuffer>
-
-export declare function blockingFinally(inner: object): Promise<void>
-
-export declare function blockingOptionalReturn(): Promise<number | null>
-
-export declare function blockingReadFile(path: string): Promise<Buffer>
-
-export declare function blockingVoidReturn(): Promise<void>
+export declare function asyncResolveArray(inner: number): Promise<Array<number>>
 
 export interface B {
   bar: number
@@ -557,6 +547,16 @@ export declare function bigintGetU64AsString(bi: bigint): string
 export interface BindingVitePluginMeta {
   'vite:import-glob': ViteImportGlobMeta
 }
+
+export declare function blockingArraybuffer(data: Array<number>): Promise<ArrayBuffer>
+
+export declare function blockingFinally(inner: object): Promise<undefined>
+
+export declare function blockingOptionalReturn(): Promise<number | undefined | null>
+
+export declare function blockingReadFile(path: string): Promise<Buffer>
+
+export declare function blockingVoidReturn(): Promise<undefined>
 
 export declare function btreeSetToJs(): Set<string>
 
@@ -1100,7 +1100,7 @@ export declare function plusOne(this: Width): number
 
 export declare function promiseInEither(input: number | Promise<number>): Promise<boolean>
 
-export declare function promiseRawReturnClassInstance(): Promise<ClassReturnInPromise>
+export declare function promiseReturnClassInstance(): Promise<ClassReturnInPromise>
 
 export interface PropertyNameDigitTest {
   /** Property names starting with digits should be quoted */

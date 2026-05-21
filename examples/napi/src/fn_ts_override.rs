@@ -26,7 +26,7 @@ fn override_individual_arg_on_function_with_cb_arg<'env, 'scope>(
 ) -> Result<Object<'scope>> {
   scope.call(
     &callback,
-    (format!("World({})", not_overridden), None::<String>),
+    FnArgs::from((format!("World({})", not_overridden), None::<String>)),
   )
 }
 
