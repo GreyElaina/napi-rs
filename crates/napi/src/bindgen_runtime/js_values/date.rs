@@ -151,8 +151,9 @@ impl<'env, 'scope> FromJs<'env, 'scope> for NaiveDateTime {
 
     let string = unsafe { Local::from_raw(iso_string_value) };
     let iso_string = String::from_js(scope, string)?;
+    let parse_input = iso_string.strip_suffix('Z').unwrap_or(&iso_string);
 
-    NaiveDateTime::from_str(iso_string.as_str()).map_err(|err| {
+    NaiveDateTime::from_str(parse_input).map_err(|err| {
       Error::new(
         Status::InvalidArg,
         format!("Failed to convert napi value into rust type `NaiveDateTime` {err} {iso_string}"),

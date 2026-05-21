@@ -3,7 +3,7 @@ use std::fmt::Display;
 use std::ops::Deref;
 use std::ptr;
 
-use crate::{bindgen_prelude::*, check_status, sys};
+use crate::{bindgen_prelude::*, check_status, check_status_and_type, sys};
 
 impl TypeName for String {
   fn type_name() -> &'static str {
@@ -62,9 +62,11 @@ impl<'env, 'scope> FromJs<'env, 'scope> for String {
     let raw = value.raw();
     let mut len = 0;
 
-    check_status!(
+    check_status_and_type!(
       unsafe { sys::napi_get_value_string_utf8(env, raw, ptr::null_mut(), 0, &mut len) },
-      "Failed to convert JavaScript value into rust type `String`"
+      env,
+      raw,
+      "Failed to convert JavaScript value `{}` into rust type `String`"
     )?;
 
     len += 1;

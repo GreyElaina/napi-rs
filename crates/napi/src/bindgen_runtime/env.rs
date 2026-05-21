@@ -13,6 +13,8 @@ use crate::{
   JsGlobal, JsValue, Result, Status, ValueType,
 };
 
+use super::TypeName;
+
 use super::{
   create_object_with_properties, Array, ClassKey, FromJs, Function, IntoJs, JsRefTarget, Object,
   Unknown, ValidateNapiValue,
@@ -105,8 +107,7 @@ impl EnvRecord {
         .entry(key)
         .or_insert_with(|| {
           let record = Rc::new(Self::new());
-          Self::install_holder(raw, key)
-            .expect("Install napi-rs EnvRecord holder failed");
+          Self::install_holder(raw, key).expect("Install napi-rs EnvRecord holder failed");
           record
         })
         .clone()
@@ -159,7 +160,6 @@ impl EnvRecord {
       (Err(e), _) | (Ok(_), Err(e)) => Err(e),
     }
   }
-
 
   #[doc(hidden)]
   pub fn delete_refs(env: &mut Env<'_>, refs: Vec<sys::napi_ref>) -> Result<()> {
@@ -472,21 +472,31 @@ impl<'env, 'scope> Scope<'env, 'scope> {
     T: FromJs<'env, 'scope>,
     V: crate::JsValue<'value>,
   {
-    let key = CString::new(name)?;
-    let mut raw_value = ptr::null_mut();
-    check_status!(
-      unsafe {
-        sys::napi_get_named_property(
-          self.env.raw(),
-          object.value().value,
-          key.as_ptr(),
-          &mut raw_value,
-        )
-      },
-      "get_named_property error"
-    )?;
+    let raw_value = get_property_by_str(self.env.raw(), object.value().value, name)?;
     let value = unsafe { Local::from_raw(raw_value) };
     T::from_js(self, value)
+  }
+
+  pub fn get_named_property_checked<'value, T, V>(&mut self, object: &V, name: &str) -> Result<T>
+  where
+    T: FromJs<'env, 'scope> + TypeName,
+    V: crate::JsValue<'value>,
+  {
+    let raw_value = get_property_by_str(self.env.raw(), object.value().value, name)?;
+    let value = unsafe { Local::from_raw(raw_value) };
+    T::from_js(self, value).map_err(|_| {
+      let expected_type = T::value_type();
+      let mut actual_type = 0;
+      unsafe { sys::napi_typeof(self.env.raw(), raw_value, &mut actual_type) };
+      let actual = ValueType::from(actual_type);
+      Error::new(
+        Status::InvalidArg,
+        format!(
+          "Object property '{}' type mismatch. Expect value to be {}, but received {}",
+          name, expected_type, actual,
+        ),
+      )
+    })
   }
 
   pub fn assert_value_type<T>(
@@ -542,19 +552,7 @@ impl<'env, 'scope> Scope<'env, 'scope> {
     T: FromJs<'env, 'scope>,
     V: crate::JsValue<'value>,
   {
-    let key = CString::new(name)?;
-    let mut raw_value = ptr::null_mut();
-    check_status!(
-      unsafe {
-        sys::napi_get_named_property(
-          self.env.raw(),
-          object.value().value,
-          key.as_ptr(),
-          &mut raw_value,
-        )
-      },
-      "get_named_property error"
-    )?;
+    let raw_value = get_property_by_str(self.env.raw(), object.value().value, name)?;
 
     let mut value_type = 0;
     check_status!(unsafe { sys::napi_typeof(self.env.raw(), raw_value, &mut value_type) })?;
@@ -766,7 +764,6 @@ impl<'scope> Local<'scope, Unknown<'scope>> {
   }
 }
 
-
 impl<'env> Env<'env> {
   #[doc(hidden)]
   pub(crate) fn record(&self) -> Rc<EnvRecord> {
@@ -805,4 +802,24 @@ impl<'env> Env<'env> {
       std::marker::PhantomData,
     ))
   }
+}
+
+fn get_property_by_str(
+  env: sys::napi_env,
+  object: sys::napi_value,
+  name: &str,
+) -> Result<sys::napi_value> {
+  let mut js_key = ptr::null_mut();
+  check_status!(
+    unsafe {
+      sys::napi_create_string_utf8(env, name.as_ptr().cast(), name.len() as isize, &mut js_key)
+    },
+    "Failed to create property key string"
+  )?;
+  let mut raw_value = ptr::null_mut();
+  check_status!(
+    unsafe { sys::napi_get_property(env, object, js_key, &mut raw_value) },
+    "get_named_property error"
+  )?;
+  Ok(raw_value)
 }

@@ -281,9 +281,20 @@ fn set_property_raw(
   key: &str,
   value: sys::napi_value,
 ) -> Result<()> {
-  let key = std::ffi::CString::new(key)?;
+  let mut js_key = std::ptr::null_mut();
   check_status!(
-    unsafe { sys::napi_set_named_property(raw_env, obj, key.as_ptr(), value) },
+    unsafe {
+      sys::napi_create_string_utf8(
+        raw_env,
+        key.as_ptr().cast(),
+        key.len() as isize,
+        &mut js_key,
+      )
+    },
+    "Failed to create property key"
+  )?;
+  check_status!(
+    unsafe { sys::napi_set_property(raw_env, obj, js_key, value) },
     "Failed to set property"
   )
 }
