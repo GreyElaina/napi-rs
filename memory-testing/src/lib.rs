@@ -91,9 +91,9 @@ impl MemoryHolder {
   #[napi]
   pub fn create_reference(
     &self,
-    holder_ref: Reference<MemoryHolder>,
+    this: Reference<MemoryHolder>,
   ) -> ClassInitializer<ChildReference> {
-    ClassInitializer::from(ChildReference(holder_ref))
+    ClassInitializer::from(ChildReference(this))
   }
 }
 
@@ -105,7 +105,7 @@ impl ChildReference {
   #[napi]
   pub fn count(&self, mut env: Env) -> Result<u32> {
     env.with_scope(|scope| {
-      let holder_ref = self.0.bind(scope)?;
+      let holder_ref = scope.bind_reference(&self.0)?;
       let holder = scope.borrow_class(&holder_ref)?;
       Ok(holder.0.len() as u32)
     })
