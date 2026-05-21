@@ -4,7 +4,7 @@ use napi::bindgen_prelude::*;
 
 #[napi]
 pub fn without_abort_controller<'env>(
-  env: &mut Env<'env>,
+  #[napi(env)] env: &mut Env<'env>,
   a: u32,
   b: u32,
 ) -> Result<Promise<'env, u32>> {
@@ -20,7 +20,7 @@ pub fn without_abort_controller<'env>(
 
 #[napi]
 pub fn with_abort_controller<'env>(
-  env: &mut Env<'env>,
+  #[napi(env)] env: &mut Env<'env>,
   a: u32,
   b: u32,
   signal: AbortSignal,
@@ -38,7 +38,7 @@ pub fn with_abort_controller<'env>(
 
 #[napi]
 fn with_abort_signal_handle<'env>(
-  env: &mut Env<'env>,
+  #[napi(env)] env: &mut Env<'env>,
   signal: AbortSignal,
 ) -> Result<Promise<'env, i32>> {
   let (sender, receiver) = mpsc::channel::<i32>();
@@ -63,12 +63,12 @@ fn with_abort_signal_handle<'env>(
 }
 
 #[napi]
-fn blocking_void_return<'env>(env: &mut Env<'env>) -> Result<Promise<'env, ()>> {
+fn blocking_void_return<'env>(#[napi(env)] env: &mut Env<'env>) -> Result<Promise<'env, ()>> {
   env.with_scope(|scope| scope.blocking(|| Ok(())).promise(|_, output| Ok(output)))
 }
 
 #[napi]
-pub fn blocking_optional_return<'env>(env: &mut Env<'env>) -> Result<Promise<'env, Option<u32>>> {
+pub fn blocking_optional_return<'env>(#[napi(env)] env: &mut Env<'env>) -> Result<Promise<'env, Option<u32>>> {
   env.with_scope(|scope| {
     scope
       .blocking(|| Ok(()))
@@ -78,7 +78,7 @@ pub fn blocking_optional_return<'env>(env: &mut Env<'env>) -> Result<Promise<'en
 
 #[napi]
 pub fn blocking_read_file<'env>(
-  env: &mut Env<'env>,
+  #[napi(env)] env: &mut Env<'env>,
   path: String,
 ) -> Result<Promise<'env, Buffer>> {
   env.with_scope(|scope| {
@@ -92,7 +92,7 @@ pub fn blocking_read_file<'env>(
 
 #[napi]
 pub fn async_resolve_array<'env>(
-  env: &mut Env<'env>,
+  #[napi(env)] env: &mut Env<'env>,
   inner: u32,
 ) -> Result<Promise<'env, Vec<u32>>> {
   env.with_scope(|scope| {
@@ -103,7 +103,7 @@ pub fn async_resolve_array<'env>(
 }
 
 #[napi]
-pub fn blocking_finally<'env>(env: &mut Env<'env>, inner: ObjectRef) -> Result<Promise<'env, ()>> {
+pub fn blocking_finally<'env>(#[napi(env)] env: &mut Env<'env>, inner: ObjectRef) -> Result<Promise<'env, ()>> {
   let label = "task-finally-cleanup".to_owned();
   env.with_scope(|scope| {
     scope
@@ -124,7 +124,7 @@ pub fn blocking_finally<'env>(env: &mut Env<'env>, inner: ObjectRef) -> Result<P
 
 #[napi]
 pub fn blocking_arraybuffer<'env>(
-  env: &mut Env<'env>,
+  #[napi(env)] env: &mut Env<'env>,
   data: Vec<u8>,
 ) -> Result<Promise<'env, ArrayBuffer<'env>>> {
   env.with_scope(|scope| {

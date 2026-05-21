@@ -59,7 +59,7 @@ fn validate_external(e: &External<u32>) -> u32 {
 }
 
 #[napi(strict, ts_args_type = "cb: () => number")]
-fn validate_function(scope: &mut Scope, cb: Function<(), u32>) -> Result<u32> {
+fn validate_function(#[napi(scope)] scope: &mut Scope, cb: Function<(), u32>) -> Result<u32> {
   Ok(scope.call(&cb, ())? + 3)
 }
 

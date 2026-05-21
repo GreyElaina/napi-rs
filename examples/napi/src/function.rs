@@ -7,18 +7,18 @@ use napi::{
 use crate::class::Animal;
 
 #[napi]
-pub fn call0(scope: &mut Scope, callback: Function<(), u32>) -> Result<u32> {
+pub fn call0(#[napi(scope)] scope: &mut Scope, callback: Function<(), u32>) -> Result<u32> {
   scope.call(&callback, ())
 }
 
 #[napi]
-pub fn call1(scope: &mut Scope, callback: Function<u32, u32>, arg: u32) -> Result<u32> {
+pub fn call1(#[napi(scope)] scope: &mut Scope, callback: Function<u32, u32>, arg: u32) -> Result<u32> {
   scope.call(&callback, arg)
 }
 
 #[napi]
 pub fn call2(
-  scope: &mut Scope,
+  #[napi(scope)] scope: &mut Scope,
   callback: Function<FnArgs<(u32, u32)>, u32>,
   arg1: u32,
   arg2: u32,
@@ -28,7 +28,7 @@ pub fn call2(
 
 #[napi]
 pub fn call_with_tuple_arg(
-  scope: &mut Scope,
+  #[napi(scope)] scope: &mut Scope,
   callback: Function<(u32, u32), u32>,
   arg1: u32,
   arg2: u32,
@@ -38,7 +38,7 @@ pub fn call_with_tuple_arg(
 
 #[napi]
 pub fn call_with_nested_function_arg<'env, 'scope>(
-  scope: &mut Scope<'env, 'scope>,
+  #[napi(scope)] scope: &mut Scope<'env, 'scope>,
   callback: Function<'scope, Function<'scope, u32, u32>, u32>,
 ) -> Result<u32> {
   let inner: Function<'scope, u32, u32> =
@@ -47,13 +47,13 @@ pub fn call_with_nested_function_arg<'env, 'scope>(
 }
 
 #[napi]
-pub fn apply0(scope: &mut Scope, ctx: Reference<Animal>, callback: Function<(), ()>) -> Result<()> {
+pub fn apply0(#[napi(scope)] scope: &mut Scope, ctx: Reference<Animal>, callback: Function<(), ()>) -> Result<()> {
   scope.apply(&callback, ctx, ())
 }
 
 #[napi]
 pub fn apply1(
-  scope: &mut Scope,
+  #[napi(scope)] scope: &mut Scope,
   ctx: Reference<Animal>,
   callback: Function<String, ()>,
   name: String,
@@ -62,13 +62,13 @@ pub fn apply1(
 }
 
 #[napi]
-pub fn call_function(scope: &mut Scope, cb: Function<(), u32>) -> Result<u32> {
+pub fn call_function(#[napi(scope)] scope: &mut Scope, cb: Function<(), u32>) -> Result<u32> {
   scope.call(&cb, ())
 }
 
 #[napi]
 pub fn call_function_with_arg(
-  scope: &mut Scope,
+  #[napi(scope)] scope: &mut Scope,
   cb: Function<FnArgs<(u32, u32)>, u32>,
   arg0: u32,
   arg1: u32,
@@ -78,7 +78,7 @@ pub fn call_function_with_arg(
 
 #[napi(ts_return_type = "Promise<void>")]
 pub fn create_reference_on_function<'env>(
-  env: &'env Env,
+  #[napi(env)] env: &'env Env,
   cb: Function<'env, (), ()>,
 ) -> Result<Promise<'env, ()>> {
   let tsfn = cb.build_threadsafe_function().build()?;
@@ -91,7 +91,7 @@ pub fn create_reference_on_function<'env>(
 
 #[napi]
 pub fn call_function_with_arg_and_ctx(
-  scope: &mut Scope,
+  #[napi(scope)] scope: &mut Scope,
   ctx: Reference<Animal>,
   cb: Function<String, ()>,
   name: String,
@@ -101,7 +101,7 @@ pub fn call_function_with_arg_and_ctx(
 
 #[napi]
 pub fn reference_as_callback(
-  scope: &mut Scope,
+  #[napi(scope)] scope: &mut Scope,
   callback: FunctionRef<FnArgs<(u32, u32)>, u32>,
   arg0: u32,
   arg1: u32,
@@ -112,7 +112,7 @@ pub fn reference_as_callback(
 
 #[napi]
 pub fn reference_with_tuple_arg(
-  scope: &mut Scope,
+  #[napi(scope)] scope: &mut Scope,
   callback: FunctionRef<(u32, u32), u32>,
   arg0: u32,
   arg1: u32,
@@ -174,7 +174,7 @@ pub fn build_threadsafe_function_from_function_callee_handle(
 }
 
 #[napi]
-pub fn create_function<'env>(env: &'env Env) -> Result<Function<'env, u32, u32>> {
+pub fn create_function<'env>(#[napi(env)] env: &'env Env) -> Result<Function<'env, u32, u32>> {
   env.create_function("customFunction", no_export_function_c_callback)
 }
 
@@ -185,7 +185,7 @@ pub fn no_export_function(input: u32) -> u32 {
 
 #[napi]
 pub fn optional_callback_types(
-  scope: &mut Scope,
+  #[napi(scope)] scope: &mut Scope,
   callback: Option<Function<String, UnknownReturnValue>>,
 ) -> Result<()> {
   if let Some(callback) = callback {

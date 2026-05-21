@@ -25,7 +25,7 @@ fn get_tuple(val: (u32, String, u8)) -> u32 {
 }
 
 #[napi]
-fn to_js_obj<'env>(env: &'env Env<'env>) -> napi::Result<Object<'env>> {
+fn to_js_obj<'env>(#[napi(env)] env: &'env Env<'env>) -> napi::Result<Object<'env>> {
   let mut arr = env.create_array(0)?;
   arr.insert("a string")?;
   arr.insert(42)?;
@@ -75,7 +75,7 @@ impl ClassInArray {
 }
 
 #[napi]
-pub fn get_class_from_array(mut env: Env, arr: Array<'_>) -> napi::Result<Option<u32>> {
+pub fn get_class_from_array(#[napi(env)] mut env: Env, arr: Array<'_>) -> napi::Result<Option<u32>> {
   env.with_scope(|scope| {
     let Some(reference) = arr.get_reference::<ClassInArray>(scope, 0)? else {
       return Ok(None);

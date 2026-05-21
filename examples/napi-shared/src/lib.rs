@@ -28,7 +28,7 @@ impl ComplexClass {
   pub fn new(
     value: Either<String, Reference<ComplexClass>>,
     number: i32,
-    mut env: Env,
+    #[napi(env)] mut env: Env,
   ) -> Result<Self> {
     let value_str = match value {
       Either::A(s) => s,

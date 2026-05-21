@@ -38,6 +38,6 @@ pub fn mutate_optional_external(external: Option<&mut External<u32>>, new_val: u
 }
 
 #[napi]
-pub fn create_external_ref(env: &mut Env, size: u32) -> Result<ExternalRef<u32>> {
+pub fn create_external_ref(#[napi(env)] env: &mut Env, size: u32) -> Result<ExternalRef<u32>> {
   env.with_scope(|scope| scope.create_ref(External::new(size)))
 }

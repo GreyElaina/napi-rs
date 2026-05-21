@@ -45,10 +45,18 @@ pub struct CallbackArg {
   pub ret: Option<syn::Type>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InjectKind {
+  Env,
+  This,
+  Scope,
+}
+
 #[derive(Debug, Clone)]
 pub struct NapiFnArg {
   pub kind: NapiFnArgKind,
   pub ts_arg_type: Option<String>,
+  pub inject: Option<InjectKind>,
 }
 
 impl NapiFnArg {

@@ -44,7 +44,7 @@ impl<'scope> IntoJs<'scope> for FetchResponse {
 
 #[napi(ts_return_type = "Promise<import('undici-types').Response>")]
 pub fn fetch<'env>(
-  env: &'env Env<'env>,
+  #[napi(env)] env: &'env Env<'env>,
   url: String,
   request_init: Option<RequestInit>,
 ) -> Result<Promise<'env, FetchResponse>> {

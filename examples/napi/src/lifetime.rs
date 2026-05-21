@@ -12,7 +12,7 @@ pub struct ClassWithLifetime {
 #[napi]
 impl ClassWithLifetime {
   #[napi(constructor)]
-  pub fn new(mut env: Env, mut this: This) -> Result<Self> {
+  pub fn new(#[napi(env)] mut env: Env, #[napi(this)] mut this: This) -> Result<Self> {
     env.with_scope(|scope| {
       let inner = scope.reference(Animal::new(Kind::Cat, "alie".to_owned()))?;
       this.set("inner", scope.clone_reference(&inner)?)?;
@@ -21,7 +21,7 @@ impl ClassWithLifetime {
   }
 
   #[napi]
-  pub fn get_name(&self, mut env: Env) -> Result<String> {
+  pub fn get_name(&self, #[napi(env)] mut env: Env) -> Result<String> {
     env.with_scope(|scope| {
       let inner = scope.bind_reference(&self.inner)?;
       let name = {
@@ -48,12 +48,12 @@ impl CreateStringClass {
   }
 
   #[napi]
-  pub fn create_string<'env>(&self, env: &'env Env) -> Option<JsString<'env>> {
+  pub fn create_string<'env>(&self, #[napi(env)] env: &'env Env) -> Option<JsString<'env>> {
     create_string(env, &self.inner).ok()
   }
 
   #[napi]
-  pub fn create_string_result<'env>(&self, env: &'env Env) -> Result<JsString<'env>> {
+  pub fn create_string_result<'env>(&self, #[napi(env)] env: &'env Env) -> Result<JsString<'env>> {
     create_string(env, &self.inner)
   }
 }
@@ -65,7 +65,7 @@ fn create_string<'env>(env: &'env Env, path: &Path) -> Result<JsString<'env>> {
 
 #[napi]
 pub fn callback_in_spawn<'env>(
-  env: &mut Env<'env>,
+  #[napi(env)] env: &mut Env<'env>,
   callback: Function<Object, UnknownReturnValue>,
 ) -> Result<()> {
   env.with_scope(|scope| {
@@ -88,7 +88,7 @@ pub fn callback_in_spawn<'env>(
 
 #[napi]
 pub fn compress_sync<'env>(
-  env: &'env Env,
+  #[napi(env)] env: &'env Env,
   _: Either<String, &'env [u8]>,
 ) -> Result<BufferSlice<'env>> {
   BufferSlice::from_data(env, vec![])

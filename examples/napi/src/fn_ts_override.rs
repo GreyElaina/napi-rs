@@ -7,7 +7,7 @@ fn ts_rename(a: Object) -> Result<Object> {
 
 #[napi]
 fn override_individual_arg_on_function(
-  scope: &mut Scope,
+  #[napi(scope)] scope: &mut Scope,
   not_overridden: String,
   #[napi(ts_arg_type = "() => string")] f: Function<(), String>,
   not_overridden2: u32,
@@ -19,7 +19,7 @@ fn override_individual_arg_on_function(
 
 #[napi]
 fn override_individual_arg_on_function_with_cb_arg<'env, 'scope>(
-  scope: &mut Scope<'env, 'scope>,
+  #[napi(scope)] scope: &mut Scope<'env, 'scope>,
   #[napi(ts_arg_type = "(town: string, name?: string | undefined | null) => string")]
   callback: Function<'scope, FnArgs<(String, Option<String>)>, Object<'scope>>,
   not_overridden: u32,

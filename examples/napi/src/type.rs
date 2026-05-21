@@ -30,7 +30,7 @@ pub struct Rule<'a> {
 }
 
 #[napi]
-pub fn call_rule_handler(scope: &mut Scope, rule: Rule, arg: u32) -> Result<u32> {
+pub fn call_rule_handler(#[napi(scope)] scope: &mut Scope, rule: Rule, arg: u32) -> Result<u32> {
   scope.call(&rule.handler, arg)
 }
 

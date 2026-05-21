@@ -48,7 +48,7 @@ fn read_file_content() -> Result<String> {
   ts_return_type = "T | Promise<T>"
 )]
 fn callback_return_promise<'env, 'scope>(
-  scope: &mut Scope<'env, 'scope>,
+  #[napi(scope)] scope: &mut Scope<'env, 'scope>,
   fn_in: Function<'scope, (), Unknown<'scope>>,
   fn_out: Function<String, ()>,
 ) -> Result<Unknown<'scope>> {
@@ -74,7 +74,7 @@ fn callback_return_promise<'env, 'scope>(
 
 #[napi(ts_return_type = "Promise<string>")]
 pub fn callback_return_promise_and_spawn<'env, F: Fn(String) -> Result<PromiseFuture<String>>>(
-  env: &'env Env<'env>,
+  #[napi(env)] env: &'env Env<'env>,
   js_func: F,
 ) -> napi::Result<Promise<'env, String>> {
   let promise = js_func("Hello".to_owned())?;

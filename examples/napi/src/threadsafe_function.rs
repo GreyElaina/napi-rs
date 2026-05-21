@@ -149,7 +149,7 @@ pub fn tsfn_call_with_callback(tsfn: ThreadsafeFunction<(), String>) -> napi::Re
 
 #[napi(ts_return_type = "Promise<void>")]
 pub fn tsfn_async_call<'env>(
-  env: &'env Env,
+  #[napi(env)] env: &'env Env,
   func: Function<FnArgs<(u32, u32, u32)>, String>,
 ) -> napi::Result<Promise<'env, ()>> {
   let tsfn = func.build_threadsafe_function().build()?;
@@ -222,7 +222,7 @@ pub async fn tsfn_return_promise_timeout(
 
 #[napi]
 pub fn call_async_with_unknown_return_value<'env>(
-  env: &'env Env,
+  #[napi(env)] env: &'env Env,
   tsfn: ThreadsafeFunction<u32, UnknownRef>,
 ) -> Result<Promise<'env, u32>> {
   let (deferred, promise) = env.create_deferred::<u32, _>()?;

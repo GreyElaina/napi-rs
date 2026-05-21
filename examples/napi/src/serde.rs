@@ -44,7 +44,7 @@ struct BytesObject {
 }
 
 #[napi]
-fn test_serde_buffer_bytes(obj: Object, env: Env) -> napi::Result<usize> {
+fn test_serde_buffer_bytes(obj: Object, #[napi(env)] env: Env) -> napi::Result<usize> {
   let obj: BytesObject = env.from_js_value(obj)?;
   Ok(obj.code.len())
 }

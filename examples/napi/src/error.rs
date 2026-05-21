@@ -68,15 +68,15 @@ impl CustomStruct {
 }
 
 #[napi]
-pub fn js_error_callback(env: Env, value: Unknown) -> Result<Vec<JsError>> {
+pub fn js_error_callback(#[napi(env)] env: Env, value: Unknown) -> Result<Vec<JsError>> {
   let error: Error = value.into();
   Ok(vec![error.try_clone(&env)?.into(), error.into()])
 }
 
 #[napi]
 pub fn extends_javascript_error(
-  scope: &mut Scope,
-  env: Env,
+  #[napi(scope)] scope: &mut Scope,
+  #[napi(env)] env: Env,
   error_class: Function<String>,
 ) -> Result<()> {
   let instance = scope.new_instance(&error_class, "Error message in Rust".to_owned())?;

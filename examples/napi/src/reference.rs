@@ -37,7 +37,7 @@ impl JsRepo {
   }
 
   #[napi]
-  pub fn remote(&self, this: Reference<JsRepo>) -> ClassInitializer<JsRemote> {
+  pub fn remote(&self, #[napi(this)] this: Reference<JsRepo>) -> ClassInitializer<JsRemote> {
     ClassInitializer::from(JsRemote { repo: this })
   }
 }
@@ -55,7 +55,7 @@ impl JsRemote {
   }
 
   #[napi]
-  pub fn name(&self, mut env: Env) -> Result<String> {
+  pub fn name(&self, #[napi(env)] mut env: Env) -> Result<String> {
     env.with_scope(|scope| {
       let repo_ref = scope.bind_reference(&self.repo)?;
       let repo = scope.borrow_class(&repo_ref)?;
@@ -82,7 +82,7 @@ impl CSSRuleList {
   }
 
   #[napi(getter)]
-  pub fn name(&self, mut env: Env) -> Result<Option<String>> {
+  pub fn name(&self, #[napi(env)] mut env: Env) -> Result<Option<String>> {
     env.with_scope(|scope| {
       let Some(stylesheet) = scope.upgrade_reference(&self.parent)? else {
         return Ok(None);
@@ -94,7 +94,7 @@ impl CSSRuleList {
   }
 
   #[napi(getter)]
-  pub fn parent_style_sheet(&self, mut env: Env) -> Result<Reference<CSSStyleSheet>> {
+  pub fn parent_style_sheet(&self, #[napi(env)] mut env: Env) -> Result<Reference<CSSStyleSheet>> {
     env.with_scope(|scope| {
       scope.upgrade_reference(&self.parent)?.ok_or_else(|| {
         Error::new(
@@ -122,7 +122,7 @@ pub struct AnotherCSSStyleSheet {
 #[napi]
 impl AnotherCSSStyleSheet {
   #[napi(getter)]
-  pub fn rules(&self, mut env: Env) -> Result<Reference<CSSRuleList>> {
+  pub fn rules(&self, #[napi(env)] mut env: Env) -> Result<Reference<CSSRuleList>> {
     env.with_scope(|scope| scope.clone_reference(&self.rules))
   }
 }
@@ -142,8 +142,8 @@ impl CSSStyleSheet {
   #[napi(getter)]
   pub fn rules(
     &mut self,
-    mut env: Env,
-    this: Reference<CSSStyleSheet>,
+    #[napi(env)] mut env: Env,
+    #[napi(this)] this: Reference<CSSStyleSheet>,
   ) -> Result<Reference<CSSRuleList>> {
     env.with_scope(|scope| {
       if let Some(rules) = &self.rules {
@@ -164,7 +164,7 @@ impl CSSStyleSheet {
   #[napi]
   pub fn another_css_style_sheet(
     &self,
-    mut env: Env,
+    #[napi(env)] mut env: Env,
   ) -> Result<ClassInitializer<AnotherCSSStyleSheet>> {
     env.with_scope(|scope| {
       Ok(ClassInitializer::from(AnotherCSSStyleSheet {

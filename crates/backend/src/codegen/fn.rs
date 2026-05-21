@@ -45,17 +45,6 @@ fn arg_needs_class_context(arg: &crate::NapiFnArg) -> bool {
   }
 }
 
-fn is_scope_type(ty: &syn::Type) -> bool {
-  match ty {
-    syn::Type::Path(path) => path
-      .path
-      .segments
-      .last()
-      .is_some_and(|segment| segment.ident == "Scope"),
-    syn::Type::Reference(reference) => is_scope_type(reference.elem.as_ref()),
-    _ => false,
-  }
-}
 
 fn class_receiver_expr(input: &ClassInput<'_>, class: &TokenStream) -> TokenStream {
   match input.kind() {
@@ -378,10 +367,8 @@ impl NapiFn {
     let mut refs = vec![];
     let mut mut_ref_spans = vec![];
     let scope_arg = self.args.iter().enumerate().find_map(|(arg_index, arg)| {
-      let NapiFnArgKind::PatType(path) = &arg.kind else {
-        return None;
-      };
-      is_scope_type(&path.ty).then(|| Ident::new(&format!("arg{arg_index}"), Span::call_site()))
+      (arg.inject == Some(crate::InjectKind::Scope))
+        .then(|| Ident::new(&format!("arg{arg_index}"), Span::call_site()))
     });
 
     // fetch this
@@ -406,50 +393,94 @@ impl NapiFn {
       let js_arg_index = arg_index - skipped_arg_count;
       let ident = Ident::new(&format!("arg{arg_index}"), Span::call_site());
 
-      match &arg.kind {
-        NapiFnArgKind::PatType(path) => {
-          let ty_string = path.ty.to_token_stream().to_string();
-          if is_scope_type(&path.ty) {
+      if let Some(inject) = arg.inject {
+        match inject {
+          crate::InjectKind::Scope => {
             args.push(quote! { #ident });
             skipped_arg_count += 1;
-          } else if ty_string == "Env" {
-            if let Some(scope_arg) = &scope_arg {
-              after_scope_arg_conversions.push(quote! {
-                let #ident = *#scope_arg.env();
-              });
-              args.push(quote! { #ident });
-            } else if needs_class_context {
-              arg_conversions.push(quote! {
-                let #ident = frame.env();
-              });
+          }
+          crate::InjectKind::Env => {
+            let NapiFnArgKind::PatType(path) = &arg.kind else {
+              unreachable!("#[napi(env)] is not valid on callback arguments");
+            };
+            let is_ref = matches!(&*path.ty, syn::Type::Reference(_));
+            if is_ref {
+              let mutability = match &*path.ty {
+                syn::Type::Reference(syn::TypeReference { mutability, .. }) => mutability.is_some(),
+                _ => false,
+              };
+              let env_holder = Ident::new(&format!("{ident}_env"), Span::call_site());
+              let conversion = if let Some(scope_arg) = &scope_arg {
+                if mutability {
+                  quote! {
+                    let mut #env_holder = *#scope_arg.env();
+                    let #ident = &mut #env_holder;
+                  }
+                } else {
+                  quote! {
+                    let #ident = #scope_arg.env();
+                  }
+                }
+              } else if needs_class_context {
+                if mutability {
+                  quote! {
+                    let mut #env_holder = frame.env();
+                    let #ident = &mut #env_holder;
+                  }
+                } else {
+                  quote! {
+                    let #env_holder = frame.env();
+                    let #ident = &#env_holder;
+                  }
+                }
+              } else if mutability {
+                quote! {
+                  let #ident = &mut env_wrapper;
+                }
+              } else {
+                quote! {
+                  let #ident = &env_wrapper;
+                }
+              };
+              if scope_arg.is_some() {
+                after_scope_arg_conversions.push(conversion);
+              } else {
+                arg_conversions.push(conversion);
+              }
               args.push(quote! { #ident });
             } else {
-              args.push(quote! { env_wrapper });
-            }
-            skipped_arg_count += 1;
-          } else {
-            let is_this_arg = matches!(
-              path.pat.as_ref(),
-              syn::Pat::Ident(pat_ident) if pat_ident.ident == "this"
-            );
-            // get `f64` in `foo: f64`
-            if let Some(input) = path.ty.as_class_input() {
-              if is_this_arg {
-                let class = input.class_type(self.parent.as_ref()).ok_or_else(|| {
-                  Diagnostic::span_error(
-                    path.ty.span(),
-                    "receiver-position class argument requires a concrete class type",
-                  )
-                })?;
-                if input.is_mut() {
-                  mut_ref_spans.push(path.ty.span());
-                }
-                args.push(class_receiver_expr(&input, &class));
-                skipped_arg_count += 1;
-                continue;
+              if let Some(scope_arg) = &scope_arg {
+                after_scope_arg_conversions.push(quote! {
+                  let #ident = *#scope_arg.env();
+                });
+                args.push(quote! { #ident });
+              } else if needs_class_context {
+                arg_conversions.push(quote! {
+                  let #ident = frame.env();
+                });
+                args.push(quote! { #ident });
+              } else {
+                args.push(quote! { env_wrapper });
               }
             }
-            if let Some(this_ty) = path.ty.this_inner() {
+            skipped_arg_count += 1;
+          }
+          crate::InjectKind::This => {
+            let NapiFnArgKind::PatType(path) = &arg.kind else {
+              unreachable!("#[napi(this)] is not valid on callback arguments");
+            };
+            if let Some(input) = path.ty.as_class_input() {
+              let class = input.class_type(self.parent.as_ref()).ok_or_else(|| {
+                Diagnostic::span_error(
+                  path.ty.span(),
+                  "receiver-position class argument requires a concrete class type",
+                )
+              })?;
+              if input.is_mut() {
+                mut_ref_spans.push(path.ty.span());
+              }
+              args.push(class_receiver_expr(&input, &class));
+            } else if let Some(this_ty) = path.ty.this_inner() {
               if let syn::Type::Path(path) = this_ty {
                 if let Some(segment) = path.path.segments.first() {
                   if let Some((primitive_type, _)) = crate::PRIMITIVE_TYPES
@@ -465,8 +496,6 @@ impl NapiFn {
                   args.push(quote! {
                     frame.this::<napi::bindgen_prelude::This<#this_ty>>()?
                   });
-                  skipped_arg_count += 1;
-                  continue;
                 }
               } else if let syn::Type::Reference(syn::TypeReference {
                 elem, mutability, ..
@@ -481,75 +510,68 @@ impl NapiFn {
                     quote! { frame.this::<napi::bindgen_prelude::This<&#elem>>()? }
                   };
                   args.push(token);
-                  skipped_arg_count += 1;
-                  continue;
-                }
-
-                let class = resolve_class_type(elem, self.parent.as_ref()).ok_or_else(|| {
-                  Diagnostic::span_error(
-                    elem.span(),
-                    "napi class receiver requires a concrete class type",
-                  )
-                })?;
-                let this = if mutability.is_some() {
-                  mut_ref_spans.push(this_ty.span());
-                  quote! {
-                    let mut this_class_ref = frame.this_class_mut::<#class>()?;
-                    napi::bindgen_prelude::This::from(&mut *this_class_ref)
-                  }
                 } else {
-                  quote! {
-                    let this_class_ref = frame.this_class::<#class>()?;
-                    napi::bindgen_prelude::This::from(&*this_class_ref)
-                  }
-                };
-                args.push(quote! {{ #this }});
-                skipped_arg_count += 1;
-                continue;
-              }
-
-              refs.push(make_ref(quote! { #cb_this }));
-              args.push(quote! { frame.this::<napi::bindgen_prelude::This>()? });
-              skipped_arg_count += 1;
-              continue;
-            }
-            if path.ty.is_bare_this() {
-              args.push(quote! { frame.this::<napi::bindgen_prelude::This>()? });
-              skipped_arg_count += 1;
-              continue;
-            }
-            let (arg_conversion, is_env_arg, decode_after_scope_arg) = self.gen_ty_arg_conversion(
-              &ident,
-              js_arg_index,
-              path,
-              needs_class_context,
-              scope_arg.as_ref(),
-              &mut refs,
-              &mut mut_ref_spans,
-            )?;
-            if is_env_arg {
-              if decode_after_scope_arg {
-                after_scope_arg_conversions.push(arg_conversion);
+                  let class = resolve_class_type(elem, self.parent.as_ref()).ok_or_else(|| {
+                    Diagnostic::span_error(
+                      elem.span(),
+                      "napi class receiver requires a concrete class type",
+                    )
+                  })?;
+                  let this = if mutability.is_some() {
+                    mut_ref_spans.push(this_ty.span());
+                    quote! {
+                      let mut this_class_ref = frame.this_class_mut::<#class>()?;
+                      napi::bindgen_prelude::This::from(&mut *this_class_ref)
+                    }
+                  } else {
+                    quote! {
+                      let this_class_ref = frame.this_class::<#class>()?;
+                      napi::bindgen_prelude::This::from(&*this_class_ref)
+                    }
+                  };
+                  args.push(quote! {{ #this }});
+                }
               } else {
-                arg_conversions.push(arg_conversion);
+                refs.push(make_ref(quote! { #cb_this }));
+                args.push(quote! { frame.this::<napi::bindgen_prelude::This>()? });
               }
-              args.push(quote! { #ident });
-              skipped_arg_count += 1;
-              continue;
-            }
-            if decode_after_scope_arg {
-              let raw_arg_ident =
-                Ident::new(&format!("js_arg{js_arg_index}_raw"), Span::call_site());
-              let cb_arg = callback_arg_expr(js_arg_index);
-              arg_conversions.push(quote! {
-                let #raw_arg_ident = #cb_arg;
-              });
-              after_scope_arg_conversions.push(arg_conversion);
+            } else if path.ty.is_bare_this() {
+              args.push(quote! { frame.this::<napi::bindgen_prelude::This>()? });
             } else {
-              arg_conversions.push(arg_conversion);
+              bail_span!(
+                path.ty,
+                "#[napi(this)] requires a This<T>, ClassRef<T>, ClassRefMut<T>, or similar receiver type"
+              );
             }
-            args.push(quote! { #ident });
+            skipped_arg_count += 1;
           }
+        }
+        continue;
+      }
+
+      match &arg.kind {
+        NapiFnArgKind::PatType(path) => {
+          let (arg_conversion, decode_after_scope_arg) = self.gen_ty_arg_conversion(
+            &ident,
+            js_arg_index,
+            path,
+            needs_class_context,
+            scope_arg.as_ref(),
+            &mut refs,
+            &mut mut_ref_spans,
+          )?;
+          if decode_after_scope_arg {
+            let raw_arg_ident =
+              Ident::new(&format!("js_arg{js_arg_index}_raw"), Span::call_site());
+            let cb_arg = callback_arg_expr(js_arg_index);
+            arg_conversions.push(quote! {
+              let #raw_arg_ident = #cb_arg;
+            });
+            after_scope_arg_conversions.push(arg_conversion);
+          } else {
+            arg_conversions.push(arg_conversion);
+          }
+          args.push(quote! { #ident });
         }
         NapiFnArgKind::Callback(cb) => {
           arg_conversions.push(self.gen_cb_arg_conversion(&ident, js_arg_index, cb)?);
@@ -574,7 +596,6 @@ impl NapiFn {
     })
   }
 
-  /// Returns a type conversion and whether the converted argument consumes a Rust-side `Env`.
   fn gen_ty_arg_conversion(
     &self,
     arg_name: &Ident,
@@ -584,7 +605,7 @@ impl NapiFn {
     scope_arg: Option<&Ident>,
     refs: &mut Vec<TokenStream>,
     mut_ref_spans: &mut Vec<Span>,
-  ) -> BindgenResult<(TokenStream, bool, bool)> {
+  ) -> BindgenResult<(TokenStream, bool)> {
     let mut ty = *path.ty.clone();
     let cb_arg = callback_arg_expr(index);
     let raw_arg_ident = Ident::new(&format!("js_arg{index}_raw"), Span::call_site());
@@ -641,49 +662,14 @@ impl NapiFn {
                   };
                 };
                 refs.push(make_ref(quote! { #cb_arg }));
-                return Ok((q, false, false));
+                return Ok((q, false));
               }
             }
           }
         }
         if let syn::Type::Path(ele) = &*elem {
           if let Some(syn::PathSegment { ident, .. }) = ele.path.segments.last() {
-            if ident == "Env" {
-              let env_holder = Ident::new(&format!("{arg_name}_env"), Span::call_site());
-              let q = if let Some(scope_arg) = scope_arg {
-                if mutability.is_some() {
-                  quote! {
-                    let mut #env_holder = *#scope_arg.env();
-                    let #arg_name = &mut #env_holder;
-                  }
-                } else {
-                  quote! {
-                    let #arg_name = #scope_arg.env();
-                  }
-                }
-              } else if needs_class_context {
-                if mutability.is_some() {
-                  quote! {
-                    let mut #env_holder = frame.env();
-                    let #arg_name = &mut #env_holder;
-                  }
-                } else {
-                  quote! {
-                    let #env_holder = frame.env();
-                    let #arg_name = &#env_holder;
-                  }
-                }
-              } else if mutability.is_some() {
-                quote! {
-                  let #arg_name = &mut env_wrapper;
-                }
-              } else {
-                quote! {
-                  let #arg_name = &env_wrapper;
-                }
-              };
-              return Ok((q, true, scope_arg.is_some()));
-            } else if ident == "str" {
+            if ident == "str" {
               bail_span!(
                 elem,
                 "JavaScript String is primitive and cannot be passed by reference"
@@ -742,7 +728,7 @@ impl NapiFn {
           mut_ref_spans.push(path.ty.span());
         }
         refs.push(make_ref(quote! { #cb_arg }));
-        Ok((q, false, false))
+        Ok((q, false))
       }
       _ => {
         hidden_ty_lifetime(&mut ty)?;
@@ -761,7 +747,7 @@ impl NapiFn {
             if input.is_mut() {
               mut_ref_spans.push(path.ty.span());
             }
-            return Ok((q, false, false));
+            return Ok((q, false));
           }
           if let Some(input) = ty.as_class_input() {
             let class = input.class_type_or_error(
@@ -776,13 +762,13 @@ impl NapiFn {
             if input.is_mut() {
               mut_ref_spans.push(path.ty.span());
             }
-            return Ok((q, false, false));
+            return Ok((q, false));
           }
           if ty.needs_class_context() {
             let q = quote! {
               let #arg_name = frame.arg::<#ty>(#index)?;
             };
-            return Ok((q, false, false));
+            return Ok((q, false));
           }
         }
         let mut is_array = false;
@@ -854,7 +840,7 @@ impl NapiFn {
             #from_js
           };
         };
-        Ok((q, false, scope_arg.is_some()))
+        Ok((q, scope_arg.is_some()))
       }
     }
   }

@@ -9,10 +9,10 @@ use attrs::BindgenAttrs;
 
 use convert_case::Case;
 use napi_derive_backend::{
-  rm_raw_prefix, to_case, BindgenResult, CallbackArg, Diagnostic, FnKind, FnSelf, Napi, NapiArray,
-  NapiClass, NapiConst, NapiEnum, NapiEnumValue, NapiEnumVariant, NapiFn, NapiFnArg, NapiFnArgKind,
-  NapiImpl, NapiItem, NapiObject, NapiStruct, NapiStructField, NapiStructKind, NapiStructuredEnum,
-  NapiStructuredEnumVariant, NapiTransparent, NapiType, NativeParentSpec,
+  rm_raw_prefix, to_case, BindgenResult, CallbackArg, Diagnostic, FnKind, FnSelf, InjectKind, Napi,
+  NapiArray, NapiClass, NapiConst, NapiEnum, NapiEnumValue, NapiEnumVariant, NapiFn, NapiFnArg,
+  NapiFnArgKind, NapiImpl, NapiItem, NapiObject, NapiStruct, NapiStructField, NapiStructKind,
+  NapiStructuredEnum, NapiStructuredEnumVariant, NapiTransparent, NapiType, NativeParentSpec,
 };
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::ToTokens;
@@ -61,95 +61,111 @@ pub trait ParseNapi {
   fn parse_napi(&mut self, tokens: &mut TokenStream, opts: &BindgenAttrs) -> BindgenResult<Napi>;
 }
 
-/// This function does a few things:
-/// - parses the tokens for the given argument `p` to find the `#[napi(ts_arg_type = "MyType")]`
-///   attribute and return the manually overridden type.
-/// - If both the `ts_args_type` override and the `ts_arg_type` override are present, bail
-///   since it should only allow one at a time.
-/// - Bails if it finds the `#[napi...]` attribute but it has the wrong data.
-/// - Removes the attribute from the output token stream so this
-///   `pub fn add(u: u32, #[napi(ts_arg_type = "MyType")] f: String)`
-///   `  `turns into
-///   `pub fn add(u: u32, f: String)`
-///   `  `otherwise it won't compile
-fn find_ts_arg_type_and_remove_attribute(
+struct ArgAttrParseResult {
+  ts_arg_type: Option<String>,
+  inject: Option<InjectKind>,
+}
+
+fn parse_arg_attributes(
   p: &mut PatType,
   ts_args_type: Option<&(&str, Span)>,
-) -> BindgenResult<Option<String>> {
+) -> BindgenResult<ArgAttrParseResult> {
   let mut ts_type_attr: Option<(usize, String)> = None;
+  let mut inject_attr: Option<InjectKind> = None;
+  let mut napi_attr_idx: Option<usize> = None;
+
   for (idx, attr) in p.attrs.iter().enumerate() {
-    if attr.path().is_ident("napi") {
-      if let Some((ts_args_type, _)) = ts_args_type {
-        bail_span!(
-          attr,
-          "Found a 'ts_args_type'=\"{}\" override. Cannot use 'ts_arg_type' at the same time since they are mutually exclusive.",
-          ts_args_type
-        );
+    if !attr.path().is_ident("napi") {
+      continue;
+    }
+    napi_attr_idx = Some(idx);
+
+    match &attr.meta {
+      syn::Meta::Path(_) | syn::Meta::NameValue(_) => {
+        bail_span!(attr, "Expects #[napi(env)], #[napi(this)], #[napi(scope)], or #[napi(ts_arg_type = \"...\")]")
       }
+      syn::Meta::List(list) => {
+        list
+          .parse_args_with(|tokens: &syn::parse::ParseBuffer<'_>| {
+            let list = tokens.parse_terminated(Meta::parse, Token![,])?;
 
-      match &attr.meta {
-        syn::Meta::Path(_) | syn::Meta::NameValue(_) => {
-          bail_span!(
-            attr,
-            "Expects an assignment #[napi(ts_arg_type = \"MyType\")]"
-          )
-        }
-        syn::Meta::List(list) => {
-          let mut found = false;
-          list
-            .parse_args_with(|tokens: &syn::parse::ParseBuffer<'_>| {
-              // tokens:
-              // #[napi(xxx, xxx=xxx)]
-              //        ^^^^^^^^^^^^
-              let list = tokens.parse_terminated(Meta::parse, Token![,])?;
-
-              for meta in list {
-                if meta.path().is_ident("ts_arg_type") {
-                  match meta {
-                    Meta::Path(_) | Meta::List(_) => {
+            for meta in list {
+              if meta.path().is_ident("ts_arg_type") {
+                if let Some((ts_args_type, _)) = ts_args_type {
+                  return Err(syn::Error::new(
+                    meta.path().span(),
+                    format!(
+                      "Found a 'ts_args_type'=\"{}\" override. Cannot use 'ts_arg_type' at the same time since they are mutually exclusive.",
+                      ts_args_type
+                    ),
+                  ));
+                }
+                match meta {
+                  Meta::Path(_) | Meta::List(_) => {
+                    return Err(syn::Error::new(
+                      meta.path().span(),
+                      "Expects an assignment (ts_arg_type = \"MyType\")",
+                    ));
+                  }
+                  Meta::NameValue(name_value) => match name_value.value {
+                    syn::Expr::Lit(syn::ExprLit {
+                      lit: syn::Lit::Str(str),
+                      ..
+                    }) => {
+                      ts_type_attr = Some((idx, str.value()));
+                    }
+                    _ => {
                       return Err(syn::Error::new(
-                        meta.path().span(),
-                        "Expects an assignment (ts_arg_type = \"MyType\")",
+                        name_value.value.span(),
+                        "Expects a string literal",
                       ));
                     }
-                    Meta::NameValue(name_value) => match name_value.value {
-                      syn::Expr::Lit(syn::ExprLit {
-                        lit: syn::Lit::Str(str),
-                        ..
-                      }) => {
-                        let value = str.value();
-                        found = true;
-                        ts_type_attr = Some((idx, value));
-                      }
-                      _ => {
-                        return Err(syn::Error::new(
-                          name_value.value.span(),
-                          "Expects a string literal",
-                        ));
-                      }
-                    },
-                  }
+                  },
                 }
+              } else if meta.path().is_ident("env") {
+                if !matches!(meta, Meta::Path(_)) {
+                  return Err(syn::Error::new(meta.path().span(), "#[napi(env)] takes no value"));
+                }
+                inject_attr = Some(InjectKind::Env);
+              } else if meta.path().is_ident("this") {
+                if !matches!(meta, Meta::Path(_)) {
+                  return Err(syn::Error::new(meta.path().span(), "#[napi(this)] takes no value"));
+                }
+                inject_attr = Some(InjectKind::This);
+              } else if meta.path().is_ident("scope") {
+                if !matches!(meta, Meta::Path(_)) {
+                  return Err(syn::Error::new(meta.path().span(), "#[napi(scope)] takes no value"));
+                }
+                inject_attr = Some(InjectKind::Scope);
+              } else {
+                return Err(syn::Error::new(
+                  meta.path().span(),
+                  "Unknown parameter attribute, expected one of: env, this, scope, ts_arg_type",
+                ));
               }
+            }
 
-              Ok(())
-            })
-            .map_err(Diagnostic::from)?;
-
-          if !found {
-            bail_span!(attr, "Expects a 'ts_arg_type'");
-          }
-        }
+            Ok(())
+          })
+          .map_err(Diagnostic::from)?;
       }
     }
   }
 
-  if let Some((idx, value)) = ts_type_attr {
-    p.attrs.remove(idx);
-    Ok(Some(value))
+  let ts_arg_type = if let Some((_, value)) = &ts_type_attr {
+    Some(value.clone())
   } else {
-    Ok(None)
+    None
+  };
+
+  if let Some(idx) = napi_attr_idx {
+    p.attrs.remove(idx);
   }
+
+  Ok(ArgAttrParseResult {
+    ts_arg_type,
+    inject: inject_attr,
+  })
 }
 
 fn find_enum_value_and_remove_attribute(v: &mut syn::Variant) -> BindgenResult<Option<String>> {
@@ -558,10 +574,13 @@ fn napi_fn_from_decl(
     .iter_mut()
     .filter_map(|arg| match arg {
       syn::FnArg::Typed(ref mut p) => {
-        let ts_arg_type = find_ts_arg_type_and_remove_attribute(p, opts.ts_args_type().as_ref())
+        let arg_attrs = parse_arg_attributes(p, opts.ts_args_type().as_ref())
           .unwrap_or_else(|e| {
             errors.push(e);
-            None
+            ArgAttrParseResult {
+              ts_arg_type: None,
+              inject: None,
+            }
           });
 
         let ty_str = p.ty.to_token_stream().to_string();
@@ -573,7 +592,8 @@ fn napi_fn_from_decl(
                 args: fn_args,
                 ret: fn_ret,
               })),
-              ts_arg_type,
+              ts_arg_type: arg_attrs.ts_arg_type,
+              inject: arg_attrs.inject,
             }),
             Err(e) => {
               errors.push(e);
@@ -583,7 +603,8 @@ fn napi_fn_from_decl(
         } else {
           Some(NapiFnArg {
             kind: NapiFnArgKind::PatType(Box::new(p.clone())),
-            ts_arg_type,
+            ts_arg_type: arg_attrs.ts_arg_type,
+            inject: arg_attrs.inject,
           })
         }
       }

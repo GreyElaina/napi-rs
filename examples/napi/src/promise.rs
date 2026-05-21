@@ -30,14 +30,14 @@ pub fn call_finally_on_promise(
 
 #[napi]
 pub fn esm_resolve<'env, 'scope>(
-  scope: &mut Scope<'env, 'scope>,
+  #[napi(scope)] scope: &mut Scope<'env, 'scope>,
   next: Function<'scope, (), Promise<'scope, ()>>,
 ) -> Result<Promise<'scope, ()>> {
   scope.call(&next, ())
 }
 
 #[napi]
-pub fn spawn_future_lifetime<'env>(env: &'env Env, input: u32) -> Result<Promise<'env, String>> {
+pub fn spawn_future_lifetime<'env>(#[napi(env)] env: &'env Env, input: u32) -> Result<Promise<'env, String>> {
   env.spawn_future(async move { Ok(format!("{}", input)) })
 }
 
@@ -46,19 +46,19 @@ pub struct ClassReturnInPromise {}
 
 #[napi]
 pub fn promise_return_class_instance<'env>(
-  env: &'env Env,
+  #[napi(env)] env: &'env Env,
 ) -> Result<Promise<'env, ClassInitializer<ClassReturnInPromise>>> {
   env.spawn_future(async move { Ok(ClassInitializer::from(ClassReturnInPromise {})) })
 }
 
 #[napi]
-pub fn create_resolved_promise<'env>(env: &'env Env, value: u32) -> Result<Promise<'env, u32>> {
+pub fn create_resolved_promise<'env>(#[napi(env)] env: &'env Env, value: u32) -> Result<Promise<'env, u32>> {
   Promise::resolve(env, value)
 }
 
 #[napi]
 pub fn create_rejected_promise<'env>(
-  env: &'env Env,
+  #[napi(env)] env: &'env Env,
   message: String,
 ) -> Result<Promise<'env, u32>> {
   Promise::reject(env, Error::from_reason(message))

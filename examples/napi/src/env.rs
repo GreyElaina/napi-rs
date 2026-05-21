@@ -2,18 +2,18 @@ use napi::bindgen_prelude::*;
 
 #[napi]
 pub fn run_script<'env, 'scope>(
-  scope: &mut Scope<'env, 'scope>,
+  #[napi(scope)] scope: &mut Scope<'env, 'scope>,
   script: String,
 ) -> Result<Unknown<'scope>> {
   scope.run_script(script)
 }
 
 #[napi]
-pub fn get_module_file_name(env: Env) -> Result<String> {
+pub fn get_module_file_name(#[napi(env)] env: Env) -> Result<String> {
   env.get_module_file_name()
 }
 
 #[napi]
-pub fn throw_syntax_error(env: Env, error: String, code: Option<String>) {
+pub fn throw_syntax_error(#[napi(env)] env: Env, error: String, code: Option<String>) {
   env.throw_syntax_error(error, code);
 }

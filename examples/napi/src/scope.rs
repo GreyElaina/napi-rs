@@ -1,7 +1,7 @@
 use napi::{bindgen_prelude::*, JsString};
 
 #[napi]
-pub fn shorter_scope(env: &mut Env, arr: Array) -> Result<Vec<u32>> {
+pub fn shorter_scope(#[napi(env)] env: &mut Env, arr: Array) -> Result<Vec<u32>> {
   let len = arr.len();
   let mut result = Vec::with_capacity(len as usize);
   for i in 0..len {
@@ -33,7 +33,7 @@ pub fn shorter_scope(env: &mut Env, arr: Array) -> Result<Vec<u32>> {
 
 #[napi]
 pub fn shorter_escapable_scope<'env>(
-  env: &mut Env<'env>,
+  #[napi(env)] env: &mut Env<'env>,
   create_string: Function<(), Option<String>>,
 ) -> Result<String> {
   let mut longest_string = String::new();

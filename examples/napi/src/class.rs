@@ -116,7 +116,7 @@ impl Animal {
   #[napi]
   pub fn override_individual_arg_on_method(
     &self,
-    mut env: Env,
+    #[napi(env)] mut env: Env,
     normal_ty: String,
     #[napi(ts_arg_type = "{n: string}")] overridden_ty: napi::bindgen_prelude::Object,
   ) -> ClassInitializer<Bird> {
@@ -152,7 +152,7 @@ impl Bird {
   }
 
   #[cfg_attr(not(feature = "cfg_attr_napi"), napi_derive::napi)]
-  pub fn get_name_async<'env>(&self, env: &'env Env<'env>) -> Result<Promise<'env, String>> {
+  pub fn get_name_async<'env>(&self, #[napi(env)] env: &'env Env<'env>) -> Result<Promise<'env, String>> {
     let name = self.name.clone();
     env.spawn_future(async move {
       tokio::time::sleep(std::time::Duration::new(1, 0)).await;
@@ -244,7 +244,7 @@ pub struct NinjaTurtle {
 #[napi]
 impl NinjaTurtle {
   #[napi]
-  pub fn is_instance_of(mut env: Env, value: Unknown) -> Result<bool> {
+  pub fn is_instance_of(#[napi(env)] mut env: Env, value: Unknown) -> Result<bool> {
     env.with_scope(|scope| scope.is_class_value::<Self, _>(&value))
   }
 
@@ -277,7 +277,7 @@ impl NinjaTurtle {
   }
 
   #[napi]
-  pub fn return_this<'scope>(&'scope self, this: This<'scope>) -> This<'scope> {
+  pub fn return_this<'scope>(&'scope self, #[napi(this)] this: This<'scope>) -> This<'scope> {
     this
   }
 }
@@ -366,7 +366,7 @@ pub struct ObjectFieldClassReference {
 }
 
 #[napi]
-pub fn create_object_with_class_field(mut env: Env) -> Result<ObjectFieldClassReference> {
+pub fn create_object_with_class_field(#[napi(env)] mut env: Env) -> Result<ObjectFieldClassReference> {
   env.with_scope(|scope| {
     Ok(ObjectFieldClassReference {
       bird: scope.reference(Bird {
@@ -407,12 +407,12 @@ impl RendererNode {
   }
 
   #[napi]
-  pub fn receiver_id(this: ClassRef<Self>) -> u32 {
+  pub fn receiver_id(#[napi(this)] this: ClassRef<Self>) -> u32 {
     this.id
   }
 
   #[napi]
-  pub fn owned_receiver_id(mut env: Env, this: Reference<Self>) -> Result<u32> {
+  pub fn owned_receiver_id(#[napi(env)] mut env: Env, #[napi(this)] this: Reference<Self>) -> Result<u32> {
     env.with_scope(|scope| {
       let this = scope.bind_reference(&this)?;
       let this = scope.borrow_class(&this)?;
@@ -421,7 +421,7 @@ impl RendererNode {
   }
 
   #[napi]
-  pub fn env_mut_marker(&self, env: &mut Env) -> Result<bool> {
+  pub fn env_mut_marker(&self, #[napi(env)] env: &mut Env) -> Result<bool> {
     env.with_scope(|scope| {
       scope.env().get_global()?;
       Ok(true)
@@ -429,7 +429,7 @@ impl RendererNode {
   }
 
   #[napi]
-  pub fn set_id_from_receiver(mut this: ClassRefMut<Self>, id: u32) {
+  pub fn set_id_from_receiver(#[napi(this)] mut this: ClassRefMut<Self>, id: u32) {
     this.id = id;
   }
 
@@ -475,7 +475,7 @@ impl ImageNode {
   }
 
   #[napi]
-  pub fn set_super_id(mut this: ClassRefMut<Self>, id: u32) -> Result<()> {
+  pub fn set_super_id(#[napi(this)] mut this: ClassRefMut<Self>, id: u32) -> Result<()> {
     this.as_super_mut()?.id = id;
     Ok(())
   }
@@ -546,12 +546,12 @@ pub struct SelfReferenceField {
 #[napi]
 impl SelfReferenceField {
   #[napi]
-  pub fn current(this: Reference<Self>) -> Reference<Self> {
+  pub fn current(#[napi(this)] this: Reference<Self>) -> Reference<Self> {
     this
   }
 
   #[napi]
-  pub fn maybe_next(&self, mut env: Env) -> Result<Option<Reference<Self>>> {
+  pub fn maybe_next(&self, #[napi(env)] mut env: Env) -> Result<Option<Reference<Self>>> {
     env.with_scope(|scope| match &self.next {
       Some(next) => scope.clone_reference(next).map(Some),
       None => Ok(None),
@@ -565,7 +565,7 @@ impl SelfReferenceField {
 }
 
 #[napi]
-pub fn plus_one(mut env: Env, this: Reference<Width>) -> Result<i32> {
+pub fn plus_one(#[napi(env)] mut env: Env, #[napi(this)] this: Reference<Width>) -> Result<i32> {
   env.with_scope(|scope| {
     let bound = scope.bind_reference(&this)?;
     let value = scope.borrow_class(&bound)?.value;
@@ -579,7 +579,7 @@ pub struct GetterSetterWithClosures {}
 #[napi]
 impl GetterSetterWithClosures {
   #[napi(constructor)]
-  pub fn new(env: &Env, mut this: This) -> Result<Self> {
+  pub fn new(#[napi(env)] env: &Env, #[napi(this)] mut this: This) -> Result<Self> {
     let age_symbol = env.create_symbol(Some("age"))?;
 
     this.define_properties(&[
@@ -695,7 +695,7 @@ impl ThingList {
   rustMethod(): number
 }"#
 )]
-pub fn define_class<'env>(env: &'env Env) -> Result<Function<'env>> {
+pub fn define_class<'env>(#[napi(env)] env: &'env Env) -> Result<Function<'env>> {
   env.define_class(
     "DynamicRustClass",
     rust_class_constructor_c_callback,
@@ -706,12 +706,12 @@ pub fn define_class<'env>(env: &'env Env) -> Result<Function<'env>> {
 }
 
 #[napi(no_export)]
-fn rust_class_constructor(value: i32, mut this: This) -> Result<()> {
+fn rust_class_constructor(value: i32, #[napi(this)] mut this: This) -> Result<()> {
   this.set_named_property("dynamicValue", value)?;
   Ok(())
 }
 
 #[napi(no_export)]
-fn rust_class_method(mut env: Env, this: This) -> Result<i32> {
+fn rust_class_method(#[napi(env)] mut env: Env, #[napi(this)] this: This) -> Result<i32> {
   env.with_scope(|scope| scope.get_named_property(&this, "dynamicValue"))
 }

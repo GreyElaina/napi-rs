@@ -22,7 +22,7 @@ impl<'scope> IntoJs<'scope> for AcceptedStream {
 
 #[napi]
 pub fn accept_stream<'env>(
-  env: &'env Env<'env>,
+  #[napi(env)] env: &'env Env<'env>,
   stream: ReadableStream<Uint8Array>,
 ) -> Result<Promise<'env, AcceptedStream>> {
   let web_readable_stream = stream.read()?;
@@ -45,7 +45,7 @@ pub fn accept_stream<'env>(
 
 #[napi]
 pub fn create_readable_stream<'env>(
-  env: &'env Env<'env>,
+  #[napi(env)] env: &'env Env<'env>,
 ) -> Result<ReadableStream<'env, BufferSlice<'env>>> {
   let (tx, rx) = tokio::sync::mpsc::channel(100);
   std::thread::spawn(move || {
@@ -84,7 +84,7 @@ pub struct StreamItem {
 /// This demonstrates streaming custom Rust structs to JavaScript.
 #[napi]
 pub fn create_readable_stream_with_object<'env>(
-  env: &'env Env<'env>,
+  #[napi(env)] env: &'env Env<'env>,
 ) -> Result<ReadableStream<'env, StreamItem>> {
   let (tx, rx) = tokio::sync::mpsc::channel(100);
   std::thread::spawn(move || {
@@ -110,7 +110,7 @@ pub fn create_readable_stream_with_object<'env>(
 
 #[napi(ts_args_type = "readableStreamClass: typeof ReadableStream")]
 pub fn create_readable_stream_from_class<'env>(
-  env: &Env,
+  #[napi(env)] env: &Env,
   readable_stream_class: Unknown<'env>,
 ) -> Result<ReadableStream<'env, BufferSlice<'env>>> {
   let (tx, rx) = tokio::sync::mpsc::channel(100);
