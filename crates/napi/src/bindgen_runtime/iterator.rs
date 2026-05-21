@@ -250,11 +250,8 @@ unsafe extern "C" fn generator_next<T: for<'a> ScopedGenerator<'a> + NapiClass +
   env: sys::napi_env,
   info: sys::napi_callback_info,
 ) -> sys::napi_value {
-  match unsafe {
-    EnvRecord::enter_scope(env, |scope| {
-      generator_next_impl::<T>(*scope.env(), info)
-    })
-  } {
+  match unsafe { EnvRecord::enter_scope(env, |scope| generator_next_impl::<T>(*scope.env(), info)) }
+  {
     Ok(value) => value,
     Err(e) => {
       unsafe { crate::JsError::from(e).throw_into(env) };
@@ -299,9 +296,7 @@ unsafe extern "C" fn generator_return<T: for<'a> ScopedGenerator<'a> + NapiClass
   info: sys::napi_callback_info,
 ) -> sys::napi_value {
   match unsafe {
-    EnvRecord::enter_scope(env, |scope| {
-      generator_return_impl::<T>(*scope.env(), info)
-    })
+    EnvRecord::enter_scope(env, |scope| generator_return_impl::<T>(*scope.env(), info))
   } {
     Ok(value) => value,
     Err(e) => {
@@ -340,9 +335,7 @@ unsafe extern "C" fn generator_throw<T: for<'a> ScopedGenerator<'a> + NapiClass 
   info: sys::napi_callback_info,
 ) -> sys::napi_value {
   match unsafe {
-    EnvRecord::enter_scope(env, |scope| {
-      generator_throw_impl::<T>(*scope.env(), info)
-    })
+    EnvRecord::enter_scope(env, |scope| generator_throw_impl::<T>(*scope.env(), info))
   } {
     Ok(value) => value,
     Err(e) => {

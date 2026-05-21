@@ -684,7 +684,8 @@ unsafe extern "C" fn cancel_callback<S>(
   env: sys::napi_env,
   info: sys::napi_callback_info,
 ) -> sys::napi_value {
-  let result = unsafe { EnvRecord::enter_scope(env, |scope| cancel_callback_impl::<S>(*scope.env(), info)) };
+  let result =
+    unsafe { EnvRecord::enter_scope(env, |scope| cancel_callback_impl::<S>(*scope.env(), info)) };
   if let Err(err) = result {
     unsafe {
       let js_error: JsError = err.into();
@@ -729,11 +730,8 @@ unsafe extern "C" fn pull_callback<
   env: sys::napi_env,
   info: sys::napi_callback_info,
 ) -> sys::napi_value {
-  let result = unsafe {
-    EnvRecord::enter_scope(env, |scope| {
-      pull_callback_impl::<T, S>(*scope.env(), info)
-    })
-  };
+  let result =
+    unsafe { EnvRecord::enter_scope(env, |scope| pull_callback_impl::<T, S>(*scope.env(), info)) };
   match result {
     Ok(val) => val,
     Err(err) => unsafe {

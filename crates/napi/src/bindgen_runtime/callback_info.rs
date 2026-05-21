@@ -616,9 +616,8 @@ where
 {
   ensure_class_name(js_name)?;
   let init = init.into_class_initializer();
-  let instance = unsafe {
-    EnvRecord::enter_scope(env, |scope| T::CLASS.new_object_from_scope(scope, init))
-  }?;
+  let instance =
+    unsafe { EnvRecord::enter_scope(env, |scope| T::CLASS.new_object_from_scope(scope, init)) }?;
   unsafe { crate::__private::create_iterator::<T>(env, instance) };
   Ok(instance)
 }
@@ -651,9 +650,8 @@ where
 {
   ensure_class_name(js_name)?;
   let init = init.into_class_initializer();
-  let instance = unsafe {
-    EnvRecord::enter_scope(env, |scope| T::CLASS.new_object_from_scope(scope, init))
-  }?;
+  let instance =
+    unsafe { EnvRecord::enter_scope(env, |scope| T::CLASS.new_object_from_scope(scope, init)) }?;
   unsafe { crate::__private::create_async_iterator::<T>(env, instance) };
   Ok(instance)
 }
@@ -693,4 +691,3 @@ pub unsafe fn __napi_binding_entry<const N: usize>(
     ptr::null_mut::<sys::napi_value__>()
   })
 }
-

@@ -385,9 +385,7 @@ unsafe extern "C" fn generator_return<T: AsyncGenerator + NapiClass>(
   info: sys::napi_callback_info,
 ) -> sys::napi_value {
   match unsafe {
-    EnvRecord::enter_scope(env, |scope| {
-      generator_return_impl::<T>(*scope.env(), info)
-    })
+    EnvRecord::enter_scope(env, |scope| generator_return_impl::<T>(*scope.env(), info))
   } {
     Ok(value) => value,
     Err(e) => {
@@ -426,9 +424,7 @@ unsafe extern "C" fn generator_throw<T: AsyncGenerator + NapiClass>(
   info: sys::napi_callback_info,
 ) -> sys::napi_value {
   match unsafe {
-    EnvRecord::enter_scope(env, |scope| {
-      generator_throw_impl::<T>(*scope.env(), info)
-    })
+    EnvRecord::enter_scope(env, |scope| generator_throw_impl::<T>(*scope.env(), info))
   } {
     Ok(value) => value,
     Err(e) => {

@@ -957,13 +957,13 @@ impl PendingClassStorageAllocation {
     record: Weak<EnvRecord>,
     data_layout: alloc::Layout,
   ) -> Result<Self> {
-    let (combined_layout, state_offset, data_offset) =
-      combined_class_storage_layout(data_layout).ok_or_else(|| {
-        Error::new(
-          Status::GenericFailure,
-          "Class storage layout overflow".to_owned(),
-        )
-      })?;
+    let (combined_layout, state_offset, data_offset) = combined_class_storage_layout(data_layout)
+      .ok_or_else(|| {
+      Error::new(
+        Status::GenericFailure,
+        "Class storage layout overflow".to_owned(),
+      )
+    })?;
 
     let base = NonNull::new(unsafe { alloc::alloc(combined_layout) }).ok_or_else(|| {
       Error::new(
@@ -979,7 +979,11 @@ impl PendingClassStorageAllocation {
 
     unsafe { state_ptr.as_ptr().write(ClassStorageState::new(record)) };
     let header_ptr = base.cast::<ClassStorageHeader>();
-    unsafe { header_ptr.as_ptr().write(ClassStorageHeader::new(layout, data_ptr, state_ptr)) };
+    unsafe {
+      header_ptr
+        .as_ptr()
+        .write(ClassStorageHeader::new(layout, data_ptr, state_ptr))
+    };
 
     Ok(Self {
       header: header_ptr,

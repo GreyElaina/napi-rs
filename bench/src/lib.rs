@@ -59,10 +59,7 @@ pub fn get_array_from_js_array(input: Vec<u32>) {
 }
 
 #[napi]
-pub fn get_array_with_for_loop<'env>(
-  env: &mut Env<'env>,
-  input: Object<'env>,
-) -> Result<()> {
+pub fn get_array_with_for_loop<'env>(env: &mut Env<'env>, input: Object<'env>) -> Result<()> {
   env.with_scope(|scope| {
     let array_length = input.get_array_length_unchecked()? as usize;
     let mut result = Vec::with_capacity(array_length);

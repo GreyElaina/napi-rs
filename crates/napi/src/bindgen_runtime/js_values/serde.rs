@@ -111,11 +111,7 @@ fn to_string(env: sys::napi_env, napi_val: sys::napi_value) -> Result<String> {
     unsafe { sys::napi_coerce_to_string(env, napi_val, &mut string) },
     "Failed to coerce to string"
   )?;
-  unsafe {
-    EnvRecord::enter_scope(env, |scope| {
-      String::from_js(scope, Local::from_raw(string))
-    })
-  }
+  unsafe { EnvRecord::enter_scope(env, |scope| String::from_js(scope, Local::from_raw(string))) }
 }
 
 impl<'env, 'scope> FromJs<'env, 'scope> for Map<String, Value> {

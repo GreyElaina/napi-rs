@@ -131,7 +131,6 @@ fn gen_tracing_debug(_js_name: &str, _parent_js_name: Option<&String>) -> TokenS
 
 impl TryToTokens for NapiFn {
   fn try_to_tokens(&self, tokens: &mut TokenStream) -> BindgenResult<()> {
-
     let name_str = self.name.to_string();
     let intermediate_ident = get_intermediate_ident(&name_str);
     let args_len = self.args.len();
