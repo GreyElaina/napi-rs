@@ -16,7 +16,9 @@ use serde::Serialize;
 use crate::bindgen_runtime::IntoJs;
 #[cfg(feature = "napi5")]
 use crate::bindgen_runtime::{CallbackDecoder, FromJs};
-use crate::bindgen_runtime::{Function, Local, Object, Unknown};
+use crate::bindgen_runtime::{Function, Object, Unknown};
+#[cfg(feature = "serde-json")]
+use crate::bindgen_runtime::Local;
 #[cfg(feature = "napi5")]
 use crate::bindgen_runtime::{FunctionCallContext, JsArgSlice};
 #[cfg(feature = "serde-json")]

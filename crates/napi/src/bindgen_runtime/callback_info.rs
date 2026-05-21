@@ -311,6 +311,7 @@ impl<'env, 'scope> CallbackFrame<'env, 'scope> {
     self.context.scope_mut()
   }
 
+  #[cfg(feature = "napi5")]
   pub(crate) fn into_scope(self) -> &'scope mut Scope<'env, 'scope> {
     self.context.scope
   }

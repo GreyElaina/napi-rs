@@ -612,12 +612,24 @@ impl Object<'_> {
 }
 
 pub type ObjectRef = Ref<Obj>;
+pub type WeakObjectRef = WeakRef<Obj>;
 
 impl<'scope> JsRefTarget<'scope, Ref<Obj>> for &Object<'_> {
   fn create_ref(self, scope: &mut Scope<'_, 'scope>) -> Result<Ref<Obj>> {
     scope.ensure_value_env(self.0.env, "Object")?;
     let raw = create_reference(scope.env().raw(), self.0.value, 1)?;
     Ok(Ref::new(
+      RefState::new(raw, Rc::downgrade(scope.record())),
+      (),
+    ))
+  }
+}
+
+impl<'scope> JsRefTarget<'scope, WeakRef<Obj>> for &Object<'_> {
+  fn create_ref(self, scope: &mut Scope<'_, 'scope>) -> Result<WeakRef<Obj>> {
+    scope.ensure_value_env(self.0.env, "Object")?;
+    let raw = create_reference(scope.env().raw(), self.0.value, 0)?;
+    Ok(WeakRef::new(
       RefState::new(raw, Rc::downgrade(scope.record())),
       (),
     ))
@@ -632,7 +644,36 @@ impl Ref<Obj> {
     Ok(unsafe { Object::from_raw(env.0, result) })
   }
 
+  pub fn downgrade(&self, env: &Env) -> Result<WeakObjectRef> {
+    let record = self.state.owner_record()?;
+    ensure_record_match(&record, &env.record())?;
+    let object = reference_value(env.0, self.state.raw_ref()?)?;
+    let raw = create_reference(env.0, object, 0)?;
+    Ok(WeakRef::new(
+      RefState::new(raw, Rc::downgrade(&record)),
+      (),
+    ))
+  }
+
   pub fn unref(self, env: &Env) -> Result<()> {
+    let record = self.state.owner_record()?;
+    ensure_record_match(&record, &env.record())?;
+    delete_reference(env.0, self.state.take_raw()?)
+  }
+}
+
+impl WeakRef<Obj> {
+  pub fn get_value<'env>(&self, env: &'env Env<'env>) -> Result<Option<Object<'env>>> {
+    let record = self.state.owner_record()?;
+    ensure_record_match(&record, &env.record())?;
+    let result = reference_value(env.0, self.state.raw_ref()?)?;
+    if result.is_null() {
+      return Ok(None);
+    }
+    Ok(Some(unsafe { Object::from_raw(env.0, result) }))
+  }
+
+  pub fn close(self, env: &Env) -> Result<()> {
     let record = self.state.owner_record()?;
     ensure_record_match(&record, &env.record())?;
     delete_reference(env.0, self.state.take_raw()?)

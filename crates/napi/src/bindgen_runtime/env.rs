@@ -750,6 +750,7 @@ impl<'scope, T> Local<'scope, T> {
 }
 
 impl<'scope> Local<'scope, Unknown<'scope>> {
+  #[cfg(any(feature = "serde-json", feature = "web_stream"))]
   pub(crate) fn from_value<'env, 'value, V>(
     scope: &Scope<'env, 'scope>,
     value: &V,
