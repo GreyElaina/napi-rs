@@ -1,7 +1,10 @@
 use napi::{bindgen_prelude::*, JsSymbol, SymbolRef};
 
 #[napi]
-pub fn set_symbol_in_obj<'scope>(#[napi(env)] env: &'scope Env, symbol: JsSymbol) -> Result<Object<'scope>> {
+pub fn set_symbol_in_obj<'scope>(
+  #[napi(env)] env: &'scope Env,
+  symbol: JsSymbol,
+) -> Result<Object<'scope>> {
   let mut obj = Object::new(env)?;
   obj.set_property(symbol, env.create_string("a symbol")?)?;
   Ok(obj)

@@ -152,7 +152,10 @@ impl Bird {
   }
 
   #[cfg_attr(not(feature = "cfg_attr_napi"), napi_derive::napi)]
-  pub fn get_name_async<'env>(&self, #[napi(env)] env: &'env Env<'env>) -> Result<Promise<'env, String>> {
+  pub fn get_name_async<'env>(
+    &self,
+    #[napi(env)] env: &'env Env<'env>,
+  ) -> Result<Promise<'env, String>> {
     let name = self.name.clone();
     env.spawn_future(async move {
       tokio::time::sleep(std::time::Duration::new(1, 0)).await;
@@ -366,7 +369,9 @@ pub struct ObjectFieldClassReference {
 }
 
 #[napi]
-pub fn create_object_with_class_field(#[napi(env)] mut env: Env) -> Result<ObjectFieldClassReference> {
+pub fn create_object_with_class_field(
+  #[napi(env)] mut env: Env,
+) -> Result<ObjectFieldClassReference> {
   env.with_scope(|scope| {
     Ok(ObjectFieldClassReference {
       bird: scope.reference(Bird {
@@ -412,7 +417,10 @@ impl RendererNode {
   }
 
   #[napi]
-  pub fn owned_receiver_id(#[napi(env)] mut env: Env, #[napi(this)] this: Reference<Self>) -> Result<u32> {
+  pub fn owned_receiver_id(
+    #[napi(env)] mut env: Env,
+    #[napi(this)] this: Reference<Self>,
+  ) -> Result<u32> {
     env.with_scope(|scope| {
       let this = scope.bind_reference(&this)?;
       let this = scope.borrow_class(&this)?;

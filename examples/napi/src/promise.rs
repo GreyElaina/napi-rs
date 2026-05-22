@@ -37,7 +37,10 @@ pub fn esm_resolve<'env, 'scope>(
 }
 
 #[napi]
-pub fn spawn_future_lifetime<'env>(#[napi(env)] env: &'env Env, input: u32) -> Result<Promise<'env, String>> {
+pub fn spawn_future_lifetime<'env>(
+  #[napi(env)] env: &'env Env,
+  input: u32,
+) -> Result<Promise<'env, String>> {
   env.spawn_future(async move { Ok(format!("{}", input)) })
 }
 
@@ -52,7 +55,10 @@ pub fn promise_return_class_instance<'env>(
 }
 
 #[napi]
-pub fn create_resolved_promise<'env>(#[napi(env)] env: &'env Env, value: u32) -> Result<Promise<'env, u32>> {
+pub fn create_resolved_promise<'env>(
+  #[napi(env)] env: &'env Env,
+  value: u32,
+) -> Result<Promise<'env, u32>> {
   Promise::resolve(env, value)
 }
 

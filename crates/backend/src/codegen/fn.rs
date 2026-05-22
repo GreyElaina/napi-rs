@@ -69,7 +69,6 @@ fn arg_needs_class_context(arg: &crate::NapiFnArg) -> bool {
   }
 }
 
-
 fn class_receiver_expr(input: &ClassInput<'_>, class: &TokenStream) -> TokenStream {
   match input.kind() {
     ClassInputKind::Reference => quote! { frame.this_reference::<#class>()? },
@@ -645,8 +644,7 @@ impl NapiFn {
             &mut mut_ref_spans,
           )?;
           if decode_after_scope_arg {
-            let raw_arg_ident =
-              Ident::new(&format!("js_arg{js_arg_index}_raw"), Span::call_site());
+            let raw_arg_ident = Ident::new(&format!("js_arg{js_arg_index}_raw"), Span::call_site());
             let cb_arg = callback_arg_expr(js_arg_index);
             arg_conversions.push(quote! {
               let #raw_arg_ident = #cb_arg;

@@ -212,9 +212,9 @@ impl SelfReferential {
   pub fn get_weak_name(&self, #[napi(env)] mut env: Env) -> Result<String> {
     let weak = self.weak_self.get().unwrap();
     env.with_scope(|scope| {
-      let strong = scope.upgrade_reference(weak)?.ok_or_else(|| {
-        Error::new(Status::GenericFailure, "Self reference expired".to_owned())
-      })?;
+      let strong = scope
+        .upgrade_reference(weak)?
+        .ok_or_else(|| Error::new(Status::GenericFailure, "Self reference expired".to_owned()))?;
       let bound = scope.bind_reference(&strong)?;
       let this = scope.borrow_class(&bound)?;
       Ok(this.name.clone())

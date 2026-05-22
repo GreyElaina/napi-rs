@@ -68,7 +68,9 @@ fn blocking_void_return<'env>(#[napi(env)] env: &mut Env<'env>) -> Result<Promis
 }
 
 #[napi]
-pub fn blocking_optional_return<'env>(#[napi(env)] env: &mut Env<'env>) -> Result<Promise<'env, Option<u32>>> {
+pub fn blocking_optional_return<'env>(
+  #[napi(env)] env: &mut Env<'env>,
+) -> Result<Promise<'env, Option<u32>>> {
   env.with_scope(|scope| {
     scope
       .blocking(|| Ok(()))
@@ -103,7 +105,10 @@ pub fn async_resolve_array<'env>(
 }
 
 #[napi]
-pub fn blocking_finally<'env>(#[napi(env)] env: &mut Env<'env>, inner: ObjectRef) -> Result<Promise<'env, ()>> {
+pub fn blocking_finally<'env>(
+  #[napi(env)] env: &mut Env<'env>,
+  inner: ObjectRef,
+) -> Result<Promise<'env, ()>> {
   let label = "task-finally-cleanup".to_owned();
   env.with_scope(|scope| {
     scope

@@ -55,19 +55,25 @@ pub fn test_escaped_quotes_in_comments(input: String) -> String {
 }
 
 #[napi]
-pub fn create_zero_copy_utf16_string<'env>(#[napi(env)] env: &'env Env) -> Result<JsStringUtf16<'env>> {
+pub fn create_zero_copy_utf16_string<'env>(
+  #[napi(env)] env: &'env Env,
+) -> Result<JsStringUtf16<'env>> {
   let data = vec![0x0061, 0x0062, 0x0063];
   JsStringUtf16::from_data(env, data)
 }
 
 #[napi]
-pub fn create_zero_copy_latin1_string<'env>(#[napi(env)] env: &'env Env) -> Result<JsStringLatin1<'env>> {
+pub fn create_zero_copy_latin1_string<'env>(
+  #[napi(env)] env: &'env Env,
+) -> Result<JsStringLatin1<'env>> {
   let data = vec![0x48, 0x65, 0x6C, 0x6C, 0x6F]; // "Hello"
   JsStringLatin1::from_data(env, data)
 }
 
 #[napi]
-pub fn create_external_utf16_string<'env>(#[napi(env)] env: &'env Env) -> Result<JsStringUtf16<'env>> {
+pub fn create_external_utf16_string<'env>(
+  #[napi(env)] env: &'env Env,
+) -> Result<JsStringUtf16<'env>> {
   // Create UTF-16 data for "External UTF16"
   let data: Vec<u16> = "External UTF16".encode_utf16().collect();
   let data_ptr = data.as_ptr();
@@ -82,7 +88,9 @@ pub fn create_external_utf16_string<'env>(#[napi(env)] env: &'env Env) -> Result
 }
 
 #[napi]
-pub fn create_external_latin1_string<'env>(#[napi(env)] env: &'env Env) -> Result<JsStringLatin1<'env>> {
+pub fn create_external_latin1_string<'env>(
+  #[napi(env)] env: &'env Env,
+) -> Result<JsStringLatin1<'env>> {
   // Create Latin1 data for "External Latin1"
   let data = b"External Latin1".to_vec();
   let data_ptr = data.as_ptr();
@@ -104,7 +112,9 @@ pub fn create_external_latin1_empty<'env>(#[napi(env)] env: &'env Env) -> Result
 }
 
 #[napi]
-pub fn create_external_latin1_short<'env>(#[napi(env)] env: &'env Env) -> Result<JsStringLatin1<'env>> {
+pub fn create_external_latin1_short<'env>(
+  #[napi(env)] env: &'env Env,
+) -> Result<JsStringLatin1<'env>> {
   // Test with short string (likely to be copied by V8)
   let data = b"Hi".to_vec();
   let data_ptr = data.as_ptr();
@@ -119,7 +129,9 @@ pub fn create_external_latin1_short<'env>(#[napi(env)] env: &'env Env) -> Result
 }
 
 #[napi]
-pub fn create_external_latin1_long<'env>(#[napi(env)] env: &'env Env) -> Result<JsStringLatin1<'env>> {
+pub fn create_external_latin1_long<'env>(
+  #[napi(env)] env: &'env Env,
+) -> Result<JsStringLatin1<'env>> {
   // Test with long string (more likely to remain external)
   let data = b"This is a much longer string that is more likely to be kept as an external string by V8 rather than being copied".to_vec();
   let data_ptr = data.as_ptr();
@@ -195,13 +207,17 @@ pub fn test_latin1_methods(#[napi(env)] env: &Env, input: String) -> Result<Lati
 }
 
 #[napi]
-pub fn create_static_latin1_string<'env>(#[napi(env)] env: &'env Env) -> Result<JsStringLatin1<'env>> {
+pub fn create_static_latin1_string<'env>(
+  #[napi(env)] env: &'env Env,
+) -> Result<JsStringLatin1<'env>> {
   // Test from_static with a static Latin-1 string
   JsStringLatin1::from_static(env, "Static Latin1 string")
 }
 
 #[napi]
-pub fn create_static_utf16_string<'env>(#[napi(env)] env: &'env Env) -> Result<JsStringUtf16<'env>> {
+pub fn create_static_utf16_string<'env>(
+  #[napi(env)] env: &'env Env,
+) -> Result<JsStringUtf16<'env>> {
   // Test from_static with a static UTF-16 buffer
   static UTF16_DATA: &[u16] = &[
     0x0053, 0x0074, 0x0061, 0x0074, 0x0069, 0x0063, 0x0020, 0x0055, 0x0054, 0x0046, 0x0031, 0x0036,

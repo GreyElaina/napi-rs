@@ -580,14 +580,13 @@ fn napi_fn_from_decl(
     .iter_mut()
     .filter_map(|arg| match arg {
       syn::FnArg::Typed(ref mut p) => {
-        let arg_attrs = parse_arg_attributes(p, opts.ts_args_type().as_ref())
-          .unwrap_or_else(|e| {
-            errors.push(e);
-            ArgAttrParseResult {
-              ts_arg_type: None,
-              inject: None,
-            }
-          });
+        let arg_attrs = parse_arg_attributes(p, opts.ts_args_type().as_ref()).unwrap_or_else(|e| {
+          errors.push(e);
+          ArgAttrParseResult {
+            ts_arg_type: None,
+            inject: None,
+          }
+        });
 
         let ty_str = p.ty.to_token_stream().to_string();
         if let Some(path_arguments) = callback_traits.get(&ty_str) {

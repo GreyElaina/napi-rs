@@ -12,7 +12,11 @@ pub fn call0(#[napi(scope)] scope: &mut Scope, callback: Function<(), u32>) -> R
 }
 
 #[napi]
-pub fn call1(#[napi(scope)] scope: &mut Scope, callback: Function<u32, u32>, arg: u32) -> Result<u32> {
+pub fn call1(
+  #[napi(scope)] scope: &mut Scope,
+  callback: Function<u32, u32>,
+  arg: u32,
+) -> Result<u32> {
   scope.call(&callback, arg)
 }
 
@@ -47,7 +51,11 @@ pub fn call_with_nested_function_arg<'env, 'scope>(
 }
 
 #[napi]
-pub fn apply0(#[napi(scope)] scope: &mut Scope, ctx: Reference<Animal>, callback: Function<(), ()>) -> Result<()> {
+pub fn apply0(
+  #[napi(scope)] scope: &mut Scope,
+  ctx: Reference<Animal>,
+  callback: Function<(), ()>,
+) -> Result<()> {
   scope.apply(&callback, ctx, ())
 }
 

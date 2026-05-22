@@ -25,7 +25,9 @@ fn get_empty_buffer() -> Buffer {
 }
 
 #[napi]
-pub fn create_external_buffer_slice<'env>(#[napi(env)] env: &'env Env<'env>) -> Result<BufferSlice<'env>> {
+pub fn create_external_buffer_slice<'env>(
+  #[napi(env)] env: &'env Env<'env>,
+) -> Result<BufferSlice<'env>> {
   let mut data = String::from("Hello world").as_bytes().to_vec();
   let data_ptr = data.as_mut_ptr();
   let len = data.len();
@@ -172,7 +174,10 @@ fn accept_uint8_clamped_slice_and_buffer_slice(a: BufferSlice, b: Uint8ClampedSl
 }
 
 #[napi]
-fn async_reduce_buffer<'env>(#[napi(env)] env: &mut Env<'env>, buf: Buffer) -> Result<Promise<'env, u32>> {
+fn async_reduce_buffer<'env>(
+  #[napi(env)] env: &mut Env<'env>,
+  buf: Buffer,
+) -> Result<Promise<'env, u32>> {
   env.with_scope(|scope| {
     scope
       .blocking(move || Ok(buf.iter().fold(0u32, |a, b| a + *b as u32)))
@@ -233,12 +238,16 @@ pub fn create_uint8_clamped_array_from_external<'env>(
 }
 
 #[napi]
-pub fn array_buffer_from_data<'env>(#[napi(env)] env: &'env Env<'env>) -> Result<ArrayBuffer<'env>> {
+pub fn array_buffer_from_data<'env>(
+  #[napi(env)] env: &'env Env<'env>,
+) -> Result<ArrayBuffer<'env>> {
   ArrayBuffer::from_data(env, b"Hello world")
 }
 
 #[napi]
-pub fn array_buffer_from_external<'env>(#[napi(env)] env: &'env Env<'env>) -> Result<ArrayBuffer<'env>> {
+pub fn array_buffer_from_external<'env>(
+  #[napi(env)] env: &'env Env<'env>,
+) -> Result<ArrayBuffer<'env>> {
   let mut data = b"Hello world from external".to_vec();
   let data_ptr = data.as_mut_ptr();
   let len = data.len();
@@ -251,12 +260,16 @@ pub fn array_buffer_from_external<'env>(#[napi(env)] env: &'env Env<'env>) -> Re
 }
 
 #[napi]
-pub fn uint8_array_from_data<'env>(#[napi(env)] env: &'env Env<'env>) -> Result<Uint8ArraySlice<'env>> {
+pub fn uint8_array_from_data<'env>(
+  #[napi(env)] env: &'env Env<'env>,
+) -> Result<Uint8ArraySlice<'env>> {
   Uint8ArraySlice::from_data(env, b"Hello world")
 }
 
 #[napi]
-pub fn uint8_array_from_external<'env>(#[napi(env)] env: &'env Env<'env>) -> Result<Uint8ArraySlice<'env>> {
+pub fn uint8_array_from_external<'env>(
+  #[napi(env)] env: &'env Env<'env>,
+) -> Result<Uint8ArraySlice<'env>> {
   let mut data = b"Hello world".to_vec();
   let data_ptr = data.as_mut_ptr();
   let len = data.len();
@@ -269,7 +282,9 @@ pub fn uint8_array_from_external<'env>(#[napi(env)] env: &'env Env<'env>) -> Res
 }
 
 #[napi]
-pub fn create_i32_array_from_external<'env>(#[napi(env)] env: &'env Env<'env>) -> Result<Int32ArraySlice<'env>> {
+pub fn create_i32_array_from_external<'env>(
+  #[napi(env)] env: &'env Env<'env>,
+) -> Result<Int32ArraySlice<'env>> {
   let mut data = vec![-1, -2, 30000, -40, 5];
   unsafe {
     Int32ArraySlice::from_external(env, data.as_mut_ptr(), data.len(), data, |d| {

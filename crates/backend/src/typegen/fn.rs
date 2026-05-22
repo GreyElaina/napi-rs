@@ -73,7 +73,6 @@ fn receiver_class_name(inner: &Type, parent: Option<&proc_macro2::Ident>) -> Opt
   }
 }
 
-
 fn class_value_return_type(ty: &Type, parent: Option<&proc_macro2::Ident>) -> Option<String> {
   if let Some(input) = ty.as_class_input() {
     return receiver_class_name(input.inner(), parent);

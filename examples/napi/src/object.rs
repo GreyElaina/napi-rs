@@ -179,13 +179,18 @@ pub struct FunctionData<'a> {
 }
 
 #[napi]
-pub fn generate_function_and_call_it<'env>(#[napi(env)] env: &'env Env<'env>) -> Result<FunctionData<'env>> {
+pub fn generate_function_and_call_it<'env>(
+  #[napi(env)] env: &'env Env<'env>,
+) -> Result<FunctionData<'env>> {
   let handle = env.create_function_from_closure("handle_function", |_ctx| Ok(1))?;
   Ok(FunctionData { handle })
 }
 
 #[napi]
-pub fn get_null_byte_property(#[napi(scope)] scope: &mut Scope, obj: Object) -> Result<Option<String>> {
+pub fn get_null_byte_property(
+  #[napi(scope)] scope: &mut Scope,
+  obj: Object,
+) -> Result<Option<String>> {
   scope.get_optional_named_property(&obj, "\0virtual")
 }
 

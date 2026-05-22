@@ -75,7 +75,10 @@ impl ClassInArray {
 }
 
 #[napi]
-pub fn get_class_from_array(#[napi(env)] mut env: Env, arr: Array<'_>) -> napi::Result<Option<u32>> {
+pub fn get_class_from_array(
+  #[napi(env)] mut env: Env,
+  arr: Array<'_>,
+) -> napi::Result<Option<u32>> {
   env.with_scope(|scope| {
     let Some(reference) = arr.get_reference::<ClassInArray>(scope, 0)? else {
       return Ok(None);

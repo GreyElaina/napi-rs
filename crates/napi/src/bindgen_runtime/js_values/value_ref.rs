@@ -320,10 +320,7 @@ impl<T: NapiClass> TypeName for Ref<Class<T>> {
 }
 
 impl<T: NapiReceiver> WeakRef<Class<T>> {
-  pub(crate) fn upgrade_in(
-    &self,
-    scope: &mut Scope<'_, '_>,
-  ) -> Result<Option<Ref<Class<T>>>> {
+  pub(crate) fn upgrade_in(&self, scope: &mut Scope<'_, '_>) -> Result<Option<Ref<Class<T>>>> {
     let Some((object, record)) = self.upgrade_raw(scope)? else {
       return Ok(None);
     };
@@ -474,10 +471,7 @@ pub(crate) fn ensure_same_record(record: &Rc<EnvRecord>, scope: &Scope<'_, '_>) 
   }
 }
 
-pub(crate) fn ensure_record_match(
-  expected: &Rc<EnvRecord>,
-  actual: &Rc<EnvRecord>,
-) -> Result<()> {
+pub(crate) fn ensure_record_match(expected: &Rc<EnvRecord>, actual: &Rc<EnvRecord>) -> Result<()> {
   if Rc::ptr_eq(expected, actual) {
     Ok(())
   } else {
@@ -516,10 +510,7 @@ pub(crate) fn create_reference(
   Ok(raw)
 }
 
-pub(crate) fn reference_value(
-  env: sys::napi_env,
-  raw: sys::napi_ref,
-) -> Result<sys::napi_value> {
+pub(crate) fn reference_value(env: sys::napi_env, raw: sys::napi_ref) -> Result<sys::napi_value> {
   let mut object = ptr::null_mut();
   check_status!(
     unsafe { sys::napi_get_reference_value(env, raw, &mut object) },

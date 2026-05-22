@@ -1,9 +1,7 @@
 use std::{marker::PhantomData, ptr, rc::Rc};
 
 use super::{
-  value_ref::{
-    create_reference, ensure_same_record, reference_value, RefState,
-  },
+  value_ref::{create_reference, ensure_same_record, reference_value, RefState},
   Either, FromJs, Func, IntoJs, JsRefTarget, Local, Ref, Scope, TypeName, Unknown,
   ValidateNapiValue,
 };
@@ -11,8 +9,8 @@ use super::{
 #[cfg(feature = "napi4")]
 use crate::threadsafe_function::{ThreadsafeCallContext, ThreadsafeFunction};
 use crate::{
-  bindgen_runtime::JsObjectValue,
-  check_pending_exception, check_status, sys, Env, JsValue, Result, Status, ValueType,
+  bindgen_runtime::JsObjectValue, check_pending_exception, check_status, sys, Env, JsValue, Result,
+  Status, ValueType,
 };
 
 pub trait IntoJsArgs<'scope> {
@@ -718,8 +716,7 @@ impl<Args, Return> TypeName for Ref<Func<Args, Return>> {
   }
 }
 
-impl<'env, 'scope, Args, Return> FromJs<'env, 'scope> for Ref<Func<Args, Return>>
-{
+impl<'env, 'scope, Args, Return> FromJs<'env, 'scope> for Ref<Func<Args, Return>> {
   fn from_js(
     scope: &mut Scope<'env, 'scope>,
     value: Local<'scope, Unknown<'scope>>,

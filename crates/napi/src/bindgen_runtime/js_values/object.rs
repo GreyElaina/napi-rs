@@ -649,10 +649,7 @@ impl Ref<Obj> {
     ensure_record_match(&record, &env.record())?;
     let object = reference_value(env.0, self.state.raw_ref()?)?;
     let raw = create_reference(env.0, object, 0)?;
-    Ok(WeakRef::new(
-      RefState::new(raw, Rc::downgrade(&record)),
-      (),
-    ))
+    Ok(WeakRef::new(RefState::new(raw, Rc::downgrade(&record)), ()))
   }
 
   pub fn unref(self, env: &Env) -> Result<()> {

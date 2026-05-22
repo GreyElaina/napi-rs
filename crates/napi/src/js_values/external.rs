@@ -124,9 +124,7 @@ impl<'scope, T: 'static> crate::bindgen_runtime::JsRefTarget<'scope, Ref<Ext<T>>
   }
 }
 
-impl<'scope, T: 'static> crate::bindgen_runtime::JsRefTarget<'scope, Ref<Ext<T>>>
-  for External<T>
-{
+impl<'scope, T: 'static> crate::bindgen_runtime::JsRefTarget<'scope, Ref<Ext<T>>> for External<T> {
   fn create_ref(self, scope: &mut Scope<'_, 'scope>) -> Result<Ref<Ext<T>>> {
     let value = self.into_js(scope)?;
     let raw = create_reference(scope.env().raw(), value.raw(), 1)?;

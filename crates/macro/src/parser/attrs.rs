@@ -363,9 +363,9 @@ pub fn record_struct(ident: &Ident, js_name: String, opts: &BindgenAttrs) {
   let mut map = state.parsed.lock().unwrap();
   let struct_name = ident.to_string();
 
-  let parent = opts.extends().and_then(|p| {
-    p.segments.last().map(|seg| seg.ident.to_string())
-  });
+  let parent = opts
+    .extends()
+    .and_then(|p| p.segments.last().map(|seg| seg.ident.to_string()));
 
   map.insert(
     struct_name,
