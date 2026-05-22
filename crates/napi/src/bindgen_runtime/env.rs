@@ -499,14 +499,18 @@ impl<'env, 'scope> Scope<'env, 'scope> {
     })
   }
 
+  pub fn value_type_of<T>(&self, value: Local<'scope, T>) -> Result<ValueType> {
+    let mut raw_type = 0;
+    check_status!(unsafe { sys::napi_typeof(self.env.raw(), value.raw(), &mut raw_type) })?;
+    Ok(ValueType::from(raw_type))
+  }
+
   pub fn assert_value_type<T>(
     &mut self,
     value: Local<'scope, T>,
     expected: ValueType,
   ) -> Result<()> {
-    let mut raw_type = 0;
-    check_status!(unsafe { sys::napi_typeof(self.env.raw(), value.raw(), &mut raw_type) })?;
-    let received = ValueType::from(raw_type);
+    let received = self.value_type_of(value)?;
     if received == expected {
       Ok(())
     } else {
