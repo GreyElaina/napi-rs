@@ -541,6 +541,19 @@ fn handle_option_type(
   })
 }
 
+/// Handles conversion of Nullable<T> to TypeScript: always `T | null | undefined`
+fn handle_nullable_type(args: &[(String, bool)]) -> Option<(String, bool)> {
+  args.first().map(|(arg, _)| {
+    let is_arg_callback = arg.contains("=>");
+    let arg = if is_arg_callback {
+      format!("({arg})")
+    } else {
+      arg.clone()
+    };
+    (format!("{arg} | null | undefined"), true)
+  })
+}
+
 /// Handles conversion of class input types.
 fn handle_class_input_type(args: &[(String, bool)], rust_ty: String) -> Option<(String, bool)> {
   args
@@ -772,6 +785,8 @@ fn handle_type_path(
       Some(args.first().unwrap().to_owned())
     } else if rust_ty == "Option" {
       handle_option_type(&args, is_struct_field, is_return_ty)
+    } else if rust_ty == "Nullable" {
+      handle_nullable_type(&args)
     } else if ClassInputKind::from_ident(ident).is_some() {
       handle_class_input_type(&args, rust_ty)
     } else if rust_ty == "ClassInitializer" {
