@@ -229,6 +229,33 @@ unsafe impl<
 }
 
 impl<
+    T: 'static,
+    Return: for<'env, 'scope> FromJs<'env, 'scope>,
+    CallJsBackArgs: 'static,
+    ErrorStatus: AsRef<str> + From<Status> + Send + 'static,
+    const CalleeHandled: bool,
+    const Weak: bool,
+    const MaxQueueSize: usize,
+  > Clone
+  for ThreadsafeFunction<
+    T,
+    Return,
+    CallJsBackArgs,
+    ErrorStatus,
+    { CalleeHandled },
+    { Weak },
+    { MaxQueueSize },
+  >
+{
+  fn clone(&self) -> Self {
+    Self {
+      handle: self.handle.clone(),
+      _phantom: PhantomData,
+    }
+  }
+}
+
+impl<
     'env,
     'scope,
     T: 'static,
