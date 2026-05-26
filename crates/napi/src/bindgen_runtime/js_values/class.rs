@@ -606,7 +606,7 @@ impl<'scope> ClassStorageRef<'scope> {
     self.header
   }
 
-  fn scoped_state(&self) -> &'scope ClassStorageState {
+  pub(crate) fn scoped_state(&self) -> &'scope ClassStorageState {
     unsafe { self.header().state().as_ref() }
   }
 

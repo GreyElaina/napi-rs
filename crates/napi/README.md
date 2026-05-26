@@ -4,6 +4,10 @@
 
 A framework for building compiled `Node.js` add-ons in `Rust` via Node-API. Website: https://napi.rs
 
+## Fork Note
+
+This is a **heavily modified fork** diverged from upstream at v3 release (`e9c50bb4`). Major changes include lifetime-safe bindings (`Local<'scope, T>` / `Scope`), `IntoJs`/`FromJs` replacing `ToNapiValue`/`FromNapiValue`, unified reference model (`Ref<K>`/`ClassRef<T>`), native class inheritance (`NapiClass`/`NapiSubclass`/`ClassChain`), and several new features (`Nullable<T>`, parameter-level `#[napi(env/this/scope/rest)]`, `#[napi(post_init)]`). See [CHANGES.md](../../CHANGES.md) for full details.
+
 <p>
   <a href="https://discord.gg/SpWzYHsKHs">
   <img src="https://img.shields.io/discord/874290842444111882.svg?logo=discord&style=flat-square"

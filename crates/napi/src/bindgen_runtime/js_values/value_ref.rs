@@ -3,6 +3,8 @@ use std::marker::PhantomData;
 use std::ptr::{self, NonNull};
 use std::rc::{Rc, Weak};
 
+use std::cell::RefCell;
+
 use crate::{
   bindgen_runtime::{
     ClassAccess, ClassBorrow, ClassBorrowMut, ClassChain, ClassStorageHeader, ClassStorageRef,
@@ -412,6 +414,22 @@ impl<T: NapiClass> ClassRef<T> {
       RefState::new(raw, Rc::downgrade(&record)),
       self.access,
     ))
+  }
+
+  pub fn borrow_cell(&self) -> &RefCell<()> {
+    self.storage_ref().scoped_state().borrow_cell()
+  }
+
+  pub fn access_for<U: NapiClass>(&self) -> Result<ClassAccess> {
+    self.storage_ref().access_for(U::CLASS.info())
+  }
+
+  /// # Safety
+  ///
+  /// The caller must hold a borrow from `borrow_cell()` before dereferencing
+  /// the returned pointer.
+  pub unsafe fn segment_ptr(&self, access: ClassAccess) -> NonNull<u8> {
+    self.storage_ref().segment::<u8>(access)
   }
 
   pub fn cast<U: NapiClass>(self) -> Result<ClassRef<U>> {
