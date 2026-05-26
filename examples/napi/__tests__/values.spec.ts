@@ -306,6 +306,8 @@ import {
   SelfReferenceField,
   SelfReferential,
   PostInitChild,
+  FnRefHolder,
+  verifyEnvRecordCurrent,
 } from '../index.cjs'
 // import other stuff in `#[napi(module_exports)]`
 import nativeAddon from '../index.cjs'
@@ -550,6 +552,23 @@ test('function call', async (t) => {
   // Verify the generated types
   t.notThrows(() => optionalCallbackTypes())
   t.notThrows(() => optionalCallbackTypes((arg) => arg))
+})
+
+test('Ref::with_scope', (t) => {
+  t.true(verifyEnvRecordCurrent())
+
+  const holder = new FnRefHolder(
+    (a, b) => a + b,
+    (s) => `[${s}]`,
+  )
+  t.is(holder.callSum(3, 4), 7)
+  t.is(holder.callSum(100, 200), 300)
+  t.is(holder.callFmt('hello'), '[hello]')
+
+  // multiple calls reuse the same ref
+  for (let i = 0; i < 10; i++) {
+    t.is(holder.callSum(i, i), i * 2)
+  }
 })
 
 test('class', (t) => {

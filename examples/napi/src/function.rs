@@ -1,5 +1,5 @@
 use napi::{
-  bindgen_prelude::{Class, FnArgs, Function, FunctionRef, Promise, Ref, Scope},
+  bindgen_prelude::{Class, EnvRecord, FnArgs, Function, FunctionRef, Promise, Ref, Scope},
   threadsafe_function::{ThreadsafeFunctionCallMode, UnknownReturnValue},
   Env, Error, Result, Status,
 };
@@ -200,4 +200,44 @@ pub fn optional_callback_types(
     scope.call(&callback, "Hello".to_owned())?;
   }
   Ok(())
+}
+
+#[napi]
+pub fn verify_env_record_current() -> bool {
+  EnvRecord::current().is_ok()
+}
+
+#[napi]
+pub struct FnRefHolder {
+  sum_cb: FunctionRef<FnArgs<(u32, u32)>, u32>,
+  fmt_cb: FunctionRef<String, String>,
+}
+
+#[napi]
+impl FnRefHolder {
+  #[napi(constructor)]
+  pub fn new(
+    sum_cb: FunctionRef<FnArgs<(u32, u32)>, u32>,
+    fmt_cb: FunctionRef<String, String>,
+  ) -> Self {
+    Self { sum_cb, fmt_cb }
+  }
+
+  #[napi]
+  pub fn call_sum(&self, a: u32, b: u32) -> Result<u32> {
+    let cb = &self.sum_cb;
+    cb.with_scope(|scope| {
+      let func = scope.borrow_function(cb)?;
+      scope.call(&func, FnArgs::from((a, b)))
+    })
+  }
+
+  #[napi]
+  pub fn call_fmt(&self, input: String) -> Result<String> {
+    let cb = &self.fmt_cb;
+    cb.with_scope(|scope| {
+      let func = scope.borrow_function(cb)?;
+      scope.call(&func, input)
+    })
+  }
 }

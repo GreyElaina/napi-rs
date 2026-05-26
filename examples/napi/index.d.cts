@@ -314,6 +314,12 @@ export declare class Fib4 extends Iterator<object, void, number> {
   next(value?: number): IteratorResult<object, void>
 }
 
+export declare class FnRefHolder {
+  constructor(sumCb: (arg0: number, arg1: number) => number, fmtCb: (arg: string) => string)
+  callSum(a: number, b: number): number
+  callFmt(input: string): string
+}
+
 export declare class GetterSetterWithClosures {
   constructor()
 }
@@ -1439,6 +1445,8 @@ export declare function validateTypedArraySlice(input: Uint8Array): number
 export declare function validateUint8ClampedSlice(input: Uint8ClampedArray): number
 
 export declare function validateUndefined(i: undefined): boolean
+
+export declare function verifyEnvRecordCurrent(): boolean
 
 export interface ViteImportGlobMeta {
   isSubImportsPattern?: boolean

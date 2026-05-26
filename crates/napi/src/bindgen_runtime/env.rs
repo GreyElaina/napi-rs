@@ -130,6 +130,95 @@ impl EnvRecord {
     })
   }
 
+  pub fn current() -> Result<(sys::napi_env, Rc<Self>)> {
+    CACHED_RECORD.with_borrow(|cached| {
+      cached
+        .as_ref()
+        .map(|(key, record)| (*key as sys::napi_env, record.clone()))
+        .ok_or_else(|| {
+          Error::new(
+            Status::GenericFailure,
+            "No active EnvRecord on this thread".to_owned(),
+          )
+        })
+    })
+  }
+
+  /// Enter a scope from outside a NAPI callback context.
+  ///
+  /// Opens a handle scope and (with `napi3`) a callback scope for
+  /// async hooks and microtask checkpoint, then acquires the record,
+  /// drains deferred refs, and provides a `Scope` for JS operations.
+  ///
+  /// # Safety
+  ///
+  /// `raw` must be a valid `napi_env` and the caller must be on the
+  /// owning thread within the event loop (e.g., a libuv callback).
+  pub unsafe fn enter_external_scope<R>(
+    raw: sys::napi_env,
+    f: impl for<'env, 'scope> FnOnce(&'scope mut Scope<'env, 'scope>) -> Result<R>,
+  ) -> Result<R> {
+    let mut handle_scope = ptr::null_mut();
+    check_status!(
+      unsafe { sys::napi_open_handle_scope(raw, &mut handle_scope) },
+      "Failed to open handle scope"
+    )?;
+
+    #[cfg(feature = "napi3")]
+    let (async_context, cb_scope) = {
+      let mut global = ptr::null_mut();
+      check_status!(
+        unsafe { sys::napi_get_global(raw, &mut global) },
+        "Failed to get global for callback scope"
+      )?;
+      let mut resource_name = ptr::null_mut();
+      let name = "napi_rs_external_scope";
+      check_status!(
+        unsafe {
+          sys::napi_create_string_utf8(
+            raw,
+            name.as_ptr().cast(),
+            name.len() as isize,
+            &mut resource_name,
+          )
+        },
+        "Failed to create async resource name"
+      )?;
+      let mut async_ctx = ptr::null_mut();
+      check_status!(
+        unsafe { sys::napi_async_init(raw, global, resource_name, &mut async_ctx) },
+        "Failed to init async context"
+      )?;
+      let mut scope = ptr::null_mut();
+      check_status!(
+        unsafe { sys::napi_open_callback_scope(raw, global, async_ctx, &mut scope) },
+        "Failed to open callback scope"
+      )?;
+      (async_ctx, scope)
+    };
+
+    let result = unsafe { Self::enter_scope(raw, f) };
+
+    #[cfg(feature = "napi3")]
+    {
+      check_status!(
+        unsafe { sys::napi_close_callback_scope(raw, cb_scope) },
+        "Failed to close callback scope"
+      )?;
+      check_status!(
+        unsafe { sys::napi_async_destroy(raw, async_context) },
+        "Failed to destroy async context"
+      )?;
+    }
+
+    check_status!(
+      unsafe { sys::napi_close_handle_scope(raw, handle_scope) },
+      "Failed to close handle scope"
+    )?;
+
+    result
+  }
+
   /// Enter a callback scope with full ceremony:
   /// acquire record, drain deferred refs, catch unwind, provide Scope.
   ///

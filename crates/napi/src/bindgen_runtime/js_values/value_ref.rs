@@ -139,6 +139,16 @@ impl<K: JsRefKind> Ref<K> {
       marker: PhantomData,
     }
   }
+
+  pub fn with_scope<R>(
+    &self,
+    f: impl for<'env, 'scope> FnOnce(&'scope mut Scope<'env, 'scope>) -> Result<R>,
+  ) -> Result<R> {
+    let owner = self.state.owner_record()?;
+    let (raw_env, current) = EnvRecord::current()?;
+    ensure_record_match(&owner, &current)?;
+    unsafe { EnvRecord::enter_external_scope(raw_env, f) }
+  }
 }
 
 impl<K: JsRefKind> WeakRef<K> {
