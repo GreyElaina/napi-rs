@@ -1,5 +1,5 @@
 use napi::{
-  bindgen_prelude::{FnArgs, Function, FunctionRef, Promise, Reference, Scope},
+  bindgen_prelude::{Class, FnArgs, Function, FunctionRef, Promise, Ref, Scope},
   threadsafe_function::{ThreadsafeFunctionCallMode, UnknownReturnValue},
   Env, Error, Result, Status,
 };
@@ -53,7 +53,7 @@ pub fn call_with_nested_function_arg<'env, 'scope>(
 #[napi]
 pub fn apply0(
   #[napi(scope)] scope: &mut Scope,
-  ctx: Reference<Animal>,
+  ctx: Ref<Class<Animal>>,
   callback: Function<(), ()>,
 ) -> Result<()> {
   scope.apply(&callback, ctx, ())
@@ -62,7 +62,7 @@ pub fn apply0(
 #[napi]
 pub fn apply1(
   #[napi(scope)] scope: &mut Scope,
-  ctx: Reference<Animal>,
+  ctx: Ref<Class<Animal>>,
   callback: Function<String, ()>,
   name: String,
 ) -> Result<()> {
@@ -100,7 +100,7 @@ pub fn create_reference_on_function<'env>(
 #[napi]
 pub fn call_function_with_arg_and_ctx(
   #[napi(scope)] scope: &mut Scope,
-  ctx: Reference<Animal>,
+  ctx: Ref<Class<Animal>>,
   cb: Function<String, ()>,
   name: String,
 ) -> Result<()> {

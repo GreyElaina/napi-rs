@@ -6,7 +6,7 @@ use crate::{class::Animal, r#enum::Kind};
 
 #[napi]
 pub struct ClassWithLifetime {
-  inner: Reference<Animal>,
+  inner: ClassRef<Animal>,
 }
 
 #[napi]
@@ -14,22 +14,16 @@ impl ClassWithLifetime {
   #[napi(constructor)]
   pub fn new(#[napi(env)] mut env: Env, #[napi(this)] mut this: This) -> Result<Self> {
     env.with_scope(|scope| {
-      let inner = scope.reference(Animal::new(Kind::Cat, "alie".to_owned()))?;
-      this.set("inner", scope.clone_reference(&inner)?)?;
+      let inner = scope.class_ref(Animal::new(Kind::Cat, "alie".to_owned()))?;
+      this.set("inner", inner.clone(scope)?)?;
       Ok(Self { inner })
     })
   }
 
   #[napi]
-  pub fn get_name(&self, #[napi(env)] mut env: Env) -> Result<String> {
-    env.with_scope(|scope| {
-      let inner = scope.bind_reference(&self.inner)?;
-      let name = {
-        let animal = scope.borrow_class(&inner)?;
-        animal.get_name().to_owned()
-      };
-      Ok(name)
-    })
+  pub fn get_name(&self) -> Result<String> {
+    let animal = self.inner.borrow()?;
+    Ok(animal.get_name().to_owned())
   }
 }
 

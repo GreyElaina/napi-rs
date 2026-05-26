@@ -366,7 +366,7 @@ fn generator_next_fn<T: AsyncGenerator + NapiClass>(
     let item = {
       let scope = frame.scope_mut();
       let (access, storage) = unsafe { T::validate_raw_object(scope, instance)? };
-      let mut generator = unsafe { T::mut_from_validated_object(instance, storage, access)? };
+      let mut generator = unsafe { T::mut_from_validated_object(storage, access)? };
       <T as AsyncGenerator>::next(&mut *generator, input)
     };
 
@@ -407,7 +407,7 @@ fn generator_return_impl<T: AsyncGenerator + NapiClass>(
     let item = {
       let scope = frame.scope_mut();
       let (access, storage) = unsafe { T::validate_raw_object(scope, instance)? };
-      let mut generator = unsafe { T::mut_from_validated_object(instance, storage, access)? };
+      let mut generator = unsafe { T::mut_from_validated_object(storage, access)? };
       <T as AsyncGenerator>::complete(&mut *generator, input)
     };
 
@@ -446,7 +446,7 @@ fn generator_throw_impl<T: AsyncGenerator + NapiClass>(
     let caught = {
       let scope = frame.scope_mut();
       let (access, storage) = unsafe { T::validate_raw_object(scope, instance)? };
-      let mut generator = unsafe { T::mut_from_validated_object(instance, storage, access)? };
+      let mut generator = unsafe { T::mut_from_validated_object(storage, access)? };
       <T as AsyncGenerator>::catch(&mut *generator, env, thrown)
     };
     let promise = env.spawn_future_with_callback(caught, |_, value| {

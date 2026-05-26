@@ -1,7 +1,7 @@
 use napi::{
   bindgen_prelude::{
-    Buffer, ClassInitializer, ClassRef, ClassRefMut, Function, JsObjectValue, JsValue, Promise,
-    Reference, This, Unknown,
+    Buffer, Class, ClassBorrow, ClassBorrowMut, ClassInitializer, Function, JsObjectValue,
+    JsValue, Promise, Ref, This, Unknown,
   },
   Env, Property, Result,
 };
@@ -365,7 +365,7 @@ impl Optional {
 
 #[napi(object)]
 pub struct ObjectFieldClassReference {
-  pub bird: Reference<Bird>,
+  pub bird: Ref<Class<Bird>>,
 }
 
 #[napi]
@@ -384,7 +384,7 @@ pub fn create_object_with_class_field(
 #[napi]
 pub fn receive_object_with_class_field(
   object: ObjectFieldClassReference,
-) -> Result<Reference<Bird>> {
+) -> Result<Ref<Class<Bird>>> {
   Ok(object.bird)
 }
 
@@ -412,18 +412,18 @@ impl RendererNode {
   }
 
   #[napi]
-  pub fn receiver_id(#[napi(this)] this: ClassRef<Self>) -> u32 {
+  pub fn receiver_id(#[napi(this)] this: ClassBorrow<Self>) -> u32 {
     this.id
   }
 
   #[napi]
   pub fn owned_receiver_id(
     #[napi(env)] mut env: Env,
-    #[napi(this)] this: Reference<Self>,
+    #[napi(this)] this: Ref<Class<Self>>,
   ) -> Result<u32> {
     env.with_scope(|scope| {
-      let this = scope.bind_reference(&this)?;
-      let this = scope.borrow_class(&this)?;
+      let this = this.as_class_local(scope)?;
+      let this = this.borrow()?;
       Ok(this.id)
     })
   }
@@ -437,12 +437,12 @@ impl RendererNode {
   }
 
   #[napi]
-  pub fn set_id_from_receiver(#[napi(this)] mut this: ClassRefMut<Self>, id: u32) {
+  pub fn set_id_from_receiver(#[napi(this)] mut this: ClassBorrowMut<Self>, id: u32) {
     this.id = id;
   }
 
   #[napi]
-  pub fn has_same_id(&self, other: ClassRef<Self>) -> bool {
+  pub fn has_same_id(&self, other: ClassBorrow<Self>) -> bool {
     self.id == other.id
   }
 
@@ -483,7 +483,7 @@ impl ImageNode {
   }
 
   #[napi]
-  pub fn set_super_id(#[napi(this)] mut this: ClassRefMut<Self>, id: u32) -> Result<()> {
+  pub fn set_super_id(#[napi(this)] mut this: ClassBorrowMut<Self>, id: u32) -> Result<()> {
     this.as_super_mut()?.id = id;
     Ok(())
   }
@@ -548,20 +548,20 @@ pub struct Width {
 
 #[napi(constructor)]
 pub struct SelfReferenceField {
-  pub next: Option<Reference<Self>>,
+  pub next: Option<Ref<Class<Self>>>,
 }
 
 #[napi]
 impl SelfReferenceField {
   #[napi]
-  pub fn current(#[napi(this)] this: Reference<Self>) -> Reference<Self> {
+  pub fn current(#[napi(this)] this: Ref<Class<Self>>) -> Ref<Class<Self>> {
     this
   }
 
   #[napi]
-  pub fn maybe_next(&self, #[napi(env)] mut env: Env) -> Result<Option<Reference<Self>>> {
+  pub fn maybe_next(&self, #[napi(env)] mut env: Env) -> Result<Option<Ref<Class<Self>>>> {
     env.with_scope(|scope| match &self.next {
-      Some(next) => scope.clone_reference(next).map(Some),
+      Some(next) => next.clone(scope).map(Some),
       None => Ok(None),
     })
   }
@@ -573,10 +573,10 @@ impl SelfReferenceField {
 }
 
 #[napi]
-pub fn plus_one(#[napi(env)] mut env: Env, #[napi(this)] this: Reference<Width>) -> Result<i32> {
+pub fn plus_one(#[napi(env)] mut env: Env, #[napi(this)] this: Ref<Class<Width>>) -> Result<i32> {
   env.with_scope(|scope| {
-    let bound = scope.bind_reference(&this)?;
-    let value = scope.borrow_class(&bound)?.value;
+    let bound = this.as_class_local(scope)?;
+    let value = bound.borrow()?.value;
     Ok(value + 1)
   })
 }

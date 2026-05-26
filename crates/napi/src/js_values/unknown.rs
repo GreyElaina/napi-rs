@@ -87,14 +87,14 @@ impl<'scope> JsRefTarget<'scope, Ref<Unk>> for &Unknown<'_> {
 }
 
 impl Ref<Unk> {
-  pub fn get_value<'env>(&self, env: &'env Env) -> Result<Unknown<'env>> {
+  pub fn to_local<'env>(&self, env: &'env Env) -> Result<Unknown<'env>> {
     let record = self.state.owner_record()?;
     ensure_record_match(&record, &env.record())?;
     let result = reference_value(env.0, self.state.raw_ref()?)?;
     Ok(unsafe { Unknown::from_raw_unchecked(env.0, result) })
   }
 
-  pub fn unref(self, env: &Env) -> Result<()> {
+  pub fn close(self, env: &Env) -> Result<()> {
     let record = self.state.owner_record()?;
     ensure_record_match(&record, &env.record())?;
     delete_reference(env.0, self.state.take_raw()?)

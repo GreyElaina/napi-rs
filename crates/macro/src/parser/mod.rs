@@ -1286,19 +1286,13 @@ fn forbidden_class_field_type(ty: &Type) -> Option<(Ident, String)> {
     "FrameScope",
     "FunctionCallContext",
     "ClassLocal",
-    "ClassRef",
-    "ClassRefMut",
+    "ClassBorrow",
+    "ClassBorrowMut",
     "ClassStorageRef",
     "CleanupEnvHook",
     "Date",
-    "Ref",
-    "FunctionRef",
-    "ExternalRef",
     "EscapableHandleScope",
     "HandleScope",
-    "ObjectRef",
-    "UnknownRef",
-    "SymbolRef",
     "Object",
     "Promise",
     "PromiseFuture",
@@ -1401,10 +1395,10 @@ fn forbidden_js_visible_type(ty: &Type) -> Option<(Ident, &'static str)> {
   match ty {
     Type::Path(path) => {
       for segment in &path.path.segments {
-        if segment.ident == "WeakReference" {
+        if segment.ident == "WeakRef" || segment.ident == "WeakReference" {
           return Some((
             segment.ident.clone(),
-            "WeakReference<T> cannot be used in JavaScript-visible signatures",
+            "WeakRef<T> cannot be used in JavaScript-visible signatures",
           ));
         }
         if is_raw_napi_type_name(&segment.ident.to_string()) {

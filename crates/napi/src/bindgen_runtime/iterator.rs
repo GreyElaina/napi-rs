@@ -274,7 +274,7 @@ fn generator_next_impl<T: for<'a> ScopedGenerator<'a> + NapiClass + 'static>(
         let scope = frame.scope_mut();
         let (access, storage) = unsafe { T::validate_raw_object(scope, result.this())? };
         let mut generator =
-          unsafe { T::mut_from_validated_object(result.this(), storage, access)? };
+          unsafe { T::mut_from_validated_object(storage, access)? };
         let generator_env = *scope.env();
         let next = <T as ScopedGenerator<'_>>::next(&mut *generator, &generator_env, input);
         if let Some(value) = next {
@@ -318,7 +318,7 @@ fn generator_return_impl<T: for<'a> ScopedGenerator<'a> + NapiClass + 'static>(
     {
       let scope = frame.scope_mut();
       let (access, storage) = unsafe { T::validate_raw_object(scope, result.this())? };
-      let mut generator = unsafe { T::mut_from_validated_object(result.this(), storage, access)? };
+      let mut generator = unsafe { T::mut_from_validated_object(storage, access)? };
       generator.complete(input);
     }
     if let Some(value) = frame.optional_arg::<Unknown>(0)? {
@@ -358,7 +358,7 @@ fn generator_throw_impl<T: for<'a> ScopedGenerator<'a> + NapiClass + 'static>(
     let catch_result = {
       let scope = frame.scope_mut();
       let (access, storage) = unsafe { T::validate_raw_object(scope, result.this())? };
-      let mut generator = unsafe { T::mut_from_validated_object(result.this(), storage, access)? };
+      let mut generator = unsafe { T::mut_from_validated_object(storage, access)? };
       let generator_env = *scope.env();
       let handled = match <T as ScopedGenerator<'_>>::catch(&mut *generator, &generator_env, thrown)
       {

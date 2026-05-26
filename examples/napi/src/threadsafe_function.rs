@@ -231,12 +231,12 @@ pub fn call_async_with_unknown_return_value<'env>(
     ThreadsafeFunctionCallMode::NonBlocking,
     move |value, env| {
       let value = value?;
-      let return_value = value.get_value(&env)?;
+      let return_value = value.to_local(&env)?;
       let resolved = match return_value.get_type()? {
         ValueType::Object => 110,
         _ => 100,
       };
-      value.unref(&env)?;
+      value.close(&env)?;
       deferred.resolve(move |_| Ok(resolved));
       Ok(())
     },

@@ -14,7 +14,7 @@ impl TsfnReferenceOwner {
   }
 
   #[napi]
-  pub fn capture_reference(this: Reference<Self>, callback: Function<(), ()>) -> Result<()> {
+  pub fn capture_reference(this: Ref<Class<Self>>, callback: Function<(), ()>) -> Result<()> {
     let captured = Some(this);
     let tsfn = callback
       .build_threadsafe_function::<()>()

@@ -8,7 +8,7 @@ use crate::util::to_case;
 
 use crate::{
   codegen::{get_intermediate_ident, js_mod_to_token_stream},
-  type_semantics::{resolve_class_type, NapiTypeExt},
+  type_semantics::{resolve_class_type, ClassInputKind, NapiTypeExt},
   BindgenResult, FnKind, NapiImpl, NapiStruct, NapiStructKind, TryToTokens,
 };
 use crate::{NapiArray, NapiClass, NapiObject, NapiStructuredEnum, NapiTransparent};
@@ -30,38 +30,32 @@ fn has_receiver_frame_input_arg(item: &crate::NapiFn) -> bool {
   })
 }
 
-fn class_field_reference_class_type(ty: &syn::Type, owner: &Ident) -> Option<TokenStream> {
-  let input = ty.as_class_input()?;
-  if !input.kind().is_reference() {
-    return None;
-  }
-  input.class_type(Some(owner))
-}
-
 fn is_reference_class_type(ty: &syn::Type) -> bool {
   ty.as_class_input()
     .is_some_and(|input| input.kind().is_reference())
 }
 
-fn option_reference_class_type(ty: &syn::Type, owner: &Ident) -> Option<TokenStream> {
-  let input = ty.as_optional_class_input()?;
-  if !input.kind().is_reference() {
-    return None;
-  }
-  resolve_class_type(input.inner(), Some(owner))
-}
-
 fn class_field_from_frame(ty: &syn::Type, index: TokenStream, owner: &Ident) -> TokenStream {
-  if let Some(class) = class_field_reference_class_type(ty, owner) {
-    return quote! {
-      frame.arg_reference::<#class>(#index)?
-    };
+  if let Some(input) = ty.as_class_input() {
+    if let Some(class) = input.class_type(Some(owner)) {
+      return match input.kind() {
+        ClassInputKind::Ref => quote! { frame.arg_reference::<#class>(#index)? },
+        ClassInputKind::ClassRef => quote! { frame.arg_class_ref::<#class>(#index)? },
+        ClassInputKind::Borrow => quote! { frame.arg_class::<#class>(#index)? },
+        ClassInputKind::BorrowMut => quote! { frame.arg_class_mut::<#class>(#index)? },
+      };
+    }
   }
 
-  if let Some(class) = option_reference_class_type(ty, owner) {
-    return quote! {
-      frame.arg_opt_reference::<#class>(#index)?
-    };
+  if let Some(input) = ty.as_optional_class_input() {
+    if let Some(class) = resolve_class_type(input.inner(), Some(owner)) {
+      return match input.kind() {
+        ClassInputKind::Ref => quote! { frame.arg_opt_reference::<#class>(#index)? },
+        ClassInputKind::ClassRef => quote! { frame.arg_opt_class_ref::<#class>(#index)? },
+        ClassInputKind::Borrow => quote! { frame.arg_opt_class::<#class>(#index)? },
+        ClassInputKind::BorrowMut => quote! { frame.arg_opt_class_mut::<#class>(#index)? },
+      };
+    }
   }
 
   quote! {{
@@ -90,9 +84,12 @@ fn optional_reference_field_inner(ty: &syn::Type, owner: &Ident) -> Option<Token
   if !input.kind().is_reference() {
     return None;
   }
-  input
-    .class_type(Some(owner))
-    .map(|class| quote! { napi::bindgen_prelude::Reference<#class> })
+  let class = input.class_type(Some(owner))?;
+  Some(match input.kind() {
+    ClassInputKind::Ref => quote! { napi::bindgen_prelude::Ref<napi::bindgen_prelude::Class<#class>> },
+    ClassInputKind::ClassRef => quote! { napi::bindgen_prelude::ClassRef<#class> },
+    _ => unreachable!(),
+  })
 }
 
 fn class_field_from_object_scope(
@@ -138,7 +135,7 @@ fn class_field_into_js(ty: &syn::Type, field: &syn::Member) -> Option<TokenStrea
   if is_reference_class_type(ty) {
     return Some(quote! {
       let scope = frame.context_mut().scope_mut();
-      let val = scope.clone_reference(&obj.#field)?;
+      let val = obj.#field.clone(scope)?;
       napi::bindgen_prelude::IntoJs::into_js(val, scope).map(|local| local.raw())
     });
   }
@@ -152,7 +149,7 @@ fn class_field_into_js(ty: &syn::Type, field: &syn::Member) -> Option<TokenStrea
       match obj.#field.as_ref() {
         Some(reference) => {
           let scope = frame.context_mut().scope_mut();
-          let val = scope.clone_reference(reference)?;
+          let val = reference.clone(scope)?;
           napi::bindgen_prelude::IntoJs::into_js(val, scope).map(|local| local.raw())
         }
         None => #undefined,
@@ -366,13 +363,13 @@ impl NapiStruct {
         unsafe impl napi::bindgen_prelude::NapiReceiver for #name {
           type Access = napi::bindgen_prelude::ClassAccess;
 
-          type Ref<'scope> = napi::bindgen_prelude::ClassRef<'scope, Self>
+          type Borrow<'a> = napi::bindgen_prelude::ClassBorrow<'a, Self>
           where
-            Self: 'scope;
+            Self: 'a;
 
-          type Mut<'scope> = napi::bindgen_prelude::ClassRefMut<'scope, Self>
+          type BorrowMut<'a> = napi::bindgen_prelude::ClassBorrowMut<'a, Self>
           where
-            Self: 'scope;
+            Self: 'a;
 
           unsafe fn validate_raw_object<'scope>(
             scope: &mut napi::bindgen_prelude::Scope<'_, 'scope>,
@@ -386,22 +383,20 @@ impl NapiStruct {
           }
 
           unsafe fn ref_from_validated_object<'scope>(
-            object: napi::bindgen_prelude::sys::napi_value,
             storage: napi::bindgen_prelude::ClassStorageRef<'scope>,
             access: Self::Access,
-          ) -> napi::Result<Self::Ref<'scope>> {
+          ) -> napi::Result<Self::Borrow<'scope>> {
             unsafe {
-              napi::bindgen_prelude::ClassRef::from_validated_parts(object, storage, access)
+              napi::bindgen_prelude::ClassBorrow::from_validated_parts(storage, access)
             }
           }
 
           unsafe fn mut_from_validated_object<'scope>(
-            object: napi::bindgen_prelude::sys::napi_value,
             storage: napi::bindgen_prelude::ClassStorageRef<'scope>,
             access: Self::Access,
-          ) -> napi::Result<Self::Mut<'scope>> {
+          ) -> napi::Result<Self::BorrowMut<'scope>> {
             unsafe {
-              napi::bindgen_prelude::ClassRefMut::from_validated_parts(object, storage, access)
+              napi::bindgen_prelude::ClassBorrowMut::from_validated_parts(storage, access)
             }
           }
         }
@@ -496,13 +491,13 @@ impl NapiStruct {
         unsafe impl napi::bindgen_prelude::NapiReceiver for #name {
           type Access = napi::bindgen_prelude::ClassAccess;
 
-          type Ref<'scope> = napi::bindgen_prelude::ClassRef<'scope, Self>
+          type Borrow<'a> = napi::bindgen_prelude::ClassBorrow<'a, Self>
           where
-            Self: 'scope;
+            Self: 'a;
 
-          type Mut<'scope> = napi::bindgen_prelude::ClassRefMut<'scope, Self>
+          type BorrowMut<'a> = napi::bindgen_prelude::ClassBorrowMut<'a, Self>
           where
-            Self: 'scope;
+            Self: 'a;
 
           unsafe fn validate_raw_object<'scope>(
             scope: &mut napi::bindgen_prelude::Scope<'_, 'scope>,
@@ -516,22 +511,20 @@ impl NapiStruct {
           }
 
           unsafe fn ref_from_validated_object<'scope>(
-            object: napi::bindgen_prelude::sys::napi_value,
             storage: napi::bindgen_prelude::ClassStorageRef<'scope>,
             access: Self::Access,
-          ) -> napi::Result<Self::Ref<'scope>> {
+          ) -> napi::Result<Self::Borrow<'scope>> {
             unsafe {
-              napi::bindgen_prelude::ClassRef::from_validated_parts(object, storage, access)
+              napi::bindgen_prelude::ClassBorrow::from_validated_parts(storage, access)
             }
           }
 
           unsafe fn mut_from_validated_object<'scope>(
-            object: napi::bindgen_prelude::sys::napi_value,
             storage: napi::bindgen_prelude::ClassStorageRef<'scope>,
             access: Self::Access,
-          ) -> napi::Result<Self::Mut<'scope>> {
+          ) -> napi::Result<Self::BorrowMut<'scope>> {
             unsafe {
-              napi::bindgen_prelude::ClassRefMut::from_validated_parts(object, storage, access)
+              napi::bindgen_prelude::ClassBorrowMut::from_validated_parts(storage, access)
             }
           }
         }

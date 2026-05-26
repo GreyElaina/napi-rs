@@ -1,12 +1,13 @@
 use std::cell::Cell;
 use std::marker::PhantomData;
-use std::ptr;
+use std::ptr::{self, NonNull};
 use std::rc::{Rc, Weak};
 
 use crate::{
   bindgen_runtime::{
-    ClassChain, ClassStorageRef, EnvRecord, FrameObject, FrameScope, FromJs, IntoClassInitializer,
-    IntoJs, Local, NapiClass, NapiReceiver, Object, Result, Scope, TypeName, Unknown,
+    ClassAccess, ClassBorrow, ClassBorrowMut, ClassChain, ClassStorageHeader, ClassStorageRef,
+    EnvRecord, FrameObject, FrameScope, FromJs, IntoClassInitializer, IntoJs, Local, NapiClass,
+    NapiReceiver, Object, Result, Scope, TypeName, Unknown,
   },
   check_status, sys, Error, Status, ValueType,
 };
@@ -120,14 +121,12 @@ pub struct Ref<K: JsRefKind> {
   pub(crate) state: RefState,
   pub(crate) access: K::Access,
   marker: PhantomData<fn() -> K>,
-  not_send: PhantomData<Rc<()>>,
 }
 
 pub struct WeakRef<K: JsRefKind> {
   pub(crate) state: RefState,
   pub(crate) access: K::Access,
   marker: PhantomData<fn() -> K>,
-  not_send: PhantomData<Rc<()>>,
 }
 
 impl<K: JsRefKind> Ref<K> {
@@ -136,25 +135,7 @@ impl<K: JsRefKind> Ref<K> {
       state,
       access,
       marker: PhantomData,
-      not_send: PhantomData,
     }
-  }
-
-  pub(crate) fn close_in(self, scope: &mut Scope<'_, '_>) -> Result<()> {
-    let record = self.state.owner_record()?;
-    ensure_same_record(&record, scope)?;
-    delete_reference(scope.env().raw(), self.state.take_raw()?)
-  }
-
-  pub(crate) fn downgrade_in(&self, scope: &mut Scope<'_, '_>) -> Result<WeakRef<K>> {
-    let record = self.state.owner_record()?;
-    ensure_same_record(&record, scope)?;
-    let object = reference_value(scope.env().raw(), self.state.raw_ref()?)?;
-    let raw = create_reference(scope.env().raw(), object, 0)?;
-    Ok(WeakRef::new(
-      RefState::new(raw, Rc::downgrade(&record)),
-      self.access,
-    ))
   }
 }
 
@@ -164,14 +145,7 @@ impl<K: JsRefKind> WeakRef<K> {
       state,
       access,
       marker: PhantomData,
-      not_send: PhantomData,
     }
-  }
-
-  pub(crate) fn close_in(self, scope: &mut Scope<'_, '_>) -> Result<()> {
-    let record = self.state.owner_record()?;
-    ensure_same_record(&record, scope)?;
-    delete_reference(scope.env().raw(), self.state.take_raw()?)
   }
 
   pub(crate) fn upgrade_raw(
@@ -189,11 +163,6 @@ impl<K: JsRefKind> WeakRef<K> {
   }
 }
 
-// ── Type aliases ────────────────────────────────────────────────────
-
-pub type Reference<T> = Ref<Class<T>>;
-pub type WeakReference<T> = WeakRef<Class<T>>;
-
 // ── ClassLocal ──────────────────────────────────────────────────────
 
 pub struct ClassLocal<'env, 'scope, T: NapiReceiver> {
@@ -206,6 +175,24 @@ pub struct ClassLocal<'env, 'scope, T: NapiReceiver> {
 impl<'env, 'scope, T: NapiReceiver> ClassLocal<'env, 'scope, T> {
   pub fn as_object(&self) -> Local<'scope, Object<'scope>> {
     self.object
+  }
+
+  pub fn borrow(&self) -> Result<T::Borrow<'_>> {
+    unsafe { T::ref_from_validated_object(self.storage, self.access) }
+  }
+
+  pub fn borrow_mut(&self) -> Result<T::BorrowMut<'_>> {
+    unsafe { T::mut_from_validated_object(self.storage, self.access) }
+  }
+
+  pub fn to_ref(&self, scope: &mut Scope<'env, 'scope>) -> Result<Ref<Class<T>>> {
+    Ref::<Class<T>>::from_class_local(scope, self, 1)
+  }
+
+  pub fn to_weak_ref(&self, scope: &mut Scope<'env, 'scope>) -> Result<WeakRef<Class<T>>> {
+    let raw = create_reference(scope.env().raw(), self.object.raw(), 0)?;
+    let record = Rc::downgrade(scope.record());
+    Ok(WeakRef::new(RefState::new(raw, record), self.access))
   }
 }
 
@@ -221,7 +208,24 @@ impl<T: NapiReceiver> Ref<Class<T>> {
     unsafe { Self::from_object_unchecked(scope, object) }
   }
 
-  pub(crate) fn bind<'env, 'scope>(
+  pub fn close(self, scope: &mut Scope<'_, '_>) -> Result<()> {
+    let record = self.state.owner_record()?;
+    ensure_same_record(&record, scope)?;
+    delete_reference(scope.env().raw(), self.state.take_raw()?)
+  }
+
+  pub fn downgrade(&self, scope: &mut Scope<'_, '_>) -> Result<WeakRef<Class<T>>> {
+    let record = self.state.owner_record()?;
+    ensure_same_record(&record, scope)?;
+    let object = reference_value(scope.env().raw(), self.state.raw_ref()?)?;
+    let raw = create_reference(scope.env().raw(), object, 0)?;
+    Ok(WeakRef::new(
+      RefState::new(raw, Rc::downgrade(&record)),
+      self.access,
+    ))
+  }
+
+  pub fn as_class_local<'env, 'scope>(
     &self,
     scope: &mut Scope<'env, 'scope>,
   ) -> Result<ClassLocal<'env, 'scope, T>> {
@@ -239,7 +243,7 @@ impl<T: NapiReceiver> Ref<Class<T>> {
     })
   }
 
-  pub(crate) fn try_clone_in(&self, scope: &mut Scope<'_, '_>) -> Result<Self> {
+  pub fn clone(&self, scope: &mut Scope<'_, '_>) -> Result<Self> {
     let record = self.state.owner_record()?;
     ensure_same_record(&record, scope)?;
     let object = reference_value(scope.env().raw(), self.state.raw_ref()?)?;
@@ -257,7 +261,7 @@ impl<T: NapiReceiver> Ref<Class<T>> {
     Ok(Self::new(RefState::new(raw, record), access))
   }
 
-  pub(crate) fn cast_in<U: NapiReceiver>(
+  pub fn cast<U: NapiReceiver>(
     &self,
     scope: &mut Scope<'_, '_>,
   ) -> Result<Ref<Class<U>>> {
@@ -320,7 +324,13 @@ impl<T: NapiClass> TypeName for Ref<Class<T>> {
 }
 
 impl<T: NapiReceiver> WeakRef<Class<T>> {
-  pub(crate) fn upgrade_in(&self, scope: &mut Scope<'_, '_>) -> Result<Option<Ref<Class<T>>>> {
+  pub fn close(self, scope: &mut Scope<'_, '_>) -> Result<()> {
+    let record = self.state.owner_record()?;
+    ensure_same_record(&record, scope)?;
+    delete_reference(scope.env().raw(), self.state.take_raw()?)
+  }
+
+  pub fn upgrade(&self, scope: &mut Scope<'_, '_>) -> Result<Option<Ref<Class<T>>>> {
     let Some((object, record)) = self.upgrade_raw(scope)? else {
       return Ok(None);
     };
@@ -334,92 +344,174 @@ impl<T: NapiReceiver> WeakRef<Class<T>> {
   }
 }
 
+// ── ClassRef<T> (owned Layer 1) ────────────────────────────────────
+
+pub struct ClassRef<T: NapiClass> {
+  state: RefState,
+  storage_header: NonNull<ClassStorageHeader>,
+  access: ClassAccess,
+  marker: PhantomData<fn() -> T>,
+}
+
+impl<T: NapiClass> ClassRef<T> {
+  fn new(state: RefState, storage_header: NonNull<ClassStorageHeader>, access: ClassAccess) -> Self {
+    Self {
+      state,
+      storage_header,
+      access,
+      marker: PhantomData,
+    }
+  }
+
+  fn storage_ref(&self) -> ClassStorageRef<'_> {
+    unsafe { ClassStorageRef::new(self.storage_header) }
+  }
+
+  pub fn borrow(&self) -> Result<ClassBorrow<'_, T>> {
+    unsafe { ClassBorrow::from_validated_parts(self.storage_ref(), self.access) }
+  }
+
+  pub fn borrow_mut(&self) -> Result<ClassBorrowMut<'_, T>> {
+    unsafe { ClassBorrowMut::from_validated_parts(self.storage_ref(), self.access) }
+  }
+
+  pub fn close(self, scope: &mut Scope<'_, '_>) -> Result<()> {
+    let record = self.state.owner_record()?;
+    ensure_same_record(&record, scope)?;
+    delete_reference(scope.env().raw(), self.state.take_raw()?)
+  }
+
+  pub fn to_local<'scope>(
+    &self,
+    scope: &mut Scope<'_, 'scope>,
+  ) -> Result<Local<'scope, Object<'scope>>> {
+    let record = self.state.owner_record()?;
+    ensure_same_record(&record, scope)?;
+    let raw = reference_value(scope.env().raw(), self.state.raw_ref()?)?;
+    Ok(unsafe { Local::from_raw(raw) })
+  }
+
+  pub fn clone(&self, scope: &mut Scope<'_, '_>) -> Result<ClassRef<T>> {
+    let record = self.state.owner_record()?;
+    ensure_same_record(&record, scope)?;
+    let object = reference_value(scope.env().raw(), self.state.raw_ref()?)?;
+    let raw = create_reference(scope.env().raw(), object, 1)?;
+    Ok(ClassRef::new(
+      RefState::new(raw, Rc::downgrade(&record)),
+      self.storage_header,
+      self.access,
+    ))
+  }
+
+  pub fn downgrade(&self, scope: &mut Scope<'_, '_>) -> Result<WeakRef<Class<T>>> {
+    let record = self.state.owner_record()?;
+    ensure_same_record(&record, scope)?;
+    let object = reference_value(scope.env().raw(), self.state.raw_ref()?)?;
+    let raw = create_reference(scope.env().raw(), object, 0)?;
+    Ok(WeakRef::new(
+      RefState::new(raw, Rc::downgrade(&record)),
+      self.access,
+    ))
+  }
+
+  pub fn cast<U: NapiClass>(self) -> Result<ClassRef<U>> {
+    let header = unsafe { self.storage_header.as_ref() };
+    let access = header.layout().find(U::CLASS.info()).ok_or_else(|| {
+      Error::new(
+        Status::InvalidArg,
+        format!(
+          "Cannot cast ClassRef<{}> to ClassRef<{}>: target class not in inheritance chain",
+          T::CLASS.info().rust_name(),
+          U::CLASS.info().rust_name(),
+        ),
+      )
+    })?;
+    Ok(ClassRef {
+      state: self.state,
+      storage_header: self.storage_header,
+      access,
+      marker: PhantomData,
+    })
+  }
+
+  pub(crate) fn from_frame_object<'scope>(
+    context: &mut FrameScope<'_, 'scope>,
+    object: FrameObject<'scope>,
+  ) -> Result<Self> {
+    let raw_object = object.raw_for(context)?;
+    let (access, storage) = T::validate_object(context, object)?;
+    let raw = create_reference(context.scope_mut().env().raw(), raw_object, 1)?;
+    let record = Rc::downgrade(context.scope_mut().record());
+    Ok(Self::new(
+      RefState::new(raw, record),
+      storage.header_ptr(),
+      access,
+    ))
+  }
+}
+
+impl<T: NapiClass> Ref<Class<T>> {
+  pub fn into_class_ref(self, scope: &mut Scope<'_, '_>) -> Result<ClassRef<T>> {
+    let record = self.state.owner_record()?;
+    ensure_same_record(&record, scope)?;
+    let object = reference_value(scope.env().raw(), self.state.raw_ref()?)?;
+    let (access, storage) = unsafe { T::validate_raw_object(scope, object) }?;
+    ensure_same_access(self.access, access)?;
+    Ok(ClassRef::new(self.state, storage.header_ptr(), access))
+  }
+}
+
+impl<'scope, T: NapiClass> IntoJs<'scope> for ClassRef<T> {
+  type Output = Object<'scope>;
+
+  fn into_js(self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
+    self.to_local(scope)
+  }
+}
+
+impl<'env, 'scope, T: NapiClass> FromJs<'env, 'scope> for ClassRef<T> {
+  fn from_js(
+    scope: &mut Scope<'env, 'scope>,
+    value: Local<'scope, Unknown<'scope>>,
+  ) -> Result<Self> {
+    let object = value.raw();
+    let (access, storage) = unsafe { T::validate_raw_object(scope, object) }?;
+    let raw = create_reference(scope.env().raw(), object, 1)?;
+    let record = Rc::downgrade(scope.record());
+    Ok(Self::new(
+      RefState::new(raw, record),
+      storage.header_ptr(),
+      access,
+    ))
+  }
+}
+
+impl<T: NapiClass> TypeName for ClassRef<T> {
+  fn type_name() -> &'static str {
+    T::CLASS.info().js_name()
+  }
+
+  fn value_type() -> ValueType {
+    ValueType::Object
+  }
+}
+
 // ── Scope methods ───────────────────────────────────────────────────
 
 impl<'env, 'scope> Scope<'env, 'scope> {
-  pub fn reference<T>(&mut self, value: T) -> Result<Reference<T>>
+  pub fn reference<T>(&mut self, value: T) -> Result<Ref<Class<T>>>
   where
     T: NapiClass + ClassChain + IntoClassInitializer<T>,
   {
     Ref::<Class<T>>::new_in(self, value)
   }
 
-  pub fn bind_reference<T: NapiReceiver>(
-    &mut self,
-    reference: &Reference<T>,
-  ) -> Result<ClassLocal<'env, 'scope, T>> {
-    reference.bind(self)
-  }
-
-  pub fn clone_reference<T: NapiReceiver>(
-    &mut self,
-    reference: &Reference<T>,
-  ) -> Result<Reference<T>> {
-    reference.try_clone_in(self)
-  }
-
-  pub fn downgrade_reference<T: NapiReceiver>(
-    &mut self,
-    reference: &Reference<T>,
-  ) -> Result<WeakReference<T>> {
-    reference.downgrade_in(self)
-  }
-
-  pub fn cast_reference<T: NapiReceiver, U: NapiReceiver>(
-    &mut self,
-    reference: &Reference<T>,
-  ) -> Result<Reference<U>> {
-    reference.cast_in(self)
-  }
-
-  pub fn close_reference<T: NapiReceiver>(&mut self, reference: Reference<T>) -> Result<()> {
-    reference.close_in(self)
-  }
-
-  pub fn upgrade_reference<T: NapiReceiver>(
-    &mut self,
-    reference: &WeakReference<T>,
-  ) -> Result<Option<Reference<T>>> {
-    reference.upgrade_in(self)
-  }
-
-  pub fn close_weak_reference<T: NapiReceiver>(
-    &mut self,
-    reference: WeakReference<T>,
-  ) -> Result<()> {
-    reference.close_in(self)
-  }
-
-  pub fn create_reference<T: NapiReceiver>(
-    &mut self,
-    local: &ClassLocal<'env, 'scope, T>,
-  ) -> Result<Reference<T>> {
-    Ref::<Class<T>>::from_class_local(self, local, 1)
-  }
-
-  pub fn create_weak_reference<T: NapiReceiver>(
-    &mut self,
-    local: &ClassLocal<'env, 'scope, T>,
-  ) -> Result<WeakReference<T>> {
-    let raw = create_reference(self.env().raw(), local.object.raw(), 0)?;
-    let record = Rc::downgrade(self.record());
-    Ok(WeakRef::new(RefState::new(raw, record), local.access))
-  }
-
-  pub fn borrow_class<'borrow, T: NapiReceiver>(
-    &'borrow mut self,
-    local: &'borrow ClassLocal<'env, 'scope, T>,
-  ) -> Result<T::Ref<'borrow>> {
-    let storage = local.storage;
-    unsafe { T::ref_from_validated_object(local.object.raw(), storage, local.access) }
-  }
-
-  pub fn borrow_class_mut<'borrow, T: NapiReceiver>(
-    &'borrow mut self,
-    local: &'borrow ClassLocal<'env, 'scope, T>,
-  ) -> Result<T::Mut<'borrow>> {
-    let storage = local.storage;
-    unsafe { T::mut_from_validated_object(local.object.raw(), storage, local.access) }
+  pub fn class_ref<T>(&mut self, value: T) -> Result<ClassRef<T>>
+  where
+    T: NapiClass + ClassChain + IntoClassInitializer<T>,
+  {
+    let r = self.reference(value)?;
+    r.into_class_ref(self)
   }
 
   pub fn same_class_object<T: NapiReceiver, U: NapiReceiver>(

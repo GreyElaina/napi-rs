@@ -7,19 +7,44 @@ use super::{
 };
 use crate::{typegen::JSDoc, util::to_case, NapiImpl, NapiStruct, NapiStructField, NapiStructKind};
 
+fn unwrap_class_wrapper(ty: &syn::Type) -> &syn::Type {
+  if let syn::Type::Path(path) = ty {
+    if let Some(segment) = path.path.segments.last() {
+      if segment.ident == "Class" {
+        if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
+          if let Some(syn::GenericArgument::Type(inner)) = args.args.first() {
+            return inner;
+          }
+        }
+      }
+    }
+  }
+  ty
+}
+
+fn is_self_ref_ident(ident: &str, inner: &syn::Type) -> bool {
+  match ident {
+    "Ref" => is_self_type(unwrap_class_wrapper(inner)),
+    "ClassRef" => is_self_type(inner),
+    _ => false,
+  }
+}
+
 fn reference_self_field_type(ty: &syn::Type, owner: &str) -> Option<(String, bool)> {
   let syn::Type::Path(path) = ty else {
     return None;
   };
   let segment = path.path.segments.last()?;
-  if segment.ident == "Reference" {
+  let ident_str = segment.ident.to_string();
+
+  if ident_str == "Ref" || ident_str == "ClassRef" {
     let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
       return None;
     };
     let Some(syn::GenericArgument::Type(inner)) = args.args.first() else {
       return None;
     };
-    if is_self_type(inner) {
+    if is_self_ref_ident(&ident_str, inner) {
       return Some((owner.to_owned(), false));
     }
   }
@@ -36,18 +61,18 @@ fn reference_self_field_type(ty: &syn::Type, owner: &str) -> Option<(String, boo
   let syn::Type::Path(inner_path) = inner else {
     return None;
   };
-  if inner_path.path.segments.last()?.ident != "Reference" {
+  let inner_segment = inner_path.path.segments.last()?;
+  let inner_ident_str = inner_segment.ident.to_string();
+  if inner_ident_str != "Ref" && inner_ident_str != "ClassRef" {
     return None;
   }
-  let syn::PathArguments::AngleBracketed(reference_args) =
-    &inner_path.path.segments.last()?.arguments
-  else {
+  let syn::PathArguments::AngleBracketed(reference_args) = &inner_segment.arguments else {
     return None;
   };
   let Some(syn::GenericArgument::Type(reference_inner)) = reference_args.args.first() else {
     return None;
   };
-  if is_self_type(reference_inner) {
+  if is_self_ref_ident(&inner_ident_str, reference_inner) {
     Some((owner.to_owned(), true))
   } else {
     None

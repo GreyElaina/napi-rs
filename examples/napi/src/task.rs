@@ -118,10 +118,10 @@ pub fn blocking_finally<'env>(
       })
       .promise(move |scope, ()| {
         let env = scope.env();
-        let mut obj = inner.get_value(env)?;
+        let mut obj = inner.to_local(env)?;
         obj.set("resolve", true)?;
         obj.set("finally", true)?;
-        inner.unref(env)?;
+        inner.close(env)?;
         Ok(())
       })
   })

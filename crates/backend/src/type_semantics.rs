@@ -5,30 +5,33 @@ use crate::{BindgenResult, Diagnostic};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ClassInputKind {
-  Reference,
   Ref,
-  MutRef,
+  ClassRef,
+  Borrow,
+  BorrowMut,
 }
 
 impl ClassInputKind {
   pub(crate) fn from_ident(ident: &Ident) -> Option<Self> {
-    if ident == "Reference" {
-      Some(Self::Reference)
-    } else if ident == "ClassRef" {
+    if ident == "Ref" {
       Some(Self::Ref)
-    } else if ident == "ClassRefMut" {
-      Some(Self::MutRef)
+    } else if ident == "ClassRef" {
+      Some(Self::ClassRef)
+    } else if ident == "ClassBorrow" {
+      Some(Self::Borrow)
+    } else if ident == "ClassBorrowMut" {
+      Some(Self::BorrowMut)
     } else {
       None
     }
   }
 
   pub(crate) fn is_mut(self) -> bool {
-    matches!(self, Self::MutRef)
+    matches!(self, Self::BorrowMut)
   }
 
   pub(crate) fn is_reference(self) -> bool {
-    matches!(self, Self::Reference)
+    matches!(self, Self::Ref | Self::ClassRef)
   }
 }
 
@@ -70,6 +73,24 @@ impl<'a> ClassInput<'a> {
   }
 }
 
+/// Unwrap `Class<T>` to `T`. Returns `None` if the type is not a `Class<T>` wrapper.
+fn unwrap_class_wrapper(ty: &Type) -> Option<&Type> {
+  let Type::Path(path) = ty else {
+    return None;
+  };
+  let segment = path.path.segments.last()?;
+  if segment.ident != "Class" {
+    return None;
+  }
+  let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
+    return None;
+  };
+  let Some(syn::GenericArgument::Type(inner)) = args.args.first() else {
+    return None;
+  };
+  Some(inner)
+}
+
 pub(crate) fn resolve_class_type(inner: &Type, parent: Option<&Ident>) -> Option<TokenStream> {
   if inner.is_self_type() {
     return parent.map(|parent| quote! { #parent });
@@ -101,6 +122,11 @@ impl NapiTypeExt for Type {
     };
     let Some(syn::GenericArgument::Type(inner)) = args.args.first() else {
       return None;
+    };
+    let inner = if kind == ClassInputKind::Ref {
+      unwrap_class_wrapper(inner).unwrap_or(inner)
+    } else {
+      inner
     };
     Some(ClassInput::new(kind, inner))
   }

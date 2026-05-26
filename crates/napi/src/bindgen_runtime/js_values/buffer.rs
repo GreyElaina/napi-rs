@@ -305,7 +305,7 @@ impl DerefMut for BufferSlice<'_> {
 ///
 /// Auto reference the raw JavaScript value, and release it when dropped.
 /// So it is safe to use it in `async fn`, the `&[u8]` under the hood will not be dropped until the `drop` called.
-/// Clone will create a new `Reference` to the same underlying `JavaScript Buffer`.
+/// Clone will create a new reference to the same underlying `JavaScript Buffer`.
 pub struct Buffer {
   pub(crate) inner: NonNull<u8>,
   pub(crate) len: usize,

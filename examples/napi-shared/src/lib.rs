@@ -26,15 +26,15 @@ impl From<(String, i32)> for ComplexClass {
 impl ComplexClass {
   #[napi(constructor)]
   pub fn new(
-    value: Either<String, Reference<ComplexClass>>,
+    value: Either<String, Ref<Class<ComplexClass>>>,
     number: i32,
     #[napi(env)] mut env: Env,
   ) -> Result<Self> {
     let value_str = match value {
       Either::A(s) => s,
       Either::B(reference) => env.with_scope(|scope| {
-        let reference = scope.bind_reference(&reference)?;
-        let instance = scope.borrow_class(&reference)?;
+        let reference = reference.as_class_local(scope)?;
+        let instance = reference.borrow()?;
         Ok(format!("cloned:{}", instance.value))
       })?,
     };

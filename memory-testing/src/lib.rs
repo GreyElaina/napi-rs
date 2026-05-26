@@ -91,14 +91,14 @@ impl MemoryHolder {
   #[napi]
   pub fn create_reference(
     &self,
-    this: Reference<MemoryHolder>,
+    this: Ref<Class<MemoryHolder>>,
   ) -> ClassInitializer<ChildReference> {
     ClassInitializer::from(ChildReference(this))
   }
 }
 
 #[napi]
-pub struct ChildReference(Reference<MemoryHolder>);
+pub struct ChildReference(Ref<Class<MemoryHolder>>);
 
 #[napi]
 impl ChildReference {

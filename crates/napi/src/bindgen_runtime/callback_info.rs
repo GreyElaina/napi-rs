@@ -520,49 +520,54 @@ impl<'env, 'scope> CallbackFrame<'env, 'scope> {
   fn class_from_object<T: NapiClass>(
     &mut self,
     object: FrameObject<'scope>,
-  ) -> Result<T::Ref<'scope>> {
-    let raw = object.raw_for(&self.context)?;
+  ) -> Result<T::Borrow<'scope>> {
     let (access, storage) = T::validate_object(&mut self.context, object)?;
-    unsafe { T::ref_from_validated_object(raw, storage, access) }
+    unsafe { T::ref_from_validated_object(storage, access) }
   }
 
   fn class_mut_from_object<T: NapiClass>(
     &mut self,
     object: FrameObject<'scope>,
-  ) -> Result<T::Mut<'scope>> {
-    let raw = object.raw_for(&self.context)?;
+  ) -> Result<T::BorrowMut<'scope>> {
     let (access, storage) = T::validate_object(&mut self.context, object)?;
-    unsafe { T::mut_from_validated_object(raw, storage, access) }
+    unsafe { T::mut_from_validated_object(storage, access) }
   }
 
   fn reference_from_object<T: NapiReceiver>(
     &mut self,
     object: FrameObject<'scope>,
-  ) -> Result<Reference<T>> {
-    Reference::from_frame_object(&mut self.context, object)
+  ) -> Result<Ref<Class<T>>> {
+    Ref::<Class<T>>::from_frame_object(&mut self.context, object)
   }
 
-  pub fn this_class<T: NapiClass>(&mut self) -> Result<T::Ref<'scope>> {
+  fn class_ref_from_object<T: NapiClass>(
+    &mut self,
+    object: FrameObject<'scope>,
+  ) -> Result<ClassRef<T>> {
+    ClassRef::<T>::from_frame_object(&mut self.context, object)
+  }
+
+  pub fn this_class<T: NapiClass>(&mut self) -> Result<T::Borrow<'scope>> {
     let object = self.this_object();
     self.class_from_object::<T>(object)
   }
 
-  pub fn this_class_mut<T: NapiClass>(&mut self) -> Result<T::Mut<'scope>> {
+  pub fn this_class_mut<T: NapiClass>(&mut self) -> Result<T::BorrowMut<'scope>> {
     let object = self.this_object();
     self.class_mut_from_object::<T>(object)
   }
 
-  pub fn arg_class<T: NapiClass>(&mut self, index: usize) -> Result<T::Ref<'scope>> {
+  pub fn arg_class<T: NapiClass>(&mut self, index: usize) -> Result<T::Borrow<'scope>> {
     let object = self.arg_object(index)?;
     self.class_from_object::<T>(object)
   }
 
-  pub fn arg_class_mut<T: NapiClass>(&mut self, index: usize) -> Result<T::Mut<'scope>> {
+  pub fn arg_class_mut<T: NapiClass>(&mut self, index: usize) -> Result<T::BorrowMut<'scope>> {
     let object = self.arg_object(index)?;
     self.class_mut_from_object::<T>(object)
   }
 
-  pub fn arg_opt_class<T: NapiClass>(&mut self, index: usize) -> Result<Option<T::Ref<'scope>>> {
+  pub fn arg_opt_class<T: NapiClass>(&mut self, index: usize) -> Result<Option<T::Borrow<'scope>>> {
     let Some(object) = self.arg_optional_object(index)? else {
       return Ok(None);
     };
@@ -572,31 +577,51 @@ impl<'env, 'scope> CallbackFrame<'env, 'scope> {
   pub fn arg_opt_class_mut<T: NapiClass>(
     &mut self,
     index: usize,
-  ) -> Result<Option<T::Mut<'scope>>> {
+  ) -> Result<Option<T::BorrowMut<'scope>>> {
     let Some(object) = self.arg_optional_object(index)? else {
       return Ok(None);
     };
     self.class_mut_from_object::<T>(object).map(Some)
   }
 
-  pub fn this_reference<T: NapiReceiver>(&mut self) -> Result<Reference<T>> {
+  pub fn this_reference<T: NapiReceiver>(&mut self) -> Result<Ref<Class<T>>> {
     let object = self.this_object();
     self.reference_from_object(object)
   }
 
-  pub fn arg_reference<T: NapiReceiver>(&mut self, index: usize) -> Result<Reference<T>> {
+  pub fn this_class_ref<T: NapiClass>(&mut self) -> Result<ClassRef<T>> {
+    let object = self.this_object();
+    self.class_ref_from_object(object)
+  }
+
+  pub fn arg_reference<T: NapiReceiver>(&mut self, index: usize) -> Result<Ref<Class<T>>> {
     let object = self.arg_object(index)?;
     self.reference_from_object(object)
+  }
+
+  pub fn arg_class_ref<T: NapiClass>(&mut self, index: usize) -> Result<ClassRef<T>> {
+    let object = self.arg_object(index)?;
+    self.class_ref_from_object(object)
   }
 
   pub fn arg_opt_reference<T: NapiReceiver>(
     &mut self,
     index: usize,
-  ) -> Result<Option<Reference<T>>> {
+  ) -> Result<Option<Ref<Class<T>>>> {
     let Some(object) = self.arg_optional_object(index)? else {
       return Ok(None);
     };
     self.reference_from_object(object).map(Some)
+  }
+
+  pub fn arg_opt_class_ref<T: NapiClass>(
+    &mut self,
+    index: usize,
+  ) -> Result<Option<ClassRef<T>>> {
+    let Some(object) = self.arg_optional_object(index)? else {
+      return Ok(None);
+    };
+    self.class_ref_from_object(object).map(Some)
   }
 }
 

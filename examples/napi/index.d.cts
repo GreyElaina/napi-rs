@@ -68,7 +68,7 @@ export declare class AnotherClassForEither {
 }
 
 export interface AnotherCssStyleSheet {
-  get rules(): CssRuleList
+  get rules(): Class<CssRuleList>
 }
 export declare const AnotherCssStyleSheet: {
   [Symbol.hasInstance](value: unknown): boolean
@@ -210,7 +210,7 @@ export declare const CreateStringClass: {
 export interface CssRuleList {
   getRules(): Array<string>
   get name(): string | null
-  get parentStyleSheet(): CSSStyleSheet
+  get parentStyleSheet(): Class<CSSStyleSheet>
 }
 export declare const CssRuleList: {
   [Symbol.hasInstance](value: unknown): boolean
@@ -219,7 +219,7 @@ export type CSSRuleList = CssRuleList
 
 export declare class CssStyleSheet {
   constructor(name: string, rules: Array<string>)
-  get rules(): CssRuleList
+  get rules(): Class<CssRuleList>
   anotherCssStyleSheet(): AnotherCssStyleSheet
 }
 export type CSSStyleSheet = CssStyleSheet
@@ -533,9 +533,9 @@ export interface AllOptionalObject {
 
 export declare function appendBuffer(buf: Buffer): Buffer
 
-export declare function apply0(ctx: Animal, callback: () => void): void
+export declare function apply0(ctx: Class<Animal>, callback: () => void): void
 
-export declare function apply1(ctx: Animal, callback: (arg: string) => void, name: string): void
+export declare function apply1(ctx: Class<Animal>, callback: (arg: string) => void, name: string): void
 
 export declare function arrayBufferFromData(): ArrayBuffer
 
@@ -619,7 +619,7 @@ export declare function callFunction(cb: () => number): number
 
 export declare function callFunctionWithArg(cb: (arg0: number, arg1: number) => number, arg0: number, arg1: number): number
 
-export declare function callFunctionWithArgAndCtx(ctx: Animal, cb: (arg: string) => void, name: string): void
+export declare function callFunctionWithArgAndCtx(ctx: Class<Animal>, cb: (arg: string) => void, name: string): void
 
 export declare function callLongThreadsafeFunction(tsfn: ((err: Error | null, arg: number) => unknown)): void
 
@@ -1056,7 +1056,7 @@ export interface Obj {
 }
 
 export interface ObjectFieldClassReference {
-  bird: Bird
+  bird: Class<Bird>
 }
 
 export declare function objectGetNamedPropertyShouldPerformTypecheck(obj: { foo: number; bar: string; }): void
@@ -1169,15 +1169,15 @@ export declare function receiveBindingVitePluginMeta(meta: BindingVitePluginMeta
 
 export declare function receiveBufferSliceWithLifetime(data: Data): number
 
-export declare function receiveClassOrNumber(either: number | JsClassForEither): number
+export declare function receiveClassOrNumber(either: number | Class<JsClassForEither>): number
 
-export declare function receiveDifferentClass(either: JsClassForEither | AnotherClassForEither): number
+export declare function receiveDifferentClass(either: Class<JsClassForEither> | Class<AnotherClassForEither>): number
 
-export declare function receiveMutClassOrNumber(either: number | JsClassForEither): number
+export declare function receiveMutClassOrNumber(either: number | Class<JsClassForEither>): number
 
 export declare function receiveObjectOnlyFromJs(obj: { count: number, callback: (err: Error | null, count: number) => void }): void
 
-export declare function receiveObjectWithClassField(object: ObjectFieldClassReference): Bird
+export declare function receiveObjectWithClassField(object: ObjectFieldClassReference): Class<Bird>
 
 export declare function receiveStrictObject(strictObject: StrictObject): void
 
@@ -1445,7 +1445,7 @@ export interface ViteImportGlobMeta {
 }
 
 export type VoidNullable<T = void> =
-  Nullable<T>
+  T | null | undefined
 
 export declare function withAbortController(a: number, b: number, signal: AbortSignal): Promise<number>
 
@@ -1478,7 +1478,7 @@ export declare namespace xxh3 {
 export declare class ComplexClass {
   value: string
   number: number
-  constructor(value: string | ComplexClass, number: number)
+  constructor(value: string | Class<ComplexClass>, number: number)
   methodOne(): string
   methodTwo(): number
   methodThree(): string

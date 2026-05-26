@@ -69,7 +69,7 @@ impl AnotherClassForEither {
 }
 
 #[napi]
-fn receive_class_or_number(either: Either<u32, Reference<JsClassForEither>>) -> u32 {
+fn receive_class_or_number(either: Either<u32, Ref<Class<JsClassForEither>>>) -> u32 {
   match either {
     Either::A(n) => n + 1,
     Either::B(_) => 100,
@@ -77,7 +77,7 @@ fn receive_class_or_number(either: Either<u32, Reference<JsClassForEither>>) -> 
 }
 
 #[napi]
-fn receive_mut_class_or_number(either: Either<u32, Reference<JsClassForEither>>) -> u32 {
+fn receive_mut_class_or_number(either: Either<u32, Ref<Class<JsClassForEither>>>) -> u32 {
   match either {
     Either::A(n) => n + 1,
     Either::B(_) => 100,
@@ -86,7 +86,7 @@ fn receive_mut_class_or_number(either: Either<u32, Reference<JsClassForEither>>)
 
 #[napi]
 fn receive_different_class(
-  either: Either<Reference<JsClassForEither>, Reference<AnotherClassForEither>>,
+  either: Either<Ref<Class<JsClassForEither>>, Ref<Class<AnotherClassForEither>>>,
 ) -> u32 {
   match either {
     Either::A(_) => 42,

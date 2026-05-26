@@ -83,8 +83,8 @@ pub fn get_class_from_array(
     let Some(reference) = arr.get_reference::<ClassInArray>(scope, 0)? else {
       return Ok(None);
     };
-    let bound = scope.bind_reference(&reference)?;
-    let value = scope.borrow_class(&bound)?.value;
+    let bound = reference.as_class_local(scope)?;
+    let value = bound.borrow()?.value;
     Ok(Some(value))
   })
 }

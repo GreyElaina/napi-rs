@@ -71,17 +71,19 @@ fn arg_needs_class_context(arg: &crate::NapiFnArg) -> bool {
 
 fn class_receiver_expr(input: &ClassInput<'_>, class: &TokenStream) -> TokenStream {
   match input.kind() {
-    ClassInputKind::Reference => quote! { frame.this_reference::<#class>()? },
-    ClassInputKind::Ref => quote! { frame.this_class::<#class>()? },
-    ClassInputKind::MutRef => quote! { frame.this_class_mut::<#class>()? },
+    ClassInputKind::Ref => quote! { frame.this_reference::<#class>()? },
+    ClassInputKind::ClassRef => quote! { frame.this_class_ref::<#class>()? },
+    ClassInputKind::Borrow => quote! { frame.this_class::<#class>()? },
+    ClassInputKind::BorrowMut => quote! { frame.this_class_mut::<#class>()? },
   }
 }
 
 fn class_arg_expr(input: &ClassInput<'_>, class: &TokenStream, index: usize) -> TokenStream {
   match input.kind() {
-    ClassInputKind::Reference => quote! { frame.arg_reference::<#class>(#index)? },
-    ClassInputKind::Ref => quote! { frame.arg_class::<#class>(#index)? },
-    ClassInputKind::MutRef => quote! { frame.arg_class_mut::<#class>(#index)? },
+    ClassInputKind::Ref => quote! { frame.arg_reference::<#class>(#index)? },
+    ClassInputKind::ClassRef => quote! { frame.arg_class_ref::<#class>(#index)? },
+    ClassInputKind::Borrow => quote! { frame.arg_class::<#class>(#index)? },
+    ClassInputKind::BorrowMut => quote! { frame.arg_class_mut::<#class>(#index)? },
   }
 }
 
@@ -91,9 +93,10 @@ fn optional_class_arg_expr(
   index: usize,
 ) -> TokenStream {
   match input.kind() {
-    ClassInputKind::Reference => quote! { frame.arg_opt_reference::<#class>(#index)? },
-    ClassInputKind::Ref => quote! { frame.arg_opt_class::<#class>(#index)? },
-    ClassInputKind::MutRef => quote! { frame.arg_opt_class_mut::<#class>(#index)? },
+    ClassInputKind::Ref => quote! { frame.arg_opt_reference::<#class>(#index)? },
+    ClassInputKind::ClassRef => quote! { frame.arg_opt_class_ref::<#class>(#index)? },
+    ClassInputKind::Borrow => quote! { frame.arg_opt_class::<#class>(#index)? },
+    ClassInputKind::BorrowMut => quote! { frame.arg_opt_class_mut::<#class>(#index)? },
   }
 }
 
@@ -582,7 +585,7 @@ impl NapiFn {
             } else {
               bail_span!(
                 path.ty,
-                "#[napi(this)] requires a This<T>, ClassRef<T>, ClassRefMut<T>, or similar receiver type"
+                "#[napi(this)] requires a This<T>, Ref<Class<T>>, ClassRef<T>, ClassBorrow<T>, ClassBorrowMut<T>, or similar receiver type"
               );
             }
             skipped_arg_count += 1;

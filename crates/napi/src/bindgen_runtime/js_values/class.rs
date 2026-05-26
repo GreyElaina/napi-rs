@@ -86,13 +86,13 @@ impl<T: NapiSubclass> NativeParent for T {
 pub unsafe trait NapiReceiver: Sized + 'static {
   type Access: Copy + Eq + 'static;
 
-  type Ref<'scope>: Deref<Target = Self>
+  type Borrow<'a>: Deref<Target = Self>
   where
-    Self: 'scope;
+    Self: 'a;
 
-  type Mut<'scope>: DerefMut<Target = Self>
+  type BorrowMut<'a>: DerefMut<Target = Self>
   where
-    Self: 'scope;
+    Self: 'a;
 
   fn validate_object<'scope>(
     context: &mut FrameScope<'_, 'scope>,
@@ -114,20 +114,18 @@ pub unsafe trait NapiReceiver: Sized + 'static {
   /// # Safety
   ///
   /// `storage` and `access` must come from a successful `validate_raw_object` for this receiver.
-  unsafe fn ref_from_validated_object<'scope>(
-    object: sys::napi_value,
-    storage: ClassStorageRef<'scope>,
+  unsafe fn ref_from_validated_object<'a>(
+    storage: ClassStorageRef<'a>,
     access: Self::Access,
-  ) -> Result<Self::Ref<'scope>>;
+  ) -> Result<Self::Borrow<'a>>;
 
   /// # Safety
   ///
   /// `storage` and `access` must come from a successful `validate_raw_object` for this receiver.
-  unsafe fn mut_from_validated_object<'scope>(
-    object: sys::napi_value,
-    storage: ClassStorageRef<'scope>,
+  unsafe fn mut_from_validated_object<'a>(
+    storage: ClassStorageRef<'a>,
     access: Self::Access,
-  ) -> Result<Self::Mut<'scope>>;
+  ) -> Result<Self::BorrowMut<'a>>;
 }
 
 pub struct ClassInfo {
@@ -604,6 +602,10 @@ impl<'scope> ClassStorageRef<'scope> {
     unsafe { self.header.as_ref() }
   }
 
+  pub(crate) fn header_ptr(&self) -> NonNull<ClassStorageHeader> {
+    self.header
+  }
+
   fn scoped_state(&self) -> &'scope ClassStorageState {
     unsafe { self.header().state().as_ref() }
   }
@@ -677,49 +679,15 @@ impl<'scope> ClassStorageRef<'scope> {
   }
 }
 
-pub struct ClassRef<'scope, T: NapiClass> {
-  object: sys::napi_value,
-  storage: ClassStorageRef<'scope>,
-  value: Ref<'scope, T>,
+pub struct ClassBorrow<'a, T: NapiClass> {
+  storage: ClassStorageRef<'a>,
+  value: Ref<'a, T>,
 }
 
-pub struct SuperRef<'borrow, P: NapiReceiver> {
-  value: NonNull<P>,
-  marker: PhantomData<&'borrow P>,
-}
-
-impl<P: NapiReceiver> Deref for SuperRef<'_, P> {
-  type Target = P;
-
-  fn deref(&self) -> &Self::Target {
-    unsafe { self.value.as_ref() }
-  }
-}
-
-pub struct SuperRefMut<'borrow, P: NapiReceiver> {
-  value: NonNull<P>,
-  marker: PhantomData<&'borrow mut P>,
-}
-
-impl<P: NapiReceiver> Deref for SuperRefMut<'_, P> {
-  type Target = P;
-
-  fn deref(&self) -> &Self::Target {
-    unsafe { self.value.as_ref() }
-  }
-}
-
-impl<P: NapiReceiver> DerefMut for SuperRefMut<'_, P> {
-  fn deref_mut(&mut self) -> &mut Self::Target {
-    unsafe { self.value.as_mut() }
-  }
-}
-
-impl<'scope, T: NapiClass> ClassRef<'scope, T> {
+impl<'a, T: NapiClass> ClassBorrow<'a, T> {
   #[doc(hidden)]
   pub unsafe fn from_validated_parts(
-    object: sys::napi_value,
-    storage: ClassStorageRef<'scope>,
+    storage: ClassStorageRef<'a>,
     access: ClassAccess,
   ) -> Result<Self> {
     let value = storage.segment(access);
@@ -736,41 +704,27 @@ impl<'scope, T: NapiClass> ClassRef<'scope, T> {
         })?,
       |_| unsafe { value.as_ref() },
     );
-    Ok(Self {
-      object,
-      storage,
-      value,
-    })
+    Ok(Self { storage, value })
   }
 
-  #[doc(hidden)]
-  pub unsafe fn object(&self) -> sys::napi_value {
-    self.object
-  }
-
-  pub fn as_super(&self) -> Result<SuperRef<'_, T::Parent>>
+  pub fn as_super(&self) -> Result<&T::Parent>
   where
     T::Parent: NapiClass,
   {
     let access = self.storage.access_for(T::Parent::CLASS.info())?;
-    Ok(SuperRef {
-      value: self.storage.segment(access),
-      marker: PhantomData,
-    })
+    Ok(unsafe { self.storage.segment::<T::Parent>(access).as_ref() })
   }
 }
 
-pub struct ClassRefMut<'scope, T: NapiClass> {
-  object: sys::napi_value,
-  storage: ClassStorageRef<'scope>,
-  value: RefMut<'scope, T>,
+pub struct ClassBorrowMut<'a, T: NapiClass> {
+  storage: ClassStorageRef<'a>,
+  value: RefMut<'a, T>,
 }
 
-impl<'scope, T: NapiClass> ClassRefMut<'scope, T> {
+impl<'a, T: NapiClass> ClassBorrowMut<'a, T> {
   #[doc(hidden)]
   pub unsafe fn from_validated_parts(
-    object: sys::napi_value,
-    storage: ClassStorageRef<'scope>,
+    storage: ClassStorageRef<'a>,
     access: ClassAccess,
   ) -> Result<Self> {
     let mut value = storage.segment(access);
@@ -787,31 +741,19 @@ impl<'scope, T: NapiClass> ClassRefMut<'scope, T> {
         })?,
       |_| unsafe { value.as_mut() },
     );
-    Ok(Self {
-      object,
-      storage,
-      value,
-    })
+    Ok(Self { storage, value })
   }
 
-  #[doc(hidden)]
-  pub unsafe fn object(&self) -> sys::napi_value {
-    self.object
-  }
-
-  pub fn as_super_mut(&mut self) -> Result<SuperRefMut<'_, T::Parent>>
+  pub fn as_super_mut(&mut self) -> Result<&mut T::Parent>
   where
     T::Parent: NapiClass,
   {
     let access = self.storage.access_for(T::Parent::CLASS.info())?;
-    Ok(SuperRefMut {
-      value: self.storage.segment(access),
-      marker: PhantomData,
-    })
+    Ok(unsafe { self.storage.segment::<T::Parent>(access).as_mut() })
   }
 }
 
-impl<T: NapiClass> Deref for ClassRef<'_, T> {
+impl<T: NapiClass> Deref for ClassBorrow<'_, T> {
   type Target = T;
 
   fn deref(&self) -> &Self::Target {
@@ -819,7 +761,7 @@ impl<T: NapiClass> Deref for ClassRef<'_, T> {
   }
 }
 
-impl<T: NapiClass> Deref for ClassRefMut<'_, T> {
+impl<T: NapiClass> Deref for ClassBorrowMut<'_, T> {
   type Target = T;
 
   fn deref(&self) -> &Self::Target {
@@ -827,7 +769,7 @@ impl<T: NapiClass> Deref for ClassRefMut<'_, T> {
   }
 }
 
-impl<T: NapiClass> DerefMut for ClassRefMut<'_, T> {
+impl<T: NapiClass> DerefMut for ClassBorrowMut<'_, T> {
   fn deref_mut(&mut self) -> &mut Self::Target {
     &mut self.value
   }

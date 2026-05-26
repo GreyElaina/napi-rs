@@ -32,7 +32,7 @@ impl<'env> Array<'env> {
     &self,
     scope: &mut Scope<'_, 'scope>,
     index: u32,
-  ) -> Result<Option<Reference<T>>> {
+  ) -> Result<Option<Ref<Class<T>>>> {
     if index >= self.len() {
       return Ok(None);
     }
@@ -45,7 +45,7 @@ impl<'env> Array<'env> {
         index,
       )?;
 
-      Ok(Some(Reference::from_object_unchecked(scope, ret)?))
+      Ok(Some(Ref::<Class<T>>::from_object_unchecked(scope, ret)?))
     }
   }
 

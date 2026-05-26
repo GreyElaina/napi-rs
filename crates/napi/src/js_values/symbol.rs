@@ -79,7 +79,7 @@ impl<'scope> JsRefTarget<'scope, Ref<Sym>> for Symbol {
 }
 
 impl Ref<Sym> {
-  pub fn get_value<'env>(&self, env: &'env Env) -> Result<JsSymbol<'env>> {
+  pub fn to_local<'env>(&self, env: &'env Env) -> Result<JsSymbol<'env>> {
     let record = self.state.owner_record()?;
     ensure_record_match(&record, &env.record())?;
     let result = reference_value(env.0, self.state.raw_ref()?)?;
@@ -93,7 +93,7 @@ impl Ref<Sym> {
     ))
   }
 
-  pub fn unref(self, env: &Env) -> Result<()> {
+  pub fn close(self, env: &Env) -> Result<()> {
     let record = self.state.owner_record()?;
     ensure_record_match(&record, &env.record())?;
     delete_reference(env.0, self.state.take_raw()?)
