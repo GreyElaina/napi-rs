@@ -205,6 +205,12 @@ pub mod __private {
   pub use crate::bindgen_runtime::{
     iterator::create_iterator, register_napi_class, register_napi_class_impl,
   };
+  #[cfg(not(target_family = "wasm"))]
+  pub use crate::bindgen_runtime::{
+    ClassImplDescriptor, ClassStructDescriptor, CLASS_IMPL_DESCRIPTORS, CLASS_STRUCT_DESCRIPTORS,
+  };
+  #[cfg(not(target_family = "wasm"))]
+  pub use linkme;
 
   #[cfg(feature = "tokio_rt")]
   pub use crate::bindgen_runtime::async_iterator::create_async_iterator;

@@ -106,6 +106,9 @@ tokio = { version = "1", features = [
 [target.'cfg(all(target_family = "wasm", not(tokio_unstable)))'.dependencies]
 tokio = { version = "1", features = ["rt", "sync"], optional = true }
 
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+linkme = "0.3.36"
+
 [dependencies.serde]
 optional = true
 version = "1"

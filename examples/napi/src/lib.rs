@@ -82,6 +82,7 @@ mod fn_ts_override;
 mod function;
 mod generator;
 mod js_mod;
+mod late_class_registration;
 mod lifetime;
 mod map;
 mod nullable;

@@ -303,6 +303,8 @@ import {
   RendererNode,
   ImageNode,
   PngImageNode,
+  LateRegisteredChild,
+  LateRegisteredBase,
   SelfReferenceField,
   SelfReferential,
   PostInitChild,
@@ -762,6 +764,14 @@ test('native class inheritance', (t) => {
   t.is(typeof image.nodeKind, 'function')
   t.is(Object.getPrototypeOf(PngImageNode.prototype), ImageNode.prototype)
   t.is(Object.getPrototypeOf(PngImageNode), ImageNode)
+})
+
+test('class impl can register before class struct', (t) => {
+  const child = new LateRegisteredChild(7, 11)
+  t.true(child instanceof LateRegisteredChild)
+  t.true(child instanceof LateRegisteredBase)
+  t.is(child.baseValue(), 7)
+  t.is(child.childValue(), 11)
 })
 
 test('class field can reference self', (t) => {

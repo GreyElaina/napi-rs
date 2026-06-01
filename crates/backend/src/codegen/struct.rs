@@ -1230,25 +1230,44 @@ impl NapiStruct {
     let constructible = class.ctor;
     quote! {
       #[cfg(all(not(test), not(target_family = "wasm")))]
-      napi::ctor::declarative::ctor! {
-        #[allow(non_snake_case)]
-        #[allow(clippy::all)]
-        #[ctor(unsafe)]
-        fn #struct_register_name() {
-          napi::__private::register_napi_class::<#name>(
-            #js_mod_ident,
-            #js_name,
-            vec![#(#props),*],
-            Some(constructor),
-            #constructible,
-            #implement_iterator,
-          );
+      #[allow(non_snake_case)]
+      #[allow(non_upper_case_globals)]
+      #[allow(clippy::all)]
+      mod #struct_register_name {
+        use super::*;
+        use napi::__private::linkme::distributed_slice;
+
+        fn __class() -> napi::bindgen_prelude::ErasedClassDef {
+          <#name as napi::bindgen_prelude::NapiClass>::CLASS.erase()
         }
+
+        fn __parent() -> Option<napi::bindgen_prelude::ErasedClassDef> {
+          <<#name as napi::bindgen_prelude::NapiClass>::Parent as napi::bindgen_prelude::NativeParent>::erased_class_def()
+        }
+
+        fn __props() -> Vec<napi::bindgen_prelude::Property> {
+          vec![#(#props),*]
+        }
+
+        #[distributed_slice(napi::__private::CLASS_STRUCT_DESCRIPTORS)]
+        #[linkme(crate = napi::__private::linkme)]
+        static __DESCRIPTOR: napi::__private::ClassStructDescriptor =
+          napi::__private::ClassStructDescriptor {
+            class: __class,
+            parent: __parent,
+            js_mod: #js_mod_ident,
+            js_name: #js_name,
+            hidden_constructor: Some(constructor),
+            constructible: #constructible,
+            implement_iterator: #implement_iterator,
+            props: __props,
+          };
       }
 
       #[allow(non_snake_case)]
       #[allow(clippy::all)]
       #[cfg(all(not(test), target_family = "wasm"))]
+      // Compatibility path only. Non-WASM registration is descriptor-driven.
       #[no_mangle]
       extern "C" fn #struct_register_name() {
         napi::__private::register_napi_class::<#name>(
@@ -1825,7 +1844,7 @@ impl TryToTokens for NapiImpl {
 
 impl NapiImpl {
   fn gen_helper_mod(&self) -> BindgenResult<TokenStream> {
-    if cfg!(test) || !self.is_class {
+    if cfg!(test) {
       return Ok(quote! {});
     }
 
@@ -1897,25 +1916,37 @@ impl NapiImpl {
     let js_mod_ident = js_mod_to_token_stream(self.js_mod.as_ref());
     Ok(quote! {
       #[allow(non_snake_case)]
+      #[allow(non_upper_case_globals)]
       #[allow(clippy::all)]
       mod #mod_name {
         use super::*;
+        use napi::__private::linkme::distributed_slice;
         #(#methods)*
 
         #[cfg(all(not(test), not(target_family = "wasm")))]
-        napi::ctor::declarative::ctor! {
-          #[ctor(unsafe)]
-          fn #register_name() {
-            napi::__private::register_napi_class_impl::<#name>(
-              #js_mod_ident,
-              #js_name,
-              vec![#(#props),*],
-              false,
-            );
-          }
+        fn __class() -> napi::bindgen_prelude::ErasedClassDef {
+          <#name as napi::bindgen_prelude::NapiClass>::CLASS.erase()
         }
 
+        #[cfg(all(not(test), not(target_family = "wasm")))]
+        fn __props() -> Vec<napi::bindgen_prelude::Property> {
+          vec![#(#props),*]
+        }
+
+        #[cfg(all(not(test), not(target_family = "wasm")))]
+        #[distributed_slice(napi::__private::CLASS_IMPL_DESCRIPTORS)]
+        #[linkme(crate = napi::__private::linkme)]
+        static #register_name: napi::__private::ClassImplDescriptor =
+          napi::__private::ClassImplDescriptor {
+            class: __class,
+            js_mod: #js_mod_ident,
+            js_name_hint: #js_name,
+            implement_iterator: false,
+            props: __props,
+          };
+
         #[cfg(all(not(test), target_family = "wasm"))]
+        // Compatibility path only. Non-WASM registration is descriptor-driven.
         #[no_mangle]
         extern "C" fn #register_name() {
           napi::__private::register_napi_class_impl::<#name>(

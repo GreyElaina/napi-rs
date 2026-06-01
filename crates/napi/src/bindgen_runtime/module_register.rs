@@ -20,6 +20,8 @@ use std::sync::{
   LazyLock, RwLock,
 };
 
+#[cfg(not(target_family = "wasm"))]
+use linkme::distributed_slice;
 #[cfg(not(feature = "noop"))]
 use rustc_hash::FxBuildHasher;
 
@@ -27,6 +29,8 @@ use rustc_hash::FxBuildHasher;
 use crate::bindgen_runtime::{
   ClassInfo, ClassKey, ClassStorageRef, EnvRecord, ErasedClassDef, NapiClass, NativeParent,
 };
+#[cfg(all(feature = "noop", not(target_family = "wasm")))]
+use crate::bindgen_runtime::ErasedClassDef;
 #[cfg(all(not(feature = "noop"), feature = "napi4"))]
 use crate::Env;
 #[cfg(all(not(feature = "noop"), feature = "node_version_detect"))]
@@ -71,6 +75,35 @@ struct ClassRegistration {
   constructible: bool,
   implement_iterator: bool,
 }
+
+#[cfg(not(target_family = "wasm"))]
+pub struct ClassStructDescriptor {
+  pub class: fn() -> ErasedClassDef,
+  pub parent: fn() -> Option<ErasedClassDef>,
+  pub js_mod: Option<&'static str>,
+  pub js_name: &'static str,
+  pub hidden_constructor: sys::napi_callback,
+  pub constructible: bool,
+  pub implement_iterator: bool,
+  pub props: fn() -> Vec<Property>,
+}
+
+#[cfg(not(target_family = "wasm"))]
+pub struct ClassImplDescriptor {
+  pub class: fn() -> ErasedClassDef,
+  pub js_mod: Option<&'static str>,
+  pub js_name_hint: &'static str,
+  pub implement_iterator: bool,
+  pub props: fn() -> Vec<Property>,
+}
+
+#[cfg(not(target_family = "wasm"))]
+#[distributed_slice]
+pub static CLASS_STRUCT_DESCRIPTORS: [ClassStructDescriptor];
+
+#[cfg(not(target_family = "wasm"))]
+#[distributed_slice]
+pub static CLASS_IMPL_DESCRIPTORS: [ClassImplDescriptor];
 
 #[cfg(not(feature = "noop"))]
 #[derive(Clone)]
@@ -122,7 +155,8 @@ impl ModuleClassProperty {
     f(&mut write_lock)
   }
 
-  pub(crate) fn borrow<F, R>(&self, f: F) -> R
+  #[cfg(target_family = "wasm")]
+  fn borrow<F, R>(&self, f: F) -> R
   where
     F: FnOnce(&ClassPropertyRegistry) -> R,
   {
@@ -232,6 +266,7 @@ static MODULE_REGISTER_CALLBACK: LazyLock<ModuleRegisterCallback> = LazyLock::ne
 static MODULE_REGISTER_HOOK_CALLBACK: LazyLock<RwLock<Option<ExportRegisterHookCallback>>> =
   LazyLock::new(Default::default);
 #[cfg(not(feature = "noop"))]
+// Legacy WASM registration state. Non-WASM class registration is descriptor-driven.
 static MODULE_CLASS_PROPERTIES: LazyLock<ModuleClassProperty> = LazyLock::new(Default::default);
 #[cfg(not(feature = "noop"))]
 static MODULE_COUNT: AtomicUsize = AtomicUsize::new(0);
@@ -309,6 +344,8 @@ pub fn register_napi_class<T>(
 ) where
   T: NapiClass,
 {
+  // Kept for the WASM export-registration path. Non-WASM impl methods are
+  // collected through ClassImplDescriptor instead.
   let class = T::CLASS.erase();
   let parent = <T::Parent as NativeParent>::erased_class_def();
   MODULE_CLASS_PROPERTIES.borrow_mut(|inner| {
@@ -372,7 +409,6 @@ pub fn register_napi_class_impl<T>(
     });
     val.class = class;
     val.parent = parent;
-    val.js_name = js_name;
     val.constructible |= props.iter().any(|prop| prop.is_ctor);
     val.implement_iterator |= implement_iterator;
     val.props.extend(props);
@@ -388,6 +424,63 @@ pub fn register_napi_class_impl<T>(
   props: Vec<Property>,
   implement_iterator: bool,
 ) {
+}
+
+#[cfg(all(not(feature = "noop"), not(target_family = "wasm")))]
+fn collect_class_registry_from_descriptors() -> ClassPropertyRegistry {
+  let mut registry = ClassPropertyRegistry::default();
+
+  for descriptor in CLASS_STRUCT_DESCRIPTORS {
+    let class = (descriptor.class)();
+    let parent = (descriptor.parent)();
+    let registration = registry
+      .entry(class.key())
+      .or_default()
+      .entry(descriptor.js_mod)
+      .or_insert_with(|| ClassRegistration {
+        class,
+        parent,
+        js_name: descriptor.js_name,
+        props: Vec::new(),
+        hidden_constructor: None,
+        constructible: descriptor.constructible,
+        implement_iterator: descriptor.implement_iterator,
+      });
+
+    registration.class = class;
+    registration.parent = parent;
+    registration.js_name = descriptor.js_name;
+    registration.hidden_constructor = descriptor.hidden_constructor;
+    registration.constructible |= descriptor.constructible;
+    registration.implement_iterator |= descriptor.implement_iterator;
+    registration.props.extend((descriptor.props)());
+  }
+
+  for descriptor in CLASS_IMPL_DESCRIPTORS {
+    let class = (descriptor.class)();
+    let props = (descriptor.props)();
+    let has_constructor = props.iter().any(|prop| prop.is_ctor);
+    let registration = registry
+      .entry(class.key())
+      .or_default()
+      .entry(descriptor.js_mod)
+      .or_insert_with(|| ClassRegistration {
+        class,
+        parent: None,
+        js_name: descriptor.js_name_hint,
+        props: Vec::new(),
+        hidden_constructor: None,
+        constructible: false,
+        implement_iterator: descriptor.implement_iterator,
+      });
+
+    registration.class = class;
+    registration.constructible |= has_constructor;
+    registration.implement_iterator |= descriptor.implement_iterator;
+    registration.props.extend(props);
+  }
+
+  registry
 }
 
 #[cfg(not(feature = "noop"))]
@@ -749,6 +842,28 @@ unsafe fn stage_class_registration(
 }
 
 #[cfg(not(feature = "noop"))]
+unsafe fn stage_all_classes(
+  env: sys::napi_env,
+  registry: &ClassPropertyRegistry,
+) -> Result<Vec<StagedClassRegistration>> {
+  let ordered_classes = ordered_class_registrations(registry)?;
+  let mut staged = Vec::with_capacity(ordered_classes.len());
+
+  for (js_mod, class_registration) in &ordered_classes {
+    match unsafe { stage_class_registration(env, *js_mod, class_registration) } {
+      Ok(Some(item)) => staged.push(item),
+      Ok(None) => {}
+      Err(error) => {
+        unsafe { rollback_staged_class_refs(env, &staged) };
+        return Err(error);
+      }
+    }
+  }
+
+  Ok(staged)
+}
+
+#[cfg(not(feature = "noop"))]
 unsafe fn rollback_staged_class_refs(env: sys::napi_env, staged: &[StagedClassRegistration]) {
   for item in staged {
     let status = unsafe { sys::napi_delete_reference(env, item.constructor_ref) };
@@ -1050,23 +1165,15 @@ unsafe fn napi_register_module_v1_inner(
   }
 
   {
-    let staged_classes = MODULE_CLASS_PROPERTIES.borrow(|inner| -> Result<Vec<_>> {
-      let ordered_classes = ordered_class_registrations(inner)?;
-      let mut staged = Vec::with_capacity(ordered_classes.len());
+    #[cfg(not(target_family = "wasm"))]
+    let staged_classes = {
+      let registry = collect_class_registry_from_descriptors();
+      unsafe { stage_all_classes(env, &registry) }
+    };
 
-      for (js_mod, class_registration) in &ordered_classes {
-        match unsafe { stage_class_registration(env, *js_mod, class_registration) } {
-          Ok(Some(item)) => staged.push(item),
-          Ok(None) => {}
-          Err(error) => {
-            unsafe { rollback_staged_class_refs(env, &staged) };
-            return Err(error);
-          }
-        }
-      }
-
-      Ok(staged)
-    });
+    #[cfg(target_family = "wasm")]
+    let staged_classes =
+      MODULE_CLASS_PROPERTIES.borrow(|inner| unsafe { stage_all_classes(env, inner) });
 
     match staged_classes {
       Ok(staged) => {

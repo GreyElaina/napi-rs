@@ -357,6 +357,19 @@ export declare class JsRepo {
   remote(): JsRemote
 }
 
+export interface LateRegisteredBase {
+  baseValue(): number
+}
+export declare const LateRegisteredBase: {
+  [Symbol.hasInstance](value: unknown): boolean
+}
+
+export declare class LateRegisteredChild {
+  constructor(value: number, childValue: number)
+  childValue(): number
+}
+export declare interface LateRegisteredChild extends LateRegisteredBase {}
+
 export declare class MyJsNamedClass {
   constructor(value: string)
   getValue(): string
