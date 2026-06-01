@@ -265,6 +265,7 @@ pub struct NapiType {
   pub value: Type,
   pub register_name: Ident,
   pub skip_typescript: bool,
+  pub ts_type: Option<String>,
   pub js_mod: Option<String>,
   pub comments: Vec<String>,
 }

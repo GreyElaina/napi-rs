@@ -587,6 +587,9 @@ export declare function blockingReadFile(path: string): Promise<Buffer>
 
 export declare function blockingVoidReturn(): Promise<undefined>
 
+export type Brush =
+  string | Gradient
+
 export declare function btreeSetToJs(): Set<string>
 
 export declare function btreeSetToRust(set: Set<string>): void
@@ -1241,6 +1244,9 @@ export declare function shorterEscapableScope(createString: () => string | null)
 export declare function shorterScope(arr: unknown[]): Array<number>
 
 export declare function shutdownRuntime(): void
+
+export type SpanPos =
+{ element: Element; index: number }
 
 export declare function spawnFutureLifetime(input: number): Promise<string>
 

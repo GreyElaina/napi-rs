@@ -8,6 +8,12 @@ use std::sync::Arc;
 #[napi]
 pub type CustomU32 = u32;
 
+#[napi(ts_type = "string | Gradient")]
+pub type Brush = String;
+
+#[napi(ts_type = "{ element: Element; index: number }")]
+pub type SpanPos = ();
+
 #[napi]
 pub type MyPromise = Either<String, PromiseFuture<String>>;
 

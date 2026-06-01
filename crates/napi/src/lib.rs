@@ -131,6 +131,17 @@ macro_rules! assert_type_of {
   };
 }
 
+#[macro_export]
+macro_rules! napi_ts {
+  ($($(#[doc = $doc:literal])* pub type $name:ident = $ts:literal;)*) => {
+    $(
+      $(#[doc = $doc])*
+      #[::napi_derive::napi(ts_type = $ts)]
+      pub type $name = ();
+    )*
+  };
+}
+
 pub mod bindgen_prelude {
   #[cfg(feature = "tokio_rt")]
   pub use crate::env::{

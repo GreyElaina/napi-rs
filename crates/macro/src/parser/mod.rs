@@ -2014,6 +2014,7 @@ impl ConvertToAST for syn::ItemType {
           js_mod: opts.namespace().map(|(m, _)| m.to_owned()),
           comments: extract_doc_comments(&self.attrs),
           skip_typescript: opts.skip_typescript().is_some(),
+          ts_type: opts.ts_type().map(|(t, _)| t.to_owned()),
           register_name: get_register_ident(self.ident.to_string().as_str()),
         }),
       }),
