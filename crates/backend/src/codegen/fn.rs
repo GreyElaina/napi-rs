@@ -530,7 +530,9 @@ impl NapiFn {
               if input.is_mut() {
                 mut_ref_spans.push(path.ty.span());
               }
-              args.push(class_receiver_expr(&input, &class));
+              let receiver = class_receiver_expr(&input, &class);
+              arg_conversions.push(quote! { let #ident = #receiver; });
+              args.push(quote! { #ident });
             } else if let Some(this_ty) = path.ty.this_inner() {
               if let syn::Type::Path(path) = this_ty {
                 if let Some(segment) = path.path.segments.first() {
