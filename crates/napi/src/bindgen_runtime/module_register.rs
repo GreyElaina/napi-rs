@@ -140,6 +140,157 @@ struct StagedClassRegistration {
 }
 
 #[cfg(not(feature = "noop"))]
+struct ModuleRegistration {
+  env: sys::napi_env,
+  exports: sys::napi_value,
+  export_objects: HashSet<String>,
+}
+
+#[cfg(not(feature = "noop"))]
+impl ModuleRegistration {
+  fn new(env: sys::napi_env, exports: sys::napi_value) -> Self {
+    Self {
+      env,
+      exports,
+      export_objects: HashSet::default(),
+    }
+  }
+
+  unsafe fn export_object(
+    &mut self,
+    js_mod: Option<&'static str>,
+  ) -> Result<(sys::napi_value, bool)> {
+    let Some(js_mod_str) = js_mod else {
+      return Ok((self.exports, false));
+    };
+
+    let mod_name = unsafe { CStr::from_bytes_with_nul_unchecked(js_mod_str.as_bytes()) };
+    let mut exports_js_mod = ptr::null_mut();
+    let created = !self.export_objects.contains(js_mod_str);
+    if created {
+      check_status!(
+        unsafe { sys::napi_create_object(self.env, &mut exports_js_mod) },
+        "Create export JavaScript Object [{}] failed",
+        js_mod_str,
+      )?;
+      check_status!(
+        unsafe {
+          sys::napi_set_named_property(self.env, self.exports, mod_name.as_ptr(), exports_js_mod)
+        },
+        "Set exports Object [{}] into exports object failed",
+        js_mod_str,
+      )?;
+      self.export_objects.insert(js_mod_str.to_string());
+    } else {
+      check_status!(
+        unsafe {
+          sys::napi_get_named_property(
+            self.env,
+            self.exports,
+            mod_name.as_ptr(),
+            &mut exports_js_mod,
+          )
+        },
+        "Get mod {} from exports failed",
+        js_mod_str,
+      )?;
+    }
+
+    Ok((exports_js_mod, created))
+  }
+
+  unsafe fn set_export(
+    &mut self,
+    js_mod: Option<&'static str>,
+    js_name: &'static str,
+    value: sys::napi_value,
+  ) -> Result<(sys::napi_value, bool)> {
+    let (export_object, created_export_object) = unsafe { self.export_object(js_mod) }?;
+    let name = unsafe { CStr::from_bytes_with_nul_unchecked(js_name.as_bytes()) };
+    check_status!(
+      unsafe { sys::napi_set_named_property(self.env, export_object, name.as_ptr(), value) },
+      "Failed to register export `{}`",
+      js_name,
+    )?;
+    Ok((export_object, created_export_object))
+  }
+
+  unsafe fn register_exports(&mut self) -> Result<()> {
+    for descriptor in MODULE_EXPORT_DESCRIPTORS {
+      let value = unsafe { (descriptor.callback)(self.env) }?;
+      unsafe { self.set_export(descriptor.js_mod, descriptor.js_name, value) }?;
+    }
+
+    Ok(())
+  }
+
+  unsafe fn rollback_class_exports(
+    &self,
+    committed: &[(sys::napi_value, &'static str)],
+    created_export_objects: &[String],
+  ) {
+    for (object, name) in committed.iter().rev() {
+      let name = unsafe { CStr::from_bytes_with_nul_unchecked(name.as_bytes()) };
+      unsafe { delete_named_property(self.env, *object, name) };
+    }
+
+    let metadata_name = c"__napiClassMetadata";
+    unsafe { delete_named_property(self.env, self.exports, metadata_name) };
+
+    for name in created_export_objects.iter().rev() {
+      let Ok(name) = CString::new(name.as_str()) else {
+        continue;
+      };
+      unsafe { delete_named_property(self.env, self.exports, &name) };
+    }
+  }
+
+  unsafe fn commit_classes(&mut self, staged: &[StagedClassRegistration]) -> Result<()> {
+    let mut committed = Vec::with_capacity(staged.len());
+    let mut created_export_objects = Vec::new();
+
+    for item in staged {
+      let exported = unsafe { self.set_export(item.js_mod, item.js_name, item.exported_value) };
+      let (export_object, created_export_object) = match exported {
+        Ok(exported) => exported,
+        Err(error) => {
+          unsafe { self.rollback_class_exports(&committed, &created_export_objects) };
+          return Err(error);
+        }
+      };
+      if let (true, Some(js_mod)) = (created_export_object, item.js_mod) {
+        created_export_objects.push(js_mod.trim_end_matches('\0').to_string());
+      }
+
+      committed.push((export_object, item.js_name));
+    }
+
+    let metadata = staged
+      .iter()
+      .map(|item| item.metadata.clone())
+      .collect::<Vec<_>>();
+    if let Err(error) = unsafe { install_class_metadata(self.env, self.exports, &metadata) } {
+      unsafe { self.rollback_class_exports(&committed, &created_export_objects) };
+      return Err(error);
+    }
+
+    let record = EnvRecord::acquire(self.env);
+    if let Err(error) = record.with_data_mut(|data| {
+      for item in staged {
+        data
+          .constructors_mut()
+          .insert(item.class.key(), item.constructor_ref);
+      }
+    }) {
+      unsafe { self.rollback_class_exports(&committed, &created_export_objects) };
+      return Err(error);
+    }
+
+    Ok(())
+  }
+}
+
+#[cfg(not(feature = "noop"))]
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum VisitState {
   Visiting,
@@ -735,124 +886,6 @@ unsafe fn delete_named_property(env: sys::napi_env, object: sys::napi_value, nam
 }
 
 #[cfg(not(feature = "noop"))]
-unsafe fn rollback_staged_class_exports(
-  env: sys::napi_env,
-  exports: sys::napi_value,
-  committed: &[(sys::napi_value, &'static str)],
-  created_export_objects: &[String],
-) {
-  for (object, name) in committed.iter().rev() {
-    let name = unsafe { CStr::from_bytes_with_nul_unchecked(name.as_bytes()) };
-    unsafe { delete_named_property(env, *object, name) };
-  }
-
-  let metadata_name = c"__napiClassMetadata";
-  unsafe { delete_named_property(env, exports, metadata_name) };
-
-  for name in created_export_objects.iter().rev() {
-    let Ok(name) = CString::new(name.as_str()) else {
-      continue;
-    };
-    unsafe { delete_named_property(env, exports, &name) };
-  }
-}
-
-#[cfg(not(feature = "noop"))]
-unsafe fn module_exports_object(
-  env: sys::napi_env,
-  exports: sys::napi_value,
-  exports_objects: &mut HashSet<String>,
-  js_mod: Option<&'static str>,
-) -> Result<(sys::napi_value, bool)> {
-  let Some(js_mod_str) = js_mod else {
-    return Ok((exports, false));
-  };
-
-  let mod_name = unsafe { CStr::from_bytes_with_nul_unchecked(js_mod_str.as_bytes()) };
-  let mut exports_js_mod = ptr::null_mut();
-  let created = !exports_objects.contains(js_mod_str);
-  if created {
-    check_status!(
-      unsafe { sys::napi_create_object(env, &mut exports_js_mod) },
-      "Create export JavaScript Object [{}] failed",
-      js_mod_str,
-    )?;
-    check_status!(
-      unsafe { sys::napi_set_named_property(env, exports, mod_name.as_ptr(), exports_js_mod) },
-      "Set exports Object [{}] into exports object failed",
-      js_mod_str,
-    )?;
-    exports_objects.insert(js_mod_str.to_string());
-  } else {
-    check_status!(
-      unsafe { sys::napi_get_named_property(env, exports, mod_name.as_ptr(), &mut exports_js_mod) },
-      "Get mod {} from exports failed",
-      js_mod_str,
-    )?;
-  }
-
-  Ok((exports_js_mod, created))
-}
-
-#[cfg(not(feature = "noop"))]
-unsafe fn commit_staged_classes(
-  env: sys::napi_env,
-  exports: sys::napi_value,
-  exports_objects: &mut HashSet<String>,
-  staged: &[StagedClassRegistration],
-) -> Result<()> {
-  let mut committed = Vec::with_capacity(staged.len());
-  let mut created_export_objects = Vec::new();
-
-  for item in staged {
-    let (export_object, created_export_object) =
-      unsafe { module_exports_object(env, exports, exports_objects, item.js_mod) }?;
-    if created_export_object {
-      if let Some(js_mod) = item.js_mod {
-        created_export_objects.push(js_mod.trim_end_matches('\0').to_string());
-      }
-    }
-
-    let js_name = unsafe { CStr::from_bytes_with_nul_unchecked(item.js_name.as_bytes()) };
-    if let Err(error) = check_status!(
-      unsafe {
-        sys::napi_set_named_property(env, export_object, js_name.as_ptr(), item.exported_value)
-      },
-      "Failed to register class `{}`",
-      item.js_name,
-    ) {
-      unsafe { rollback_staged_class_exports(env, exports, &committed, &created_export_objects) };
-      return Err(error);
-    }
-
-    committed.push((export_object, item.js_name));
-  }
-
-  let metadata = staged
-    .iter()
-    .map(|item| item.metadata.clone())
-    .collect::<Vec<_>>();
-  if let Err(error) = unsafe { install_class_metadata(env, exports, &metadata) } {
-    unsafe { rollback_staged_class_exports(env, exports, &committed, &created_export_objects) };
-    return Err(error);
-  }
-
-  let record = EnvRecord::acquire(env);
-  if let Err(error) = record.with_data_mut(|data| {
-    for item in staged {
-      data
-        .constructors_mut()
-        .insert(item.class.key(), item.constructor_ref);
-    }
-  }) {
-    unsafe { rollback_staged_class_exports(env, exports, &committed, &created_export_objects) };
-    return Err(error);
-  }
-
-  Ok(())
-}
-
-#[cfg(not(feature = "noop"))]
 #[no_mangle]
 /// Register the n-api module exports.
 ///
@@ -921,81 +954,11 @@ unsafe fn napi_register_module_v1_inner(
     wait_first_thread_registered();
   }
 
-  let mut exports_objects: HashSet<String> = HashSet::default();
+  let mut registration = ModuleRegistration::new(env, exports);
 
-  {
-    MODULE_EXPORT_DESCRIPTORS
-      .iter()
-      .fold(
-        HashMap::<Option<&'static str>, Vec<(&'static str, ExportRegisterCallback)>>::new(),
-        |mut acc, descriptor| {
-          let item = (descriptor.js_name, descriptor.callback);
-          if let Some(k) = acc.get_mut(&descriptor.js_mod) {
-            k.push(item);
-          } else {
-            acc.insert(descriptor.js_mod, vec![item]);
-          }
-          acc
-        },
-      )
-      .iter()
-      .for_each(|(js_mod, items)| {
-        let mut exports_js_mod = ptr::null_mut();
-        if let Some(js_mod_str) = js_mod {
-          let mod_name_c_str =
-            unsafe { CStr::from_bytes_with_nul_unchecked(js_mod_str.as_bytes()) };
-          if exports_objects.contains(*js_mod_str) {
-            check_status_or_throw!(
-              env,
-              unsafe {
-                sys::napi_get_named_property(
-                  env,
-                  exports,
-                  mod_name_c_str.as_ptr(),
-                  &mut exports_js_mod,
-                )
-              },
-              "Get mod {} from exports failed",
-              js_mod_str,
-            );
-          } else {
-            check_status_or_throw!(
-              env,
-              unsafe { sys::napi_create_object(env, &mut exports_js_mod) },
-              "Create export JavaScript Object [{}] failed",
-              js_mod_str
-            );
-            check_status_or_throw!(
-              env,
-              unsafe {
-                sys::napi_set_named_property(env, exports, mod_name_c_str.as_ptr(), exports_js_mod)
-              },
-              "Set exports Object [{}] into exports object failed",
-              js_mod_str
-            );
-            exports_objects.insert(js_mod_str.to_string());
-          }
-        }
-        for (name, callback) in items {
-          unsafe {
-            let js_name = CStr::from_bytes_with_nul_unchecked(name.as_bytes());
-            if let Err(e) = callback(env).and_then(|v| {
-              let exported_object = if exports_js_mod.is_null() {
-                exports
-              } else {
-                exports_js_mod
-              };
-              check_status!(
-                sys::napi_set_named_property(env, exported_object, js_name.as_ptr(), v),
-                "Failed to register export `{}`",
-                name,
-              )
-            }) {
-              JsError::from(e).throw_into(env)
-            }
-          }
-        }
-      });
+  if let Err(error) = unsafe { registration.register_exports() } {
+    unsafe { JsError::from(error).throw_into(env) };
+    return ptr::null_mut();
   }
 
   {
@@ -1006,9 +969,7 @@ unsafe fn napi_register_module_v1_inner(
 
     match staged_classes {
       Ok(staged) => {
-        if let Err(error) =
-          unsafe { commit_staged_classes(env, exports, &mut exports_objects, &staged) }
-        {
+        if let Err(error) = unsafe { registration.commit_classes(&staged) } {
           unsafe { rollback_staged_class_refs(env, &staged) };
           unsafe { JsError::from(error).throw_into(env) };
           return ptr::null_mut();
