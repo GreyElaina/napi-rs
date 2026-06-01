@@ -38,6 +38,12 @@ fn into_js_frame(value: TokenStream) -> TokenStream {
     }
   }
 }
+
+fn into_js_reuse_scope(value: TokenStream) -> TokenStream {
+  quote! {
+    napi::bindgen_prelude::IntoJs::into_js(#value, frame.scope_mut()).map(|local| local.raw())
+  }
+}
 fn is_js_arg_slice_type(ty: &syn::Type) -> bool {
   if let syn::Type::Path(syn::TypePath { path, .. }) = ty {
     if let Some(seg) = path.segments.last() {
@@ -1017,6 +1023,17 @@ impl NapiFn {
     let cb_access = quote! { frame };
     let cb_this = callback_this_expr();
     let js_name = &self.js_name;
+    let has_scope_arg = self
+      .args
+      .iter()
+      .any(|arg| arg.inject == Some(crate::InjectKind::Scope));
+    let select_into_js = |value: TokenStream| -> TokenStream {
+      if has_scope_arg {
+        into_js_reuse_scope(value)
+      } else {
+        into_js_frame(value)
+      }
+    };
 
     if let Some(ty) = &self.ret {
       let is_return_self = is_return_this_type(ty, self.parent.as_ref());
@@ -1183,7 +1200,7 @@ impl NapiFn {
               }
             })
           } else {
-            let value_into_js = into_js_frame(quote! { value });
+            let value_into_js = select_into_js(quote! { value });
             Ok(quote! {
               match #ret {
                 Ok(value) => #value_into_js,
@@ -1195,7 +1212,7 @@ impl NapiFn {
             })
           }
         } else {
-          let value_into_js = into_js_frame(quote! { value });
+          let value_into_js = select_into_js(quote! { value });
           Ok(quote! {
             match #ret {
               Ok(value) => #value_into_js,
@@ -1239,13 +1256,13 @@ impl NapiFn {
             }
           })
         } else {
-          let ret_into_js = into_js_frame(quote! { #ret });
+          let ret_into_js = select_into_js(quote! { #ret });
           Ok(quote! {
             #ret_into_js
           })
         }
       } else {
-        let ret_into_js = into_js_frame(quote! { #ret });
+        let ret_into_js = select_into_js(quote! { #ret });
         Ok(quote! {
           #ret_into_js
         })
@@ -1254,7 +1271,7 @@ impl NapiFn {
       let unit_into_js = if self.is_async {
         into_js_raw(raw_env.clone(), quote! { () })
       } else {
-        into_js_frame(quote! { () })
+        select_into_js(quote! { () })
       };
       Ok(quote! {
         #unit_into_js
