@@ -144,6 +144,10 @@ struct ModuleRegistration {
   env: sys::napi_env,
   exports: sys::napi_value,
   export_objects: HashSet<String>,
+  committed_exports: Vec<(sys::napi_value, &'static str)>,
+  created_export_objects: Vec<String>,
+  metadata_installed: bool,
+  committed_constructor_refs: Vec<(ClassKey, sys::napi_ref)>,
 }
 
 #[cfg(not(feature = "noop"))]
@@ -153,6 +157,10 @@ impl ModuleRegistration {
       env,
       exports,
       export_objects: HashSet::default(),
+      committed_exports: Vec::new(),
+      created_export_objects: Vec::new(),
+      metadata_installed: false,
+      committed_constructor_refs: Vec::new(),
     }
   }
 
@@ -181,6 +189,9 @@ impl ModuleRegistration {
         js_mod_str,
       )?;
       self.export_objects.insert(js_mod_str.to_string());
+      self
+        .created_export_objects
+        .push(js_mod_str.trim_end_matches('\0').to_string());
     } else {
       check_status!(
         unsafe {
@@ -212,6 +223,7 @@ impl ModuleRegistration {
       "Failed to register export `{}`",
       js_name,
     )?;
+    self.committed_exports.push((export_object, js_name));
     Ok((export_object, created_export_object))
   }
 
@@ -224,69 +236,82 @@ impl ModuleRegistration {
     Ok(())
   }
 
-  unsafe fn rollback_class_exports(
-    &self,
-    committed: &[(sys::napi_value, &'static str)],
-    created_export_objects: &[String],
-  ) {
-    for (object, name) in committed.iter().rev() {
-      let name = unsafe { CStr::from_bytes_with_nul_unchecked(name.as_bytes()) };
-      unsafe { delete_named_property(self.env, *object, name) };
+  unsafe fn rollback(&mut self) {
+    for (key, reference) in self.committed_constructor_refs.drain(..).rev() {
+      let record = EnvRecord::acquire(self.env);
+      if let Err(error) = record.with_data_mut(|data| {
+        data.constructors_mut().remove(&key);
+      }) {
+        eprintln!("napi-rs: failed to rollback constructor record: {error:?}");
+      }
+
+      let status = unsafe { sys::napi_delete_reference(self.env, reference) };
+      if status != sys::Status::napi_ok {
+        eprintln!("napi-rs: failed to rollback constructor reference");
+      }
     }
 
-    let metadata_name = c"__napiClassMetadata";
-    unsafe { delete_named_property(self.env, self.exports, metadata_name) };
+    for (object, name) in self.committed_exports.drain(..).rev() {
+      let name = unsafe { CStr::from_bytes_with_nul_unchecked(name.as_bytes()) };
+      unsafe { delete_named_property(self.env, object, name) };
+    }
 
-    for name in created_export_objects.iter().rev() {
+    if self.metadata_installed {
+      let metadata_name = c"__napiClassMetadata";
+      unsafe { delete_named_property(self.env, self.exports, metadata_name) };
+      self.metadata_installed = false;
+    }
+
+    for name in self.created_export_objects.drain(..).rev() {
       let Ok(name) = CString::new(name.as_str()) else {
         continue;
       };
       unsafe { delete_named_property(self.env, self.exports, &name) };
     }
+
+    self.export_objects.clear();
   }
 
   unsafe fn commit_classes(&mut self, staged: &[StagedClassRegistration]) -> Result<()> {
-    let mut committed = Vec::with_capacity(staged.len());
-    let mut created_export_objects = Vec::new();
-
     for item in staged {
-      let exported = unsafe { self.set_export(item.js_mod, item.js_name, item.exported_value) };
-      let (export_object, created_export_object) = match exported {
-        Ok(exported) => exported,
-        Err(error) => {
-          unsafe { self.rollback_class_exports(&committed, &created_export_objects) };
-          return Err(error);
-        }
-      };
-      if let (true, Some(js_mod)) = (created_export_object, item.js_mod) {
-        created_export_objects.push(js_mod.trim_end_matches('\0').to_string());
-      }
-
-      committed.push((export_object, item.js_name));
+      unsafe { self.set_export(item.js_mod, item.js_name, item.exported_value) }?;
     }
 
     let metadata = staged
       .iter()
       .map(|item| item.metadata.clone())
       .collect::<Vec<_>>();
-    if let Err(error) = unsafe { install_class_metadata(self.env, self.exports, &metadata) } {
-      unsafe { self.rollback_class_exports(&committed, &created_export_objects) };
-      return Err(error);
-    }
+    unsafe { install_class_metadata(self.env, self.exports, &metadata) }?;
+    self.metadata_installed = true;
 
     let record = EnvRecord::acquire(self.env);
-    if let Err(error) = record.with_data_mut(|data| {
+    record.with_data_mut(|data| {
       for item in staged {
         data
           .constructors_mut()
           .insert(item.class.key(), item.constructor_ref);
       }
-    }) {
-      unsafe { self.rollback_class_exports(&committed, &created_export_objects) };
-      return Err(error);
-    }
+    })?;
+    self.committed_constructor_refs = staged
+      .iter()
+      .map(|item| (item.class.key(), item.constructor_ref))
+      .collect();
 
     Ok(())
+  }
+
+  unsafe fn run_export_hook(&mut self) -> Result<()> {
+    match MODULE_EXPORT_HOOK_DESCRIPTORS.len() {
+      0 => Ok(()),
+      1 => {
+        let cb = MODULE_EXPORT_HOOK_DESCRIPTORS[0].callback;
+        unsafe { cb(self.env, self.exports) }.map(|_| ())
+      }
+      _ => Err(Error::new(
+        Status::InvalidArg,
+        "Duplicate module_exports registration".to_owned(),
+      )),
+    }
   }
 }
 
@@ -957,6 +982,7 @@ unsafe fn napi_register_module_v1_inner(
   let mut registration = ModuleRegistration::new(env, exports);
 
   if let Err(error) = unsafe { registration.register_exports() } {
+    unsafe { registration.rollback() };
     unsafe { JsError::from(error).throw_into(env) };
     return ptr::null_mut();
   }
@@ -970,35 +996,24 @@ unsafe fn napi_register_module_v1_inner(
     match staged_classes {
       Ok(staged) => {
         if let Err(error) = unsafe { registration.commit_classes(&staged) } {
+          unsafe { registration.rollback() };
           unsafe { rollback_staged_class_refs(env, &staged) };
           unsafe { JsError::from(error).throw_into(env) };
           return ptr::null_mut();
         }
       }
       Err(error) => {
+        unsafe { registration.rollback() };
         unsafe { JsError::from(error).throw_into(env) };
         return ptr::null_mut();
       }
     }
   }
 
-  match MODULE_EXPORT_HOOK_DESCRIPTORS.len() {
-    0 => {}
-    1 => {
-      let cb = MODULE_EXPORT_HOOK_DESCRIPTORS[0].callback;
-      if let Err(e) = cb(env, exports) {
-        JsError::from(e).throw_into(env);
-        return ptr::null_mut();
-      }
-    }
-    _ => {
-      let error = Error::new(
-        Status::InvalidArg,
-        "Duplicate module_exports registration".to_owned(),
-      );
-      JsError::from(error).throw_into(env);
-      return ptr::null_mut();
-    }
+  if let Err(error) = unsafe { registration.run_export_hook() } {
+    unsafe { registration.rollback() };
+    unsafe { JsError::from(error).throw_into(env) };
+    return ptr::null_mut();
   }
 
   #[cfg(feature = "napi4")]
