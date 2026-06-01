@@ -192,6 +192,7 @@ export const RendererNode = __napiModule.exports.RendererNode
 export const Selector = __napiModule.exports.Selector
 export const SelfReferenceField = __napiModule.exports.SelfReferenceField
 export const SelfReferential = __napiModule.exports.SelfReferential
+export const Shape = __napiModule.exports.Shape
 export const Thing = __napiModule.exports.Thing
 export const ThingList = __napiModule.exports.ThingList
 export const UseNullableClass = __napiModule.exports.UseNullableClass

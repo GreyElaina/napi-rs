@@ -236,6 +236,7 @@ module.exports.RendererNode = __napiModule.exports.RendererNode
 module.exports.Selector = __napiModule.exports.Selector
 module.exports.SelfReferenceField = __napiModule.exports.SelfReferenceField
 module.exports.SelfReferential = __napiModule.exports.SelfReferential
+module.exports.Shape = __napiModule.exports.Shape
 module.exports.Thing = __napiModule.exports.Thing
 module.exports.ThingList = __napiModule.exports.ThingList
 module.exports.UseNullableClass = __napiModule.exports.UseNullableClass

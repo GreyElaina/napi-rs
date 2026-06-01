@@ -264,6 +264,54 @@ Three-layer entry:
 
 Safety is enforced by existing type-system invariants: `Ref: !Send + !Sync` (same thread), `Weak` upgrade (env liveness), HRTB on return type (no scope-bound values escape).
 
+### Enum Class
+
+Data-carrying enums (`enum Foo { Bar { x: i32 }, Baz(String) }`) now participate in the class system when annotated with `#[napi]`. The enum value is stored directly in `ClassStorage` as an opaque class — no fields are auto-exposed. The user controls the JS API surface entirely through `#[napi] impl`:
+
+```rust
+#[napi]
+pub enum Shape {
+  Circle { radius: f64 },
+  Rectangle { width: f64, height: f64 },
+}
+
+#[napi]
+impl Shape {
+  #[napi(factory)]
+  pub fn circle(radius: f64) -> Shape { Shape::Circle { radius } }
+
+  #[napi(getter)]
+  pub fn kind(&self) -> &str {
+    match self { Shape::Circle { .. } => "Circle", Shape::Rectangle { .. } => "Rectangle" }
+  }
+
+  pub fn area(&self) -> f64 { /* match self ... */ }
+}
+```
+
+Generated TypeScript:
+
+```typescript
+export interface Shape {
+  get kind(): string
+  area(): number
+}
+export declare const Shape: {
+  circle(radius: number): Shape
+  rectangle(width: number, height: number): Shape
+  [Symbol.hasInstance](value: unknown): boolean
+}
+```
+
+The previous behavior (discriminated union of plain objects) is preserved under `#[napi(object)]`:
+
+```rust
+#[napi(object, discriminant = "type")]
+pub enum StructuredKind { ... }
+```
+
+This is a **breaking change**: bare `#[napi]` on data-carrying enums now produces a class instead of a discriminated union. Existing code using discriminated unions must add `object` to the attribute.
+
 ## 7. Removed Modules
 
 | Module | Replacement |

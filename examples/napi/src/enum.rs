@@ -62,7 +62,7 @@ pub enum CustomStringEnum {
   Baz,
 }
 
-#[napi(discriminant = "type2")]
+#[napi(object, discriminant = "type2")]
 pub enum StructuredKind {
   Hello,
   Greeting { name: String },
@@ -70,7 +70,7 @@ pub enum StructuredKind {
   Tuple(u32, u32),
 }
 
-#[napi(discriminant_case = "lowercase")]
+#[napi(object, discriminant_case = "lowercase")]
 pub enum StructuredKindLowercase {
   Hello,
   Greeting { name: String },
@@ -88,4 +88,39 @@ pub fn validate_structured_enum_lowercase(
   kind: StructuredKindLowercase,
 ) -> StructuredKindLowercase {
   kind
+}
+
+#[napi]
+pub enum Shape {
+  Circle { radius: f64 },
+  Rectangle { width: f64, height: f64 },
+}
+
+#[napi]
+impl Shape {
+  #[napi(factory)]
+  pub fn circle(radius: f64) -> Shape {
+    Shape::Circle { radius }
+  }
+
+  #[napi(factory)]
+  pub fn rectangle(width: f64, height: f64) -> Shape {
+    Shape::Rectangle { width, height }
+  }
+
+  #[napi(getter)]
+  pub fn kind(&self) -> &str {
+    match self {
+      Shape::Circle { .. } => "Circle",
+      Shape::Rectangle { .. } => "Rectangle",
+    }
+  }
+
+  #[napi]
+  pub fn area(&self) -> f64 {
+    match self {
+      Shape::Circle { radius } => std::f64::consts::PI * radius * radius,
+      Shape::Rectangle { width, height } => width * height,
+    }
+  }
 }

@@ -1780,58 +1780,118 @@ impl ConvertToAST for syn::ItemEnum {
       .iter()
       .any(|v| !matches!(v.fields, syn::Fields::Unit))
     {
-      let discriminant = opts.discriminant().map_or("type", |(s, _)| s);
-      let discriminant_case = opts.discriminant_case().map(|c|
-        Ok::<Case, Diagnostic>(match c.0 {
-          "lowercase" => Case::Flat,
-          "UPPERCASE" => Case::UpperFlat,
-          "PascalCase" => Case::Pascal,
-          "camelCase" => Case::Camel,
-          "snake_case" => Case::Snake,
-          "UPPER_SNAKE" => Case::UpperSnake,
-          "kebab-case" => Case::Kebab,
-          "UPPER-KEBAB-CASE" => Case::UpperKebab,
-          _ => {
-            bail_span!(self, "Unknown discriminant case. Possible values are \"lowercase\", \"UPPERCASE\", \"PascalCase\", \"camelCase\", \"snake_case\", \"UPPER_SNAKE\", \"kebab-case\", or \"UPPER-KEBAB-CASE\"")
-          }
-        })
-      ).transpose()?;
+      if opts.object().is_some() {
+        let discriminant = opts.discriminant().map_or("type", |(s, _)| s);
+        let discriminant_case = opts.discriminant_case().map(|c|
+          Ok::<Case, Diagnostic>(match c.0 {
+            "lowercase" => Case::Flat,
+            "UPPERCASE" => Case::UpperFlat,
+            "PascalCase" => Case::Pascal,
+            "camelCase" => Case::Camel,
+            "snake_case" => Case::Snake,
+            "UPPER_SNAKE" => Case::UpperSnake,
+            "kebab-case" => Case::Kebab,
+            "UPPER-KEBAB-CASE" => Case::UpperKebab,
+            _ => {
+              bail_span!(self, "Unknown discriminant case. Possible values are \"lowercase\", \"UPPERCASE\", \"PascalCase\", \"camelCase\", \"snake_case\", \"UPPER_SNAKE\", \"kebab-case\", or \"UPPER-KEBAB-CASE\"")
+            }
+          })
+        ).transpose()?;
 
-      let mut errors = vec![];
-      let mut variants = vec![];
-      for variant in self.variants.iter_mut() {
-        let (fields, is_tuple) = convert_fields(&mut variant.fields, false)?;
-        for field in fields.iter() {
-          if field.js_name == discriminant {
-            errors.push(err_span!(
-              field.name,
-              r#"field's js_name("{}") and discriminator("{}") conflict"#,
-              field.js_name,
-              discriminant,
-            ));
+        let mut errors = vec![];
+        let mut variants = vec![];
+        for variant in self.variants.iter_mut() {
+          let (fields, is_tuple) = convert_fields(&mut variant.fields, false)?;
+          for field in fields.iter() {
+            if field.js_name == discriminant {
+              errors.push(err_span!(
+                field.name,
+                r#"field's js_name("{}") and discriminator("{}") conflict"#,
+                field.js_name,
+                discriminant,
+              ));
+            }
           }
+          variants.push(NapiStructuredEnumVariant {
+            name: variant.ident.clone(),
+            fields,
+            is_tuple,
+          });
         }
-        variants.push(NapiStructuredEnumVariant {
-          name: variant.ident.clone(),
-          fields,
-          is_tuple,
+        let rust_struct_ident = self.ident.clone();
+        return Diagnostic::from_vec(errors).map(|()| Napi {
+          item: NapiItem::Struct(NapiStruct {
+            name: rust_struct_ident.clone(),
+            js_name,
+            comments: extract_doc_comments(&self.attrs),
+            js_mod: opts.namespace().map(|(m, _)| m.to_owned()),
+            use_nullable: opts.use_nullable(),
+            register_name: get_register_ident(format!("{rust_struct_ident}_struct").as_str()),
+            kind: NapiStructKind::StructuredEnum(NapiStructuredEnum {
+              variants,
+              discriminant: discriminant.to_owned(),
+              discriminant_case,
+              object_from_js: opts.object_from_js(),
+              object_to_js: opts.object_to_js(),
+            }),
+            has_lifetime: false,
+            is_generator: false,
+            is_async_generator: false,
+          }),
         });
       }
+
       let rust_struct_ident = self.ident.clone();
+      let namespace = opts.namespace().map(|(m, _)| m.to_owned());
+
+      record_struct(&rust_struct_ident, js_name.clone(), opts);
+
+      let mut errors = vec![];
+      if self.generics.lifetimes().next().is_some() {
+        errors.push(err_span!(
+          self.generics,
+          "napi enum class must not declare lifetime parameters"
+        ));
+      }
+      if self.generics.type_params().next().is_some() {
+        errors.push(err_span!(
+          self.generics,
+          "napi enum class must not declare type parameters"
+        ));
+      }
+      if self.generics.const_params().next().is_some() {
+        errors.push(err_span!(
+          self.generics,
+          "napi enum class must not declare const parameters"
+        ));
+      }
+
       return Diagnostic::from_vec(errors).map(|()| Napi {
         item: NapiItem::Struct(NapiStruct {
           name: rust_struct_ident.clone(),
           js_name,
           comments: extract_doc_comments(&self.attrs),
-          js_mod: opts.namespace().map(|(m, _)| m.to_owned()),
+          js_mod: namespace,
           use_nullable: opts.use_nullable(),
           register_name: get_register_ident(format!("{rust_struct_ident}_struct").as_str()),
-          kind: NapiStructKind::StructuredEnum(NapiStructuredEnum {
-            variants,
-            discriminant: discriminant.to_owned(),
-            discriminant_case,
-            object_from_js: opts.object_from_js(),
-            object_to_js: opts.object_to_js(),
+          kind: NapiStructKind::Class(NapiClass {
+            fields: vec![],
+            ctor: false,
+            subclass: opts.subclass().is_some(),
+            parent: opts.extends().map(|parent| NativeParentSpec {
+              rust_path: Type::Path(syn::TypePath {
+                qself: None,
+                path: parent.clone(),
+              }),
+              js_name: parent
+                .segments
+                .last()
+                .and_then(|segment| recorded_struct_js_name(&segment.ident)),
+            }),
+            implement_iterator: false,
+            implement_async_iterator: false,
+            is_tuple: false,
+            use_custom_finalize: false,
           }),
           has_lifetime: false,
           is_generator: false,

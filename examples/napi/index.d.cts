@@ -471,6 +471,16 @@ export declare class SelfReferential {
   getWeakName(): string
 }
 
+export interface Shape {
+  get kind(): string
+  area(): number
+}
+export declare const Shape: {
+  circle(radius: number): Shape
+  rectangle(width: number, height: number): Shape
+  [Symbol.hasInstance](value: unknown): boolean
+}
+
 export interface Thing {
 
 }

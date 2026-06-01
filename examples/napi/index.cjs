@@ -704,6 +704,7 @@ module.exports.RendererNode = nativeBinding.RendererNode
 module.exports.Selector = nativeBinding.Selector
 module.exports.SelfReferenceField = nativeBinding.SelfReferenceField
 module.exports.SelfReferential = nativeBinding.SelfReferential
+module.exports.Shape = nativeBinding.Shape
 module.exports.Thing = nativeBinding.Thing
 module.exports.ThingList = nativeBinding.ThingList
 module.exports.UseNullableClass = nativeBinding.UseNullableClass
