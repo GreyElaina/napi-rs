@@ -194,7 +194,9 @@ pub(crate) fn run_unwind_boundary(context: &'static str, f: impl FnOnce()) {
 pub mod __private {
   pub use crate::bindgen_runtime::iterator::create_iterator;
   pub use crate::bindgen_runtime::{
-    ClassImplDescriptor, ClassStructDescriptor, CLASS_IMPL_DESCRIPTORS, CLASS_STRUCT_DESCRIPTORS,
+    ClassImplDescriptor, ClassStructDescriptor, ModuleExportDescriptor, ModuleExportHookDescriptor,
+    ModuleInitDescriptor, CLASS_IMPL_DESCRIPTORS, CLASS_STRUCT_DESCRIPTORS,
+    MODULE_EXPORT_DESCRIPTORS, MODULE_EXPORT_HOOK_DESCRIPTORS, MODULE_INIT_DESCRIPTORS,
   };
   pub use linkme;
 
@@ -327,8 +329,6 @@ pub mod __private {
     };
   }
 }
-
-pub extern crate ctor;
 
 #[cfg(feature = "tokio_rt")]
 pub extern crate tokio;

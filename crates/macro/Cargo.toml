@@ -19,11 +19,10 @@ full = ["type-def", "strict"]
 noop = ["napi-derive-backend/noop"]
 strict = ["napi-derive-backend/strict"]
 tracing = ["napi-derive-backend/tracing"]
-type-def = ["napi-derive-backend/type-def", "ctor"]
+type-def = ["napi-derive-backend/type-def"]
 
 [dependencies]
 convert_case = "0.11"
-ctor = { version = "1.0.0", default-features = false, optional = true }
 napi-derive-backend = { version = "5.0.4", path = "../backend" }
 proc-macro2 = "1"
 quote = "1"

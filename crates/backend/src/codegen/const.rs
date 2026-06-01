@@ -40,15 +40,15 @@ impl NapiConst {
         })
       }
       #[cfg(not(test))]
-      napi::ctor::declarative::ctor! {
-        #[allow(non_snake_case)]
-        #[allow(clippy::all)]
-        #[ctor(unsafe)]
-        fn #register_name() {
-          napi::bindgen_prelude::register_module_export(#js_mod_ident, #js_name_lit, #cb_name);
-        }
-      }
-
+      #[allow(non_upper_case_globals)]
+      #[napi::__private::linkme::distributed_slice(napi::__private::MODULE_EXPORT_DESCRIPTORS)]
+      #[linkme(crate = napi::__private::linkme)]
+      static #register_name: napi::__private::ModuleExportDescriptor =
+        napi::__private::ModuleExportDescriptor {
+          js_mod: #js_mod_ident,
+          js_name: #js_name_lit,
+          callback: #cb_name,
+        };
     }
   }
 }

@@ -1,4 +1,4 @@
-use proc_macro2::{Ident, Span, TokenStream};
+use proc_macro2::{Ident, Literal, Span, TokenStream};
 use quote::ToTokens;
 use syn::{spanned::Spanned, Type, TypePath, TypeReference};
 
@@ -1300,7 +1300,7 @@ impl NapiFn {
       quote! {}
     } else {
       let name_str = self.name.to_string();
-      let js_name = format!("{}\0", &self.js_name);
+      let js_name = Literal::string(&format!("{}\0", &self.js_name));
       let name_len = self.js_name.len();
       let module_register_name = &self.register_name;
       let intermediate_ident = get_intermediate_ident(&name_str);
@@ -1321,15 +1321,14 @@ impl NapiFn {
           }
 
           #[cfg(not(test))]
-          napi::ctor::declarative::ctor! {
-            #[doc(hidden)]
-            #[allow(clippy::all)]
-            #[allow(non_snake_case)]
-            #[ctor(unsafe)]
-            fn #module_register_name() {
-              napi::bindgen_prelude::register_module_export_hook(#cb_name);
-            }
-          }
+          #[doc(hidden)]
+          #[allow(non_upper_case_globals)]
+          #[napi::__private::linkme::distributed_slice(napi::__private::MODULE_EXPORT_HOOK_DESCRIPTORS)]
+          #[linkme(crate = napi::__private::linkme)]
+          static #module_register_name: napi::__private::ModuleExportHookDescriptor =
+            napi::__private::ModuleExportHookDescriptor {
+              callback: #cb_name,
+            };
 
         };
       }
@@ -1339,15 +1338,16 @@ impl NapiFn {
       } else {
         quote! {
           #[cfg(not(test))]
-          napi::ctor::declarative::ctor! {
-            #[doc(hidden)]
-            #[allow(clippy::all)]
-            #[allow(non_snake_case)]
-            #[ctor(unsafe)]
-            fn #module_register_name() {
-              napi::bindgen_prelude::register_module_export(#js_mod_ident, #js_name, #cb_name);
-            }
-          }
+          #[doc(hidden)]
+          #[allow(non_upper_case_globals)]
+          #[napi::__private::linkme::distributed_slice(napi::__private::MODULE_EXPORT_DESCRIPTORS)]
+          #[linkme(crate = napi::__private::linkme)]
+          static #module_register_name: napi::__private::ModuleExportDescriptor =
+            napi::__private::ModuleExportDescriptor {
+              js_mod: #js_mod_ident,
+              js_name: #js_name,
+              callback: #cb_name,
+            };
 
         }
       };

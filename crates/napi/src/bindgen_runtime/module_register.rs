@@ -12,13 +12,14 @@ use std::ffi::{c_void, CString};
 use std::mem::MaybeUninit;
 #[cfg(not(feature = "noop"))]
 use std::ptr;
+#[cfg(not(feature = "noop"))]
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+#[cfg(not(feature = "noop"))]
+use std::sync::Once;
 #[cfg(all(not(feature = "noop"), feature = "node_version_detect"))]
 use std::sync::OnceLock;
-#[cfg(not(feature = "noop"))]
-use std::sync::{
-  atomic::{AtomicBool, AtomicUsize, Ordering},
-  LazyLock, RwLock,
-};
+#[cfg(all(feature = "tokio_rt", not(feature = "noop")))]
+use std::sync::RwLock;
 
 use linkme::distributed_slice;
 #[cfg(not(feature = "noop"))]
@@ -55,10 +56,6 @@ pub static mut NODE_VERSION_MINOR: u32 = 0;
 pub static mut NODE_VERSION_PATCH: u32 = 0;
 
 #[cfg(not(feature = "noop"))]
-type ModuleRegisterCallback =
-  RwLock<Vec<(Option<&'static str>, (&'static str, ExportRegisterCallback))>>;
-
-#[cfg(not(feature = "noop"))]
 type ClassPropertyRegistry =
   HashMap<ClassKey, HashMap<Option<&'static str>, ClassRegistration, FxBuildHasher>, FxBuildHasher>;
 
@@ -92,11 +89,34 @@ pub struct ClassImplDescriptor {
   pub props: fn() -> Vec<Property>,
 }
 
+pub struct ModuleExportDescriptor {
+  pub js_mod: Option<&'static str>,
+  pub js_name: &'static str,
+  pub callback: ExportRegisterCallback,
+}
+
+pub struct ModuleExportHookDescriptor {
+  pub callback: ExportRegisterHookCallback,
+}
+
+pub struct ModuleInitDescriptor {
+  pub init: fn(),
+}
+
 #[distributed_slice]
 pub static CLASS_STRUCT_DESCRIPTORS: [ClassStructDescriptor];
 
 #[distributed_slice]
 pub static CLASS_IMPL_DESCRIPTORS: [ClassImplDescriptor];
+
+#[distributed_slice]
+pub static MODULE_EXPORT_DESCRIPTORS: [ModuleExportDescriptor];
+
+#[distributed_slice]
+pub static MODULE_EXPORT_HOOK_DESCRIPTORS: [ModuleExportHookDescriptor];
+
+#[distributed_slice]
+pub static MODULE_INIT_DESCRIPTORS: [ModuleInitDescriptor];
 
 #[cfg(not(feature = "noop"))]
 #[derive(Clone)]
@@ -222,14 +242,11 @@ fn ordered_class_registrations(
 }
 
 #[cfg(not(feature = "noop"))]
-static MODULE_REGISTER_CALLBACK: LazyLock<ModuleRegisterCallback> = LazyLock::new(Default::default);
-#[cfg(not(feature = "noop"))]
-static MODULE_REGISTER_HOOK_CALLBACK: LazyLock<RwLock<Option<ExportRegisterHookCallback>>> =
-  LazyLock::new(Default::default);
-#[cfg(not(feature = "noop"))]
 static MODULE_COUNT: AtomicUsize = AtomicUsize::new(0);
 #[cfg(not(feature = "noop"))]
 static FIRST_MODULE_REGISTERED: AtomicBool = AtomicBool::new(false);
+#[cfg(not(feature = "noop"))]
+static MODULE_INIT_ONCE: Once = Once::new();
 #[cfg(all(feature = "tokio_rt", not(feature = "noop")))]
 static ENV_CLEANUP_HOOK_ADDED: RwLock<bool> = RwLock::new(false);
 #[cfg(all(feature = "napi4", not(feature = "noop")))]
@@ -250,41 +267,6 @@ fn wait_first_thread_registered() {
     std::hint::spin_loop();
   }
 }
-
-#[cfg(not(feature = "noop"))]
-#[doc(hidden)]
-pub fn register_module_export(
-  js_mod: Option<&'static str>,
-  name: &'static str,
-  cb: ExportRegisterCallback,
-) {
-  MODULE_REGISTER_CALLBACK
-    .write()
-    .expect("Register module export failed")
-    .push((js_mod, (name, cb)));
-}
-
-#[cfg(feature = "noop")]
-#[doc(hidden)]
-pub fn register_module_export(
-  _js_mod: Option<&'static str>,
-  _name: &'static str,
-  _cb: ExportRegisterCallback,
-) {
-}
-
-#[cfg(not(feature = "noop"))]
-#[doc(hidden)]
-pub fn register_module_export_hook(cb: ExportRegisterHookCallback) {
-  let mut inner = MODULE_REGISTER_HOOK_CALLBACK
-    .write()
-    .expect("Write MODULE_REGISTER_HOOK_CALLBACK failed");
-  *inner = Some(cb);
-}
-
-#[cfg(feature = "noop")]
-#[doc(hidden)]
-pub fn register_module_export_hook(_cb: ExportRegisterHookCallback) {}
 
 #[cfg(not(feature = "noop"))]
 fn collect_class_registry_from_descriptors() -> ClassPropertyRegistry {
@@ -905,6 +887,12 @@ unsafe fn napi_register_module_v1_inner(
   env: sys::napi_env,
   exports: sys::napi_value,
 ) -> sys::napi_value {
+  MODULE_INIT_ONCE.call_once(|| {
+    for descriptor in MODULE_INIT_DESCRIPTORS {
+      (descriptor.init)();
+    }
+  });
+
   #[cfg(feature = "node_version_detect")]
   {
     NODE_VERSION.get_or_init(|| {
@@ -936,18 +924,16 @@ unsafe fn napi_register_module_v1_inner(
   let mut exports_objects: HashSet<String> = HashSet::default();
 
   {
-    let mut register_callback = MODULE_REGISTER_CALLBACK
-      .write()
-      .expect("Write MODULE_REGISTER_CALLBACK in napi_register_module_v1 failed");
-    register_callback
-      .iter_mut()
+    MODULE_EXPORT_DESCRIPTORS
+      .iter()
       .fold(
         HashMap::<Option<&'static str>, Vec<(&'static str, ExportRegisterCallback)>>::new(),
-        |mut acc, (js_mod, item)| {
-          if let Some(k) = acc.get_mut(js_mod) {
-            k.push(*item);
+        |mut acc, descriptor| {
+          let item = (descriptor.js_name, descriptor.callback);
+          if let Some(k) = acc.get_mut(&descriptor.js_mod) {
+            k.push(item);
           } else {
-            acc.insert(*js_mod, vec![*item]);
+            acc.insert(descriptor.js_mod, vec![item]);
           }
           acc
         },
@@ -1035,12 +1021,22 @@ unsafe fn napi_register_module_v1_inner(
     }
   }
 
-  let module_register_hook_callback = MODULE_REGISTER_HOOK_CALLBACK
-    .read()
-    .expect("Read MODULE_REGISTER_HOOK_CALLBACK failed");
-  if let Some(cb) = module_register_hook_callback.as_ref() {
-    if let Err(e) = cb(env, exports) {
-      JsError::from(e).throw_into(env);
+  match MODULE_EXPORT_HOOK_DESCRIPTORS.len() {
+    0 => {}
+    1 => {
+      let cb = MODULE_EXPORT_HOOK_DESCRIPTORS[0].callback;
+      if let Err(e) = cb(env, exports) {
+        JsError::from(e).throw_into(env);
+        return ptr::null_mut();
+      }
+    }
+    _ => {
+      let error = Error::new(
+        Status::InvalidArg,
+        "Duplicate module_exports registration".to_owned(),
+      );
+      JsError::from(error).throw_into(env);
+      return ptr::null_mut();
     }
   }
 
