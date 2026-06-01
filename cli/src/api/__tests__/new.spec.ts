@@ -66,17 +66,16 @@ test('create a new project with default options', async (t) => {
     join(projectPath, '.gitattributes'),
     'utf-8',
   )
-  t.truthy(gitAttributes.includes('default-project.wasi-browser.js'))
-  t.truthy(gitAttributes.includes('default-project.wasi.cjs'))
-  t.truthy(gitAttributes.includes('wasi-worker-browser.mjs'))
-  t.truthy(gitAttributes.includes('wasi-worker.mjs'))
+  t.false(gitAttributes.includes('default-project.wasi-browser.js'))
+  t.false(gitAttributes.includes('default-project.wasi.cjs'))
+  t.false(gitAttributes.includes('wasi-worker-browser.mjs'))
+  t.false(gitAttributes.includes('wasi-worker.mjs'))
   const ciYaml = await readFile(
     join(projectPath, '.github', 'workflows', 'CI.yml'),
     'utf-8',
   )
   const yamlObject = yamlLoad(ciYaml) as any
   t.is(yamlObject.env.APP_NAME, 'default-project')
-  t.falsy(yamlObject.jobs.publish.needs.includes('wasm32-wasip1-threads'))
   t.falsy(
     yamlObject.jobs['test-linux-binding'].strategy.matrix.target.includes(
       'aarch64-unknown-linux-musl',
@@ -147,7 +146,6 @@ test('create a new project with custom path, name, and targets', async (t) => {
     'x86_64-unknown-linux-gnu',
     'x86_64-apple-darwin',
     'aarch64-apple-darwin',
-    'wasm32-wasip1-threads',
     'x86_64-unknown-freebsd',
   ]
 
@@ -169,9 +167,9 @@ test('create a new project with custom path, name, and targets', async (t) => {
   t.is(pkgJson.napi.binaryName, 'full-project')
   t.is(pkgJson.license, 'Apache-2.0')
   t.true(pkgJson.engines.node.includes('>= 14.0.0'))
-  t.is(pkgJson.browser, 'browser.js')
-  t.true(pkgJson.files.includes('browser.js'))
-  t.true(existsSync(join(projectPath, 'browser.js')))
+  t.false('browser' in pkgJson)
+  t.false(pkgJson.files.includes('browser.js'))
+  t.false(existsSync(join(projectPath, 'browser.js')))
 
   // Check that CI workflow only includes the specified targets
   const ciYaml = await readFile(
@@ -199,13 +197,7 @@ test('create a new project with custom path, name, and targets', async (t) => {
       (setting: any) => setting.target === 'x86_64-pc-windows-msvc',
     ),
   )
-  t.true(
-    yamlObject.jobs.build.strategy.matrix.settings.some(
-      (setting: any) => setting.target === 'wasm32-wasip1-threads',
-    ),
-  )
   t.truthy(yamlObject.jobs['build-freebsd'])
-  t.truthy(yamlObject.jobs['test-wasi'])
   t.falsy(
     yamlObject.jobs['test-macOS-windows-binding'].strategy.matrix.settings.some(
       (setting: any) => setting.target === 'x86_64-pc-windows-msvc',
@@ -223,7 +215,6 @@ test('non Windows and macOS targets should remove test-macOS-windows-binding job
   const targets = [
     'x86_64-unknown-linux-gnu',
     'aarch64-unknown-linux-gnu',
-    'wasm32-wasip1-threads',
     'x86_64-unknown-freebsd',
   ]
 

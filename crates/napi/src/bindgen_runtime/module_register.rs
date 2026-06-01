@@ -20,17 +20,14 @@ use std::sync::{
   LazyLock, RwLock,
 };
 
-#[cfg(not(target_family = "wasm"))]
 use linkme::distributed_slice;
 #[cfg(not(feature = "noop"))]
 use rustc_hash::FxBuildHasher;
 
-#[cfg(not(feature = "noop"))]
-use crate::bindgen_runtime::{
-  ClassInfo, ClassKey, ClassStorageRef, EnvRecord, ErasedClassDef, NapiClass, NativeParent,
-};
-#[cfg(all(feature = "noop", not(target_family = "wasm")))]
+#[cfg(feature = "noop")]
 use crate::bindgen_runtime::ErasedClassDef;
+#[cfg(not(feature = "noop"))]
+use crate::bindgen_runtime::{ClassInfo, ClassKey, ClassStorageRef, EnvRecord, ErasedClassDef};
 #[cfg(all(not(feature = "noop"), feature = "napi4"))]
 use crate::Env;
 #[cfg(all(not(feature = "noop"), feature = "node_version_detect"))]
@@ -76,7 +73,6 @@ struct ClassRegistration {
   implement_iterator: bool,
 }
 
-#[cfg(not(target_family = "wasm"))]
 pub struct ClassStructDescriptor {
   pub class: fn() -> ErasedClassDef,
   pub parent: fn() -> Option<ErasedClassDef>,
@@ -88,7 +84,6 @@ pub struct ClassStructDescriptor {
   pub props: fn() -> Vec<Property>,
 }
 
-#[cfg(not(target_family = "wasm"))]
 pub struct ClassImplDescriptor {
   pub class: fn() -> ErasedClassDef,
   pub js_mod: Option<&'static str>,
@@ -97,11 +92,9 @@ pub struct ClassImplDescriptor {
   pub props: fn() -> Vec<Property>,
 }
 
-#[cfg(not(target_family = "wasm"))]
 #[distributed_slice]
 pub static CLASS_STRUCT_DESCRIPTORS: [ClassStructDescriptor];
 
-#[cfg(not(target_family = "wasm"))]
 #[distributed_slice]
 pub static CLASS_IMPL_DESCRIPTORS: [ClassImplDescriptor];
 
@@ -131,38 +124,6 @@ struct StagedClassRegistration {
 enum VisitState {
   Visiting,
   Visited,
-}
-
-// Stores class metadata registered by napi macros.
-// Since class properties do not contain any napi_value, ModuleClassProperty is thread-safe.
-// This structure is shared between the main JS thread and worker threads.
-#[cfg(not(feature = "noop"))]
-#[derive(Default)]
-struct ModuleClassProperty(RwLock<ClassPropertyRegistry>);
-
-#[cfg(not(feature = "noop"))]
-unsafe impl Send for ModuleClassProperty {}
-#[cfg(not(feature = "noop"))]
-unsafe impl Sync for ModuleClassProperty {}
-
-#[cfg(not(feature = "noop"))]
-impl ModuleClassProperty {
-  pub(crate) fn borrow_mut<F, R>(&self, f: F) -> R
-  where
-    F: FnOnce(&mut ClassPropertyRegistry) -> R,
-  {
-    let mut write_lock = self.0.write().unwrap();
-    f(&mut write_lock)
-  }
-
-  #[cfg(target_family = "wasm")]
-  fn borrow<F, R>(&self, f: F) -> R
-  where
-    F: FnOnce(&ClassPropertyRegistry) -> R,
-  {
-    let write_lock = self.0.read().unwrap();
-    f(&write_lock)
-  }
 }
 
 #[cfg(not(feature = "noop"))]
@@ -266,17 +227,10 @@ static MODULE_REGISTER_CALLBACK: LazyLock<ModuleRegisterCallback> = LazyLock::ne
 static MODULE_REGISTER_HOOK_CALLBACK: LazyLock<RwLock<Option<ExportRegisterHookCallback>>> =
   LazyLock::new(Default::default);
 #[cfg(not(feature = "noop"))]
-// Legacy WASM registration state. Non-WASM class registration is descriptor-driven.
-static MODULE_CLASS_PROPERTIES: LazyLock<ModuleClassProperty> = LazyLock::new(Default::default);
-#[cfg(not(feature = "noop"))]
 static MODULE_COUNT: AtomicUsize = AtomicUsize::new(0);
 #[cfg(not(feature = "noop"))]
 static FIRST_MODULE_REGISTERED: AtomicBool = AtomicBool::new(false);
-#[cfg(all(
-  feature = "tokio_rt",
-  not(target_family = "wasm"),
-  not(feature = "noop")
-))]
+#[cfg(all(feature = "tokio_rt", not(feature = "noop")))]
 static ENV_CLEANUP_HOOK_ADDED: RwLock<bool> = RwLock::new(false);
 #[cfg(all(feature = "napi4", not(feature = "noop")))]
 pub(crate) static CUSTOM_GC_TSFN: std::sync::atomic::AtomicPtr<sys::napi_threadsafe_function__> =
@@ -333,100 +287,6 @@ pub fn register_module_export_hook(cb: ExportRegisterHookCallback) {
 pub fn register_module_export_hook(_cb: ExportRegisterHookCallback) {}
 
 #[cfg(not(feature = "noop"))]
-#[doc(hidden)]
-pub fn register_napi_class<T>(
-  js_mod: Option<&'static str>,
-  js_name: &'static str,
-  props: Vec<Property>,
-  hidden_constructor: sys::napi_callback,
-  constructible: bool,
-  implement_iterator: bool,
-) where
-  T: NapiClass,
-{
-  // Kept for the WASM export-registration path. Non-WASM impl methods are
-  // collected through ClassImplDescriptor instead.
-  let class = T::CLASS.erase();
-  let parent = <T::Parent as NativeParent>::erased_class_def();
-  MODULE_CLASS_PROPERTIES.borrow_mut(|inner| {
-    let val = inner.entry(class.key()).or_default();
-    let val = val.entry(js_mod).or_insert_with(|| ClassRegistration {
-      class,
-      parent,
-      js_name,
-      props: Vec::new(),
-      hidden_constructor: None,
-      constructible,
-      implement_iterator,
-    });
-    val.class = class;
-    val.parent = parent;
-    val.js_name = js_name;
-    val.constructible |= constructible;
-    if hidden_constructor.is_some() {
-      val.hidden_constructor = hidden_constructor;
-    }
-    val.implement_iterator |= implement_iterator;
-    val.props.extend(props);
-  });
-}
-
-#[cfg(feature = "noop")]
-#[doc(hidden)]
-#[allow(unused_variables)]
-pub fn register_napi_class<T>(
-  js_mod: Option<&'static str>,
-  js_name: &'static str,
-  props: Vec<Property>,
-  hidden_constructor: sys::napi_callback,
-  constructible: bool,
-  implement_iterator: bool,
-) {
-}
-
-#[cfg(not(feature = "noop"))]
-#[doc(hidden)]
-pub fn register_napi_class_impl<T>(
-  js_mod: Option<&'static str>,
-  js_name: &'static str,
-  props: Vec<Property>,
-  implement_iterator: bool,
-) where
-  T: NapiClass,
-{
-  let class = T::CLASS.erase();
-  let parent = <T::Parent as NativeParent>::erased_class_def();
-  MODULE_CLASS_PROPERTIES.borrow_mut(|inner| {
-    let val = inner.entry(class.key()).or_default();
-    let val = val.entry(js_mod).or_insert_with(|| ClassRegistration {
-      class,
-      parent,
-      js_name,
-      props: Vec::new(),
-      hidden_constructor: None,
-      constructible: false,
-      implement_iterator,
-    });
-    val.class = class;
-    val.parent = parent;
-    val.constructible |= props.iter().any(|prop| prop.is_ctor);
-    val.implement_iterator |= implement_iterator;
-    val.props.extend(props);
-  });
-}
-
-#[cfg(feature = "noop")]
-#[doc(hidden)]
-#[allow(unused_variables)]
-pub fn register_napi_class_impl<T>(
-  js_mod: Option<&'static str>,
-  js_name: &'static str,
-  props: Vec<Property>,
-  implement_iterator: bool,
-) {
-}
-
-#[cfg(all(not(feature = "noop"), not(target_family = "wasm")))]
 fn collect_class_registry_from_descriptors() -> ClassPropertyRegistry {
   let mut registry = ClassPropertyRegistry::default();
 
@@ -1010,15 +870,6 @@ unsafe fn commit_staged_classes(
   Ok(())
 }
 
-#[cfg(all(target_family = "wasm", not(feature = "noop")))]
-#[no_mangle]
-unsafe extern "C" fn napi_register_wasm_v1(
-  env: sys::napi_env,
-  exports: sys::napi_value,
-) -> sys::napi_value {
-  unsafe { napi_register_module_v1(env, exports) }
-}
-
 #[cfg(not(feature = "noop"))]
 #[no_mangle]
 /// Register the n-api module exports.
@@ -1032,10 +883,7 @@ pub unsafe extern "C" fn napi_register_module_v1(
   env: sys::napi_env,
   exports: sys::napi_value,
 ) -> sys::napi_value {
-  #[cfg(any(
-    target_env = "msvc",
-    all(not(target_family = "wasm"), feature = "dyn-symbols")
-  ))]
+  #[cfg(any(target_env = "msvc", feature = "dyn-symbols"))]
   unsafe {
     sys::setup();
   }
@@ -1165,15 +1013,10 @@ unsafe fn napi_register_module_v1_inner(
   }
 
   {
-    #[cfg(not(target_family = "wasm"))]
     let staged_classes = {
       let registry = collect_class_registry_from_descriptors();
       unsafe { stage_all_classes(env, &registry) }
     };
-
-    #[cfg(target_family = "wasm")]
-    let staged_classes =
-      MODULE_CLASS_PROPERTIES.borrow(|inner| unsafe { stage_all_classes(env, inner) });
 
     match staged_classes {
       Ok(staged) => {
@@ -1207,37 +1050,18 @@ unsafe fn napi_register_module_v1_inner(
     #[cfg(feature = "tokio_rt")]
     {
       crate::env::start_async_runtime();
-      #[cfg(not(target_family = "wasm"))]
-      {
-        let mut env_cleanup_hook_added = ENV_CLEANUP_HOOK_ADDED.write().unwrap();
-        if !*env_cleanup_hook_added {
-          check_status_or_throw!(
-            env,
-            unsafe { sys::napi_add_env_cleanup_hook(env, Some(thread_cleanup), ptr::null_mut()) },
-            "Failed to add env cleanup hook"
-          );
-          *env_cleanup_hook_added = true;
-          drop(env_cleanup_hook_added);
-        }
+      let mut env_cleanup_hook_added = ENV_CLEANUP_HOOK_ADDED.write().unwrap();
+      if !*env_cleanup_hook_added {
+        check_status_or_throw!(
+          env,
+          unsafe { sys::napi_add_env_cleanup_hook(env, Some(thread_cleanup), ptr::null_mut()) },
+          "Failed to add env cleanup hook"
+        );
+        *env_cleanup_hook_added = true;
+        drop(env_cleanup_hook_added);
       }
     }
   }
-
-  #[cfg(all(feature = "tokio_rt", feature = "napi4", target_family = "wasm"))]
-  check_status_or_throw!(
-    env,
-    unsafe {
-      sys::napi_wrap(
-        env,
-        exports,
-        std::ptr::null_mut(),
-        Some(thread_cleanup),
-        std::ptr::null_mut(),
-        std::ptr::null_mut(),
-      )
-    },
-    "Failed to add remove thread id cleanup hook"
-  );
 
   FIRST_MODULE_REGISTERED.store(true, Ordering::SeqCst);
   exports
@@ -1300,27 +1124,8 @@ fn create_custom_gc(env: sys::napi_env) {
   THREADS_CAN_ACCESS_ENV.with(|cell| cell.set(true));
 }
 
-#[cfg(all(
-  not(feature = "noop"),
-  all(feature = "tokio_rt", feature = "napi4"),
-  not(target_family = "wasm")
-))]
+#[cfg(all(not(feature = "noop"), all(feature = "tokio_rt", feature = "napi4"),))]
 unsafe extern "C" fn thread_cleanup(_data: *mut std::ffi::c_void) {
-  if MODULE_COUNT.fetch_sub(1, Ordering::Relaxed) == 1 {
-    crate::env::shutdown_async_runtime();
-  }
-}
-
-#[cfg(all(
-  not(feature = "noop"),
-  all(feature = "tokio_rt", feature = "napi4"),
-  target_family = "wasm"
-))]
-unsafe extern "C" fn thread_cleanup(
-  _env: sys::napi_env,
-  _id: *mut std::ffi::c_void,
-  _data: *mut std::ffi::c_void,
-) {
   if MODULE_COUNT.fetch_sub(1, Ordering::Relaxed) == 1 {
     crate::env::shutdown_async_runtime();
   }

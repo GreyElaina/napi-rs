@@ -273,10 +273,7 @@ impl<T: NapiReceiver> Ref<Class<T>> {
     Ok(Self::new(RefState::new(raw, record), access))
   }
 
-  pub fn cast<U: NapiReceiver>(
-    &self,
-    scope: &mut Scope<'_, '_>,
-  ) -> Result<Ref<Class<U>>> {
+  pub fn cast<U: NapiReceiver>(&self, scope: &mut Scope<'_, '_>) -> Result<Ref<Class<U>>> {
     let record = self.state.owner_record()?;
     ensure_same_record(&record, scope)?;
     let object = reference_value(scope.env().raw(), self.state.raw_ref()?)?;
@@ -366,7 +363,11 @@ pub struct ClassRef<T: NapiClass> {
 }
 
 impl<T: NapiClass> ClassRef<T> {
-  fn new(state: RefState, storage_header: NonNull<ClassStorageHeader>, access: ClassAccess) -> Self {
+  fn new(
+    state: RefState,
+    storage_header: NonNull<ClassStorageHeader>,
+    access: ClassAccess,
+  ) -> Self {
     Self {
       state,
       storage_header,

@@ -6,7 +6,6 @@
   "workspaces": [
     "bench",
     "cli",
-    "wasm-runtime",
     "triples",
     "memory-testing",
     "examples/napi",

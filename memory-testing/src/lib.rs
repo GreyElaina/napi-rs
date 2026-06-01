@@ -43,7 +43,7 @@ pub struct Room {
 
 #[napi]
 pub fn test_async<'env>(
-  env: &'env Env<'env>,
+  #[napi(env)] env: &'env Env<'env>,
 ) -> napi::Result<napi::bindgen_prelude::Promise<'env, String>> {
   let data = serde_json::json!({
       "findFirstBooking": {
@@ -73,7 +73,7 @@ pub fn test_async<'env>(
 }
 
 #[napi]
-pub fn from_js(env: Env, input_object: Object) -> napi::Result<String> {
+pub fn from_js(#[napi(env)] env: Env, input_object: Object) -> napi::Result<String> {
   let a: Welcome = env.from_js_value(input_object)?;
   Ok(serde_json::to_string(&a)?)
 }
@@ -103,11 +103,14 @@ pub struct ChildReference(Ref<Class<MemoryHolder>>);
 #[napi]
 impl ChildReference {
   #[napi]
-  pub fn count(&self, mut env: Env) -> Result<u32> {
+  pub fn count(&self, #[napi(env)] mut env: Env) -> Result<u32> {
     env.with_scope(|scope| {
-      let holder_ref = scope.bind_reference(&self.0)?;
-      let holder = scope.borrow_class(&holder_ref)?;
-      Ok(holder.0.len() as u32)
+      let holder = self.0.as_class_local(scope)?;
+      let count = {
+        let holder_borrow = holder.borrow()?;
+        holder_borrow.0.len() as u32
+      };
+      Ok(count)
     })
   }
 }

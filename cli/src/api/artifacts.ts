@@ -22,7 +22,7 @@ export async function collectArtifacts(userOptions: ArtifactsOptions) {
 
   const resolvePath = (...paths: string[]) => resolve(options.cwd, ...paths)
   const packageJsonPath = resolvePath(options.packageJsonPath)
-  const { targets, binaryName, packageName } = await readNapiConfig(
+  const { targets, binaryName } = await readNapiConfig(
     packageJsonPath,
     options.configPath ? resolvePath(options.configPath) : undefined,
   )
@@ -84,81 +84,12 @@ export async function collectArtifacts(userOptions: ArtifactsOptions) {
         }),
       ),
   )
-
-  const wasiTarget = targets.find((t) => t.platform === 'wasi')
-  if (wasiTarget) {
-    const wasiDir = join(
-      options.cwd,
-      options.npmDir,
-      wasiTarget.platformArchABI,
-    )
-    const cjsFile = join(
-      options.buildOutputDir ?? options.cwd,
-      `${binaryName}.wasi.cjs`,
-    )
-    const workerFile = join(
-      options.buildOutputDir ?? options.cwd,
-      `wasi-worker.mjs`,
-    )
-    const browserEntry = join(
-      options.buildOutputDir ?? options.cwd,
-      `${binaryName}.wasi-browser.js`,
-    )
-    const browserWorkerFile = join(
-      options.buildOutputDir ?? options.cwd,
-      `wasi-worker-browser.mjs`,
-    )
-    debug.info(
-      `Move wasi binding file [${colors.yellowBright(
-        cjsFile,
-      )}] to [${colors.yellowBright(wasiDir)}]`,
-    )
-    await writeFileAsync(
-      join(wasiDir, `${binaryName}.wasi.cjs`),
-      await readFileAsync(cjsFile),
-    )
-    debug.info(
-      `Move wasi worker file [${colors.yellowBright(
-        workerFile,
-      )}] to [${colors.yellowBright(wasiDir)}]`,
-    )
-    await writeFileAsync(
-      join(wasiDir, `wasi-worker.mjs`),
-      await readFileAsync(workerFile),
-    )
-    debug.info(
-      `Move wasi browser entry file [${colors.yellowBright(
-        browserEntry,
-      )}] to [${colors.yellowBright(wasiDir)}]`,
-    )
-    await writeFileAsync(
-      join(wasiDir, `${binaryName}.wasi-browser.js`),
-      // https://github.com/vitejs/vite/issues/8427
-      (await readFileAsync(browserEntry, 'utf8')).replace(
-        `new URL('./wasi-worker-browser.mjs', import.meta.url)`,
-        `new URL('${packageName}-wasm32-wasi/wasi-worker-browser.mjs', import.meta.url)`,
-      ),
-    )
-    debug.info(
-      `Move wasi browser worker file [${colors.yellowBright(
-        browserWorkerFile,
-      )}] to [${colors.yellowBright(wasiDir)}]`,
-    )
-    await writeFileAsync(
-      join(wasiDir, `wasi-worker-browser.mjs`),
-      await readFileAsync(browserWorkerFile),
-    )
-  }
 }
 
 async function collectNodeBinaries(root: string) {
   const files = await readdirAsync(root, { withFileTypes: true })
   const nodeBinaries = files
-    .filter(
-      (file) =>
-        file.isFile() &&
-        (file.name.endsWith('.node') || file.name.endsWith('.wasm')),
-    )
+    .filter((file) => file.isFile() && file.name.endsWith('.node'))
     .map((file) => join(root, file.name))
 
   const dirs = files.filter((file) => file.isDirectory())

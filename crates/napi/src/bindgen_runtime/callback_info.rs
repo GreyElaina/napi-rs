@@ -614,10 +614,7 @@ impl<'env, 'scope> CallbackFrame<'env, 'scope> {
     self.reference_from_object(object).map(Some)
   }
 
-  pub fn arg_opt_class_ref<T: NapiClass>(
-    &mut self,
-    index: usize,
-  ) -> Result<Option<ClassRef<T>>> {
+  pub fn arg_opt_class_ref<T: NapiClass>(&mut self, index: usize) -> Result<Option<ClassRef<T>>> {
     let Some(object) = self.arg_optional_object(index)? else {
       return Ok(None);
     };

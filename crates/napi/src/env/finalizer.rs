@@ -5,7 +5,6 @@ use crate::sys;
 /// This function could be used for `BufferSlice::from_external` when no finalization is needed.
 pub fn noop_finalize<Hint>(_hint: Hint) {}
 
-#[cfg_attr(target_family = "wasm", allow(unused_variables))]
 pub(crate) unsafe extern "C" fn raw_finalize<T>(
   env: sys::napi_env,
   finalize_data: *mut c_void,
@@ -13,7 +12,6 @@ pub(crate) unsafe extern "C" fn raw_finalize<T>(
 ) {
   let tagged_object = finalize_data as *mut T;
   drop(unsafe { Box::from_raw(tagged_object) });
-  #[cfg(not(target_family = "wasm"))]
   if !finalize_hint.is_null() {
     let size_hint = unsafe { *Box::from_raw(finalize_hint as *mut i64) };
     if size_hint != 0 {

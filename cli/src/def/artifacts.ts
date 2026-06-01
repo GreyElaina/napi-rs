@@ -32,11 +32,6 @@ export abstract class BaseArtifactsCommand extends Command {
     description: 'Path to the folder where the npm packages put',
   })
 
-  buildOutputDir?: string = Option.String('--build-output-dir', {
-    description:
-      'Path to the build output dir, only needed when targets contains `wasm32-wasi-*`',
-  })
-
   getOptions() {
     return {
       cwd: this.cwd,
@@ -44,7 +39,6 @@ export abstract class BaseArtifactsCommand extends Command {
       packageJsonPath: this.packageJsonPath,
       outputDir: this.outputDir,
       npmDir: this.npmDir,
-      buildOutputDir: this.buildOutputDir,
     }
   }
 }
@@ -81,10 +75,6 @@ export interface ArtifactsOptions {
    * @default 'npm'
    */
   npmDir?: string
-  /**
-   * Path to the build output dir, only needed when targets contains `wasm32-wasi-*`
-   */
-  buildOutputDir?: string
 }
 
 export function applyDefaultArtifactsOptions(options: ArtifactsOptions) {

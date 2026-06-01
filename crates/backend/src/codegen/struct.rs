@@ -86,7 +86,9 @@ fn optional_reference_field_inner(ty: &syn::Type, owner: &Ident) -> Option<Token
   }
   let class = input.class_type(Some(owner))?;
   Some(match input.kind() {
-    ClassInputKind::Ref => quote! { napi::bindgen_prelude::Ref<napi::bindgen_prelude::Class<#class>> },
+    ClassInputKind::Ref => {
+      quote! { napi::bindgen_prelude::Ref<napi::bindgen_prelude::Class<#class>> }
+    }
     ClassInputKind::ClassRef => quote! { napi::bindgen_prelude::ClassRef<#class> },
     _ => unreachable!(),
   })
@@ -1229,7 +1231,7 @@ impl NapiStruct {
     let js_mod_ident = js_mod_to_token_stream(self.js_mod.as_ref());
     let constructible = class.ctor;
     quote! {
-      #[cfg(all(not(test), not(target_family = "wasm")))]
+      #[cfg(not(test))]
       #[allow(non_snake_case)]
       #[allow(non_upper_case_globals)]
       #[allow(clippy::all)]
@@ -1264,21 +1266,6 @@ impl NapiStruct {
           };
       }
 
-      #[allow(non_snake_case)]
-      #[allow(clippy::all)]
-      #[cfg(all(not(test), target_family = "wasm"))]
-      // Compatibility path only. Non-WASM registration is descriptor-driven.
-      #[no_mangle]
-      extern "C" fn #struct_register_name() {
-        napi::__private::register_napi_class::<#name>(
-          #js_mod_ident,
-          #js_name,
-          vec![#(#props),*],
-          Some(constructor),
-          #constructible,
-          #implement_iterator,
-        );
-      }
     }
   }
 
@@ -1912,7 +1899,6 @@ impl NapiImpl {
     let mut props: Vec<_> = props.into_iter().collect();
     props.sort_by_key(|(_, prop)| prop.to_string());
     let props = props.into_iter().map(|(_, prop)| prop);
-    let props_wasm = props.clone();
     let js_mod_ident = js_mod_to_token_stream(self.js_mod.as_ref());
     Ok(quote! {
       #[allow(non_snake_case)]
@@ -1923,17 +1909,17 @@ impl NapiImpl {
         use napi::__private::linkme::distributed_slice;
         #(#methods)*
 
-        #[cfg(all(not(test), not(target_family = "wasm")))]
+        #[cfg(not(test))]
         fn __class() -> napi::bindgen_prelude::ErasedClassDef {
           <#name as napi::bindgen_prelude::NapiClass>::CLASS.erase()
         }
 
-        #[cfg(all(not(test), not(target_family = "wasm")))]
+        #[cfg(not(test))]
         fn __props() -> Vec<napi::bindgen_prelude::Property> {
           vec![#(#props),*]
         }
 
-        #[cfg(all(not(test), not(target_family = "wasm")))]
+        #[cfg(not(test))]
         #[distributed_slice(napi::__private::CLASS_IMPL_DESCRIPTORS)]
         #[linkme(crate = napi::__private::linkme)]
         static #register_name: napi::__private::ClassImplDescriptor =
@@ -1944,18 +1930,6 @@ impl NapiImpl {
             implement_iterator: false,
             props: __props,
           };
-
-        #[cfg(all(not(test), target_family = "wasm"))]
-        // Compatibility path only. Non-WASM registration is descriptor-driven.
-        #[no_mangle]
-        extern "C" fn #register_name() {
-          napi::__private::register_napi_class_impl::<#name>(
-            #js_mod_ident,
-            #js_name,
-            vec![#(#props_wasm),*],
-            false,
-          );
-        }
       }
     })
   }

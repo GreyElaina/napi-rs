@@ -59,43 +59,6 @@ export interface UserNapiConfig {
   dtsHeaderFile?: string
 
   /**
-   * wasm compilation options
-   */
-  wasm?: {
-    /**
-     * https://developer.mozilla.org/en-US/docs/WebAssembly/JavaScript_interface/Memory
-     * @default 4000 pages (256MiB)
-     */
-    initialMemory?: number
-    /**
-     * @default 65536 pages (4GiB)
-     */
-    maximumMemory?: number
-
-    /**
-     * Browser wasm binding configuration
-     */
-    browser: {
-      /**
-       * Whether to use fs module in browser
-       */
-      fs?: boolean
-      /**
-       * Whether to initialize wasm asynchronously
-       */
-      asyncInit?: boolean
-      /**
-       * Whether to inject `buffer` to emnapi context
-       */
-      buffer?: boolean
-      /**
-       * Whether to emit custom events for errors in worker
-       */
-      errorEvent?: boolean
-    }
-  }
-
-  /**
    * @deprecated binaryName instead
    */
   name?: string
@@ -162,7 +125,7 @@ export type NapiConfig = Required<
 > &
   Pick<
     UserNapiConfig,
-    'wasm' | 'dtsHeader' | 'dtsHeaderFile' | 'constEnum' | 'runtimeStringEnum'
+    'dtsHeader' | 'dtsHeaderFile' | 'constEnum' | 'runtimeStringEnum'
   > & {
     targets: Target[]
     packageJson: CommonPackageJsonFields

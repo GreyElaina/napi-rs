@@ -1,7 +1,6 @@
 use std::env;
 
 mod android;
-mod wasi;
 mod windows;
 
 pub fn setup() {
@@ -27,9 +26,6 @@ pub fn setup() {
 
   match target_os.as_str() {
     "android" if android::setup().is_ok() => {}
-    "wasi" => {
-      wasi::setup();
-    }
     "macos" => {
       // Keep the dynamic lookup behavior on macOS to avoid breaking changes.
       println!("cargo:rustc-cdylib-link-arg=-Wl");

@@ -150,7 +150,6 @@ impl<T: 'static> External<T> {
       "Create external value failed"
     )?;
 
-    #[cfg(not(target_family = "wasm"))]
     {
       let mut adjusted_external_memory_size = std::mem::MaybeUninit::new(0);
 

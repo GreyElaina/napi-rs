@@ -1,5 +1,4 @@
 import { existsSync } from 'node:fs'
-import { rename } from 'node:fs/promises'
 import { resolve, join } from 'node:path'
 
 import { parse as parseToml, stringify as stringifyToml } from '@std/toml'
@@ -121,42 +120,6 @@ export async function renameProject(userOptions: RenameOptions) {
           )
         }
       }
-    }
-    const oldWasiBrowserBindingPath = join(
-      options.cwd,
-      `${oldName}.wasi-browser.js`,
-    )
-    if (existsSync(oldWasiBrowserBindingPath)) {
-      await rename(
-        oldWasiBrowserBindingPath,
-        join(options.cwd, `${options.binaryName}.wasi-browser.js`),
-      )
-    }
-    const oldWasiBindingPath = join(options.cwd, `${oldName}.wasi.cjs`)
-    if (existsSync(oldWasiBindingPath)) {
-      await rename(
-        oldWasiBindingPath,
-        join(options.cwd, `${options.binaryName}.wasi.cjs`),
-      )
-    }
-    const gitAttributesPath = join(options.cwd, '.gitattributes')
-    if (existsSync(gitAttributesPath)) {
-      const gitAttributesContent = await readFileAsync(
-        gitAttributesPath,
-        'utf8',
-      )
-      const gitAttributesData = gitAttributesContent
-        .split('\n')
-        .map((line) => {
-          return line
-            .replace(
-              `${oldName}.wasi-browser.js`,
-              `${options.binaryName}.wasi-browser.js`,
-            )
-            .replace(`${oldName}.wasi.cjs`, `${options.binaryName}.wasi.cjs`)
-        })
-        .join('\n')
-      await writeFileAsync(gitAttributesPath, gitAttributesData)
     }
   }
 }

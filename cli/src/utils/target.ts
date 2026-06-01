@@ -1,6 +1,6 @@
 import { execSync } from 'node:child_process'
 
-export type Platform = NodeJS.Platform | 'wasm' | 'wasi' | 'openharmony'
+export type Platform = NodeJS.Platform | 'openharmony'
 
 export const UNIVERSAL_TARGETS = {
   'universal-apple-darwin': ['aarch64-apple-darwin', 'x86_64-apple-darwin'],
@@ -31,8 +31,6 @@ export const AVAILABLE_TARGETS = [
   'riscv64gc-unknown-linux-gnu',
   'powerpc64le-unknown-linux-gnu',
   's390x-unknown-linux-gnu',
-  'wasm32-wasi-preview1-threads',
-  'wasm32-wasip1-threads',
 ] as const
 
 export type TargetTriple = (typeof AVAILABLE_TARGETS)[number]
@@ -69,7 +67,6 @@ type NodeJSArch =
   | 'x32'
   | 'x64'
   | 'universal'
-  | 'wasm32'
 
 const CpuToNodeArch: Record<string, NodeJSArch> = {
   x86_64: 'x64',
@@ -122,18 +119,10 @@ export interface Target {
  *   - `abi` = The ABI, for example `gnu`, `android`, `eabi`, etc.
  */
 export function parseTriple(rawTriple: string): Target {
-  if (
-    rawTriple === 'wasm32-wasi' ||
-    rawTriple === 'wasm32-wasi-preview1-threads' ||
-    rawTriple.startsWith('wasm32-wasip')
-  ) {
-    return {
-      triple: rawTriple,
-      platformArchABI: 'wasm32-wasi',
-      platform: 'wasi',
-      arch: 'wasm32',
-      abi: 'wasi',
-    }
+  if (rawTriple.startsWith('wasm32-')) {
+    throw new Error(
+      `WASM targets are no longer supported by napi-rs: ${rawTriple}`,
+    )
   }
   const triple = rawTriple.endsWith('eabi')
     ? `${rawTriple.slice(0, -4)}-eabi`

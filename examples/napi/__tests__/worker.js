@@ -2,8 +2,6 @@ import { parentPort } from 'node:worker_threads'
 
 import native from '../index.cjs'
 
-const isWasiTest = !!process.env.WASI_TEST
-
 parentPort.on('message', ({ type }) => {
   switch (type) {
     case 'require':
@@ -13,7 +11,7 @@ parentPort.on('message', ({ type }) => {
       break
     case 'async:buffer':
       Promise.all(
-        Array.from({ length: isWasiTest ? 2 : 100 }).map(() =>
+        Array.from({ length: 100 }).map(() =>
           native.bufferPassThrough(Buffer.from([1, 2, 3])),
         ),
       )
@@ -26,7 +24,7 @@ parentPort.on('message', ({ type }) => {
       break
     case 'async:arraybuffer':
       Promise.all(
-        Array.from({ length: isWasiTest ? 2 : 100 }).map(() =>
+        Array.from({ length: 100 }).map(() =>
           native.arrayBufferPassThrough(Uint8Array.from([1, 2, 3])),
         ),
       )

@@ -53,12 +53,6 @@ async function createFixtureProject(
     join(cwd, '.github', 'workflows', 'CI.yml'),
     'env:\n  APP_NAME: foo\njobs:\n  build:\n    runs-on: ubuntu-latest\n',
   )
-  await writeFile(
-    join(cwd, '.gitattributes'),
-    'foo.wasi-browser.js linguist-generated=true\nfoo.wasi.cjs linguist-generated=true\n',
-  )
-  await writeFile(join(cwd, 'foo.wasi-browser.js'), 'browser binding\n')
-  await writeFile(join(cwd, 'foo.wasi.cjs'), 'node binding\n')
 
   if (options.configPath && options.configData) {
     await writeFile(
@@ -68,7 +62,7 @@ async function createFixtureProject(
   }
 }
 
-test('omitting binaryName keeps existing wasi artifact names and binary references', async (t) => {
+test('omitting binaryName keeps package binary references', async (t) => {
   const projectPath = join(t.context.tmpDir, 'artifact-rename')
 
   await createFixtureProject(projectPath, {
@@ -91,10 +85,6 @@ test('omitting binaryName keeps existing wasi artifact names and binary referenc
     await readFile(join(projectPath, 'package.json'), 'utf8'),
   )
   const cargoToml = await readFile(join(projectPath, 'Cargo.toml'), 'utf8')
-  const gitAttributes = await readFile(
-    join(projectPath, '.gitattributes'),
-    'utf8',
-  )
   const ciYaml = yamlLoad(
     await readFile(join(projectPath, '.github', 'workflows', 'CI.yml'), 'utf8'),
   ) as any
@@ -103,14 +93,6 @@ test('omitting binaryName keeps existing wasi artifact names and binary referenc
   t.is(packageJson.napi.binaryName, 'foo')
   t.is(packageJson.napi.packageName, '@scope/original')
   t.true(cargoToml.includes('name = "foo"'))
-  t.true(existsSync(join(projectPath, 'foo.wasi-browser.js')))
-  t.true(existsSync(join(projectPath, 'foo.wasi.cjs')))
-  t.false(existsSync(join(projectPath, 'undefined.wasi-browser.js')))
-  t.false(existsSync(join(projectPath, 'undefined.wasi.cjs')))
-  t.true(gitAttributes.includes('foo.wasi-browser.js'))
-  t.true(gitAttributes.includes('foo.wasi.cjs'))
-  t.false(gitAttributes.includes('undefined.wasi-browser.js'))
-  t.false(gitAttributes.includes('undefined.wasi.cjs'))
   t.is(ciYaml.env.APP_NAME, 'foo')
 })
 
@@ -141,10 +123,6 @@ test('omitting binaryName preserves separated napi config fields', async (t) => 
 
   t.is(config.binaryName, 'foo')
   t.is(config.packageName, '@scope/original')
-  t.true(existsSync(join(projectPath, 'foo.wasi-browser.js')))
-  t.true(existsSync(join(projectPath, 'foo.wasi.cjs')))
-  t.false(existsSync(join(projectPath, 'undefined.wasi-browser.js')))
-  t.false(existsSync(join(projectPath, 'undefined.wasi.cjs')))
 })
 
 test('repository updates package.json when provided', async (t) => {

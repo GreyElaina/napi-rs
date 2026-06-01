@@ -72,6 +72,7 @@ bitflags = "2"
 # Keep ctor's priority support disabled until the Apple/Zig cross-link
 # path stops emitting unresolved `section$end$__DATA$CTOR` references.
 ctor = { version = "1.0.0", default-features = false }
+linkme = "0.3.36"
 nohash-hasher = "0.2.0"
 rustc-hash = "2.1.1"
 
@@ -92,22 +93,18 @@ version = "0.8"
 optional = true
 version = "0.4"
 
-[dependencies.tracing]
-optional = true
-version = "0.1"
-
-[target.'cfg(any(all(target_family = "wasm", tokio_unstable), not(target_family = "wasm")))'.dependencies]
-tokio = { version = "1", features = [
+[dependencies.tokio]
+version = "1"
+features = [
   "rt",
   "rt-multi-thread",
   "sync",
-], optional = true }
+]
+optional = true
 
-[target.'cfg(all(target_family = "wasm", not(tokio_unstable)))'.dependencies]
-tokio = { version = "1", features = ["rt", "sync"], optional = true }
-
-[target.'cfg(not(target_family = "wasm"))'.dependencies]
-linkme = "0.3.36"
+[dependencies.tracing]
+optional = true
+version = "0.1"
 
 [dependencies.serde]
 optional = true

@@ -39,7 +39,7 @@ impl NapiConst {
           napi::bindgen_prelude::IntoJs::into_js(#name_ident, scope).map(|value| value.raw())
         })
       }
-      #[cfg(all(not(test), not(target_family = "wasm")))]
+      #[cfg(not(test))]
       napi::ctor::declarative::ctor! {
         #[allow(non_snake_case)]
         #[allow(clippy::all)]
@@ -49,13 +49,6 @@ impl NapiConst {
         }
       }
 
-      #[allow(non_snake_case)]
-      #[allow(clippy::all)]
-      #[cfg(all(not(test), target_family = "wasm"))]
-      #[no_mangle]
-      unsafe extern "C" fn #register_name() {
-        napi::bindgen_prelude::register_module_export(#js_mod_ident, #js_name_lit, #cb_name);
-      }
     }
   }
 }

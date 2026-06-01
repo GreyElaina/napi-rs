@@ -15,23 +15,10 @@ fn create_runtime() -> Runtime {
     }
   }
 
-  #[cfg(any(
-    all(target_family = "wasm", tokio_unstable),
-    not(target_family = "wasm")
-  ))]
-  {
-    tokio::runtime::Builder::new_multi_thread()
-      .enable_all()
-      .build()
-      .expect("Create tokio runtime failed")
-  }
-  #[cfg(all(target_family = "wasm", not(tokio_unstable)))]
-  {
-    tokio::runtime::Builder::new_current_thread()
-      .enable_all()
-      .build()
-      .expect("Create tokio runtime failed")
-  }
+  tokio::runtime::Builder::new_multi_thread()
+    .enable_all()
+    .build()
+    .expect("Create tokio runtime failed")
 }
 
 #[cfg(not(feature = "noop"))]

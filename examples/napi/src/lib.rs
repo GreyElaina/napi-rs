@@ -6,7 +6,6 @@
 #![allow(non_snake_case)]
 #![allow(deprecated)]
 
-#[cfg(not(target_family = "wasm"))]
 use napi::bindgen_prelude::create_custom_tokio_runtime;
 use napi::bindgen_prelude::{JsObjectValue, Object, Result, Symbol};
 pub use napi_shared::*;
@@ -24,7 +23,6 @@ static ALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
 #[global_allocator]
 static ALLOC: mimalloc_safe::MiMalloc = mimalloc_safe::MiMalloc;
 
-#[cfg(not(target_family = "wasm"))]
 #[napi_derive::module_init]
 fn init() {
   let rt = tokio::runtime::Builder::new_multi_thread()
@@ -46,12 +44,7 @@ pub const DEFAULT_COST: u32 = 12;
 pub const TYPE_SKIPPED_CONST: u32 = 12;
 
 #[napi]
-pub fn shutdown_runtime() {
-  #[cfg(all(target_family = "wasm", tokio_unstable))]
-  {
-    napi::bindgen_prelude::shutdown_async_runtime();
-  }
-}
+pub fn shutdown_runtime() {}
 
 #[napi(module_exports)]
 pub fn exports(mut export: Object) -> Result<()> {
@@ -74,7 +67,6 @@ mod r#enum;
 mod env;
 mod error;
 mod external;
-#[cfg(not(target_family = "wasm"))]
 mod fetch;
 mod fn_return_if_invalid;
 mod fn_strict;
@@ -102,4 +94,3 @@ mod threadsafe_function;
 mod transparent;
 mod r#type;
 mod typed_array;
-mod wasm;

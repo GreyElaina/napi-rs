@@ -1320,7 +1320,7 @@ impl NapiFn {
             Ok(exports)
           }
 
-          #[cfg(all(not(test), not(target_family = "wasm")))]
+          #[cfg(not(test))]
           napi::ctor::declarative::ctor! {
             #[doc(hidden)]
             #[allow(clippy::all)]
@@ -1331,13 +1331,6 @@ impl NapiFn {
             }
           }
 
-          #[allow(clippy::all)]
-          #[allow(non_snake_case)]
-          #[cfg(all(not(test), target_family = "wasm"))]
-          #[no_mangle]
-          extern "C" fn #module_register_name() {
-            napi::bindgen_prelude::register_module_export_hook(#cb_name);
-          }
         };
       }
 
@@ -1345,7 +1338,7 @@ impl NapiFn {
         quote! {}
       } else {
         quote! {
-          #[cfg(all(not(test), not(target_family = "wasm")))]
+          #[cfg(not(test))]
           napi::ctor::declarative::ctor! {
             #[doc(hidden)]
             #[allow(clippy::all)]
@@ -1356,14 +1349,6 @@ impl NapiFn {
             }
           }
 
-          #[doc(hidden)]
-          #[allow(clippy::all)]
-          #[allow(non_snake_case)]
-          #[cfg(all(not(test), target_family = "wasm"))]
-          #[no_mangle]
-          extern "C" fn #module_register_name() {
-            napi::bindgen_prelude::register_module_export(#js_mod_ident, #js_name, #cb_name);
-          }
         }
       };
 

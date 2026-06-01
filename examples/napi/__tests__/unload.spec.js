@@ -32,10 +32,6 @@ if (platforms.length === 1) {
 }
 
 test('unload module', (t) => {
-  if (process.env.WASI_TEST) {
-    t.pass()
-    return
-  }
   const { add } = require(`../${binaryName}`)
   t.is(add(1, 2), 3)
   delete require.cache[require.resolve(`../${binaryName}`)]
@@ -44,7 +40,7 @@ test('unload module', (t) => {
 })
 
 test('load module multi times', (t) => {
-  if (process.env.WASI_TEST || process.platform === 'win32') {
+  if (process.platform === 'win32') {
     t.pass()
     return
   }

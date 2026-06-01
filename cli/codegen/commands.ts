@@ -346,12 +346,6 @@ const ARTIFACTS_OPTIONS: CommandSchema = {
       description: 'Path to the folder where the npm packages put',
       default: "'npm'",
     },
-    {
-      name: 'buildOutputDir',
-      type: 'string',
-      description:
-        'Path to the build output dir, only needed when targets contains `wasm32-wasi-*`',
-    },
   ],
 }
 

@@ -273,8 +273,7 @@ fn generator_next_impl<T: for<'a> ScopedGenerator<'a> + NapiClass + 'static>(
         let input = frame.optional_arg::<T::Next>(0)?;
         let scope = frame.scope_mut();
         let (access, storage) = unsafe { T::validate_raw_object(scope, result.this())? };
-        let mut generator =
-          unsafe { T::mut_from_validated_object(storage, access)? };
+        let mut generator = unsafe { T::mut_from_validated_object(storage, access)? };
         let generator_env = *scope.env();
         let next = <T as ScopedGenerator<'_>>::next(&mut *generator, &generator_env, input);
         if let Some(value) = next {

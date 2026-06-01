@@ -16,7 +16,6 @@ const concurrency =
       (process.arch === 'x64' || process.arch === 'arm64') &&
       // @ts-expect-error
       process?.report?.getReport()?.header?.glibcVersionRuntime)) &&
-  !process.env.WASI_TEST &&
   !process.env.ASAN_OPTIONS
     ? 20
     : 1

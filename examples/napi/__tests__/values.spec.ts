@@ -390,9 +390,7 @@ test('JsStringLatin1::from_external tests', (t) => {
   const methodsTest = testLatin1Methods('Test string')
   t.is(methodsTest.length, 11)
   t.is(methodsTest.isEmpty, false)
-  if (!process.env.WASI_TEST) {
-    t.deepEqual(methodsTest.asSlice, Array.from(Buffer.from('Test string')))
-  }
+  t.deepEqual(methodsTest.asSlice, Array.from(Buffer.from('Test string')))
 
   // Test with empty input
   t.throws(() => testLatin1Methods(''), {
@@ -624,12 +622,9 @@ test('class', (t) => {
       () => {
         new CatchOnConstructor2()
       },
-      (() =>
-        process.env.WASI_TEST
-          ? undefined
-          : {
-              message: 'CatchOnConstructor2 panic',
-            })(),
+      {
+        message: 'CatchOnConstructor2 panic',
+      },
     )
   }
 })
@@ -725,7 +720,9 @@ test('define class', (t) => {
 })
 
 test('native class inheritance', (t) => {
-  t.false(Object.prototype.hasOwnProperty.call(nativeAddon, '__napiClassMetadata'))
+  t.false(
+    Object.prototype.hasOwnProperty.call(nativeAddon, '__napiClassMetadata'),
+  )
 
   const image = new ImageNode(1, 20)
   t.true(image instanceof ImageNode)
@@ -874,11 +871,9 @@ test('post_init chain should call parent and child post_init', (t) => {
 })
 
 test('callback', (t) => {
-  if (!process.env.WASI_TEST) {
-    getCwd((cwd) => {
-      t.is(cwd, process.cwd())
-    })
-  }
+  getCwd((cwd) => {
+    t.is(cwd, process.cwd())
+  })
 
   t.throws(
     // @ts-expect-error
@@ -1092,9 +1087,7 @@ test('Result', (t) => {
     new Error('JS Error', { cause: new Error('cause') }),
   )
   t.deepEqual(errors[0]!.message, 'JS Error')
-  if (!process.env.WASI_TEST) {
-    t.deepEqual((errors[0]!.cause as Error).message, 'cause')
-  }
+  t.deepEqual((errors[0]!.cause as Error).message, 'cause')
   t.deepEqual(errors[1]!.message, 'JS Error')
   t.deepEqual((errors[1]!.cause as Error).message, 'cause')
 
@@ -1108,11 +1101,9 @@ test('Result', (t) => {
     }),
   )
   let error = nestedError
-  if (!process.env.WASI_TEST) {
-    for (let i = 0; i < 4; i++) {
-      t.deepEqual(error!.message, `error${i + 1}`)
-      error = error!.cause as Error
-    }
+  for (let i = 0; i < 4; i++) {
+    t.deepEqual(error!.message, `error${i + 1}`)
+    error = error!.cause as Error
   }
 
   // nullish causes should not be reconstructed as nested errors
@@ -1133,18 +1124,14 @@ test('Result', (t) => {
     new Error('outer', { cause: new Error('inner') }),
   )
   t.deepEqual(errWithRealCause!.message, 'outer')
-  if (!process.env.WASI_TEST) {
-    t.deepEqual((errWithRealCause!.cause as Error).message, 'inner')
-  }
+  t.deepEqual((errWithRealCause!.cause as Error).message, 'inner')
 })
 
 test('Async error with stack trace', async (t) => {
   const err = await t.throwsAsync(() => throwAsyncError())
   t.not(err?.stack, undefined)
   t.deepEqual(err!.message, 'Async Error')
-  if (!process.env.WASI_TEST) {
-    t.regex(err!.stack!, /.+at .+values\.spec\.(ts|js):\d+:\d+.+/gm)
-  }
+  t.regex(err!.stack!, /.+at .+values\.spec\.(ts|js):\d+:\d+.+/gm)
 })
 
 test('custom status code in Error', (t) => {
@@ -1205,7 +1192,7 @@ test('aliased rust struct and enum', (t) => {
 })
 
 test('serde-json', (t) => {
-  if (process.env.WASI_TEST || process.platform === 'freebsd') {
+  if (process.platform === 'freebsd') {
     t.pass()
     return
   }
@@ -1218,7 +1205,7 @@ test('serde-json', (t) => {
 })
 
 test('serde-json-ref', (t) => {
-  if (process.env.WASI_TEST || process.platform === 'freebsd') {
+  if (process.platform === 'freebsd') {
     t.pass()
     return
   }
@@ -1403,20 +1390,12 @@ test('typed array creation', (t) => {
 })
 
 test('mutate TypedArray', (t) => {
-  if (process.env.WASI_TEST) {
-    t.pass()
-    return
-  }
   const input = new Float32Array([1, 2, 3, 4, 5])
   mutateTypedArray(input)
   t.deepEqual(input, new Float32Array([2.0, 4.0, 6.0, 8.0, 10.0]))
 })
 
 test('mutate ArrayBuffer', (t) => {
-  if (process.env.WASI_TEST) {
-    t.pass()
-    return
-  }
   const input = new ArrayBuffer(5)
   const view = new Uint8Array(input)
   view[0] = 1
@@ -1440,10 +1419,6 @@ test('accept untyped typed array', (t) => {
 })
 
 test('async', async (t) => {
-  if (process.env.WASI_TEST) {
-    t.pass()
-    return
-  }
   const bufPromise = readFileAsync(join(__dirname, '../package.json'))
   await t.notThrowsAsync(bufPromise)
   const buf = await bufPromise
@@ -1458,7 +1433,7 @@ test('within async runtime', (t) => {
 })
 
 test('panic in async fn', async (t) => {
-  if (!process.env.SKIP_UNWIND_TEST && !process.env.WASI_TEST) {
+  if (!process.env.SKIP_UNWIND_TEST) {
     await t.throwsAsync(() => panicInAsync(), {
       message: 'panic in async function',
     })
@@ -1643,9 +1618,7 @@ test.skip('async task with abort controller', async (t) => {
 test('async task with different resolved values', async (t) => {
   const r1 = await blockingOptionalReturn()
   t.falsy(r1)
-  if (!process.env.WASI_TEST) {
-    await blockingReadFile(import.meta.filename)
-  }
+  await blockingReadFile(import.meta.filename)
   const r2 = await asyncResolveArray(2)
   t.deepEqual(r2, [0, 1])
 })
@@ -1760,10 +1733,6 @@ BigIntTest('from i128 i64', (t) => {
 })
 
 Napi4Test('call ThreadsafeFunction', (t) => {
-  if (process.env.WASI_TEST) {
-    t.pass()
-    return
-  }
   let i = 0
   let value = 0
   return new Promise((resolve) => {
@@ -2147,10 +2116,6 @@ Napi9Test('create symbol for', (t) => {
 })
 
 Napi9Test('get module file name', (t) => {
-  if (process.env.WASI_TEST) {
-    t.pass()
-    return
-  }
   console.info(getModuleFileName())
   t.regex(
     getModuleFileName(),
@@ -2209,12 +2174,6 @@ test('acceptStream', async (t) => {
 })
 
 test('create readable stream from channel', async (t) => {
-  if (process.env.WASI_TEST) {
-    t.pass(
-      'Skip when WASI because ReadableStream controller.enqueue does not accept SharedArrayBuffer',
-    )
-    return
-  }
   const stream = await createReadableStream()
   const chunks = []
   for await (const chunk of stream) {
@@ -2232,12 +2191,6 @@ test('create readable stream from channel', async (t) => {
 })
 
 test('create readable stream from channel with object', async (t) => {
-  if (process.env.WASI_TEST) {
-    t.pass(
-      'Skip when WASI because ReadableStream controller.enqueue does not accept SharedArrayBuffer',
-    )
-    return
-  }
   const stream = await createReadableStreamWithObject()
   const chunks = []
   for await (const chunk of stream) {
@@ -2255,12 +2208,6 @@ test('create readable stream from channel with object', async (t) => {
 })
 
 test('readable stream cancellation should cleanup resources', async (t) => {
-  if (process.env.WASI_TEST) {
-    t.pass(
-      'Skip when WASI because ReadableStream controller.enqueue does not accept SharedArrayBuffer',
-    )
-    return
-  }
   const stream = await createReadableStreamWithObject()
   const reader = stream.getReader()
 
@@ -2299,7 +2246,7 @@ test('spawnThreadInThread should be fine', async (t) => {
 })
 
 test('should generate correct type def file', async (t) => {
-  if (process.env.WASI_TEST || process.platform === 'freebsd') {
+  if (process.platform === 'freebsd') {
     t.pass()
   } else {
     t.snapshot(await nodeReadFile(join(__dirname, '..', 'index.d.cts'), 'utf8'))

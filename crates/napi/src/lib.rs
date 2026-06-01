@@ -65,16 +65,6 @@
 //! ```
 //!
 
-#[cfg(all(target_family = "wasm", not(feature = "noop"), feature = "napi3"))]
-#[link(wasm_import_module = "napi")]
-extern "C" {
-  fn napi_add_env_cleanup_hook(
-    env: sys::napi_env,
-    fun: Option<unsafe extern "C" fn(arg: *mut core::ffi::c_void)>,
-    arg: *mut core::ffi::c_void,
-  ) -> sys::napi_status;
-}
-
 mod bindgen_runtime;
 mod blocking_work;
 mod env;
@@ -202,14 +192,10 @@ pub(crate) fn run_unwind_boundary(context: &'static str, f: impl FnOnce()) {
 
 #[doc(hidden)]
 pub mod __private {
-  pub use crate::bindgen_runtime::{
-    iterator::create_iterator, register_napi_class, register_napi_class_impl,
-  };
-  #[cfg(not(target_family = "wasm"))]
+  pub use crate::bindgen_runtime::iterator::create_iterator;
   pub use crate::bindgen_runtime::{
     ClassImplDescriptor, ClassStructDescriptor, CLASS_IMPL_DESCRIPTORS, CLASS_STRUCT_DESCRIPTORS,
   };
-  #[cfg(not(target_family = "wasm"))]
   pub use linkme;
 
   #[cfg(feature = "tokio_rt")]

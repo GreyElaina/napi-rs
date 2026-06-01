@@ -32,27 +32,13 @@ impl<'env> Env<'env> {
       hook: Box::new(cleanup_fn),
     };
     let hook_ref = Box::leak(Box::new(hook));
-    #[cfg(not(target_family = "wasm"))]
-    {
-      check_status!(unsafe {
-        sys::napi_add_env_cleanup_hook(
-          self.0,
-          Some(cleanup_env::<T>),
-          (hook_ref as *mut CleanupEnvHookData<T>).cast(),
-        )
-      })?;
-    }
-
-    #[cfg(all(target_family = "wasm", not(feature = "noop")))]
-    {
-      check_status!(unsafe {
-        crate::napi_add_env_cleanup_hook(
-          self.0,
-          Some(cleanup_env::<T>),
-          (hook_ref as *mut CleanupEnvHookData<T>).cast(),
-        )
-      })?;
-    }
+    check_status!(unsafe {
+      sys::napi_add_env_cleanup_hook(
+        self.0,
+        Some(cleanup_env::<T>),
+        (hook_ref as *mut CleanupEnvHookData<T>).cast(),
+      )
+    })?;
     Ok(CleanupEnvHook(hook_ref))
   }
 

@@ -304,7 +304,7 @@ impl<'env> Env<'env> {
     }
   }
 
-  #[cfg(all(feature = "napi2", not(target_family = "wasm")))]
+  #[cfg(feature = "napi2")]
   pub fn get_uv_event_loop(&self) -> Result<*mut sys::uv_loop_s> {
     let mut uv_loop: *mut sys::uv_loop_s = ptr::null_mut();
     check_status!(unsafe { sys::napi_get_uv_event_loop(self.0, &mut uv_loop) })?;

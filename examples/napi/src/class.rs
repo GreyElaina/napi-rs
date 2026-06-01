@@ -1,7 +1,7 @@
 use napi::{
   bindgen_prelude::{
-    Buffer, Class, ClassBorrow, ClassBorrowMut, ClassInitializer, Function, JsObjectValue,
-    JsValue, Promise, Ref, This, Unknown,
+    Buffer, Class, ClassBorrow, ClassBorrowMut, ClassInitializer, Function, JsObjectValue, JsValue,
+    Promise, Ref, This, Unknown,
   },
   Env, Property, Result,
 };

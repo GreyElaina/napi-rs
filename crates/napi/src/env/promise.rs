@@ -56,10 +56,6 @@ impl<'env> Env<'env> {
   {
     let (mut deferred, promise) = JsDeferred::new(self)?;
     deferred.set_finalize_callback(finalize);
-    #[cfg(any(
-      all(target_family = "wasm", tokio_unstable),
-      not(target_family = "wasm")
-    ))]
     let deferred_for_panic = deferred.clone();
 
     let inner = async move {
@@ -69,16 +65,8 @@ impl<'env> Env<'env> {
       }
     };
 
-    #[cfg(any(
-      all(target_family = "wasm", tokio_unstable),
-      not(target_family = "wasm")
-    ))]
     let join_handle = runtime::spawn(inner);
 
-    #[cfg(any(
-      all(target_family = "wasm", tokio_unstable),
-      not(target_family = "wasm")
-    ))]
     runtime::spawn(async move {
       if let Err(error) = join_handle.await {
         if let Ok(reason) = error.try_into_panic() {
@@ -93,13 +81,6 @@ impl<'env> Env<'env> {
         }
       }
     });
-
-    #[cfg(all(target_family = "wasm", not(tokio_unstable)))]
-    {
-      std::thread::spawn(|| {
-        runtime::block_on(inner);
-      });
-    }
 
     Ok(unsafe { Promise::from_raw(self.0, promise.0.value) })
   }

@@ -86,17 +86,6 @@ impl From<TypedArrayType> for sys::napi_typedarray_type {
   }
 }
 
-#[cfg(target_family = "wasm")]
-extern "C" {
-  fn emnapi_sync_memory(
-    env: crate::sys::napi_env,
-    js_to_wasm: bool,
-    arraybuffer_or_view: crate::sys::napi_value,
-    byte_offset: usize,
-    length: usize,
-  ) -> crate::sys::napi_status;
-}
-
 #[derive(Clone, Copy)]
 /// Represents a JavaScript ArrayBuffer
 pub struct ArrayBuffer<'env> {
@@ -168,7 +157,7 @@ impl<'env> ArrayBuffer<'env> {
     let mut buf = ptr::null_mut();
     let mut data = data.into();
     let mut inner_ptr = data.as_mut_ptr();
-    #[cfg(all(debug_assertions, not(windows), not(target_family = "wasm")))]
+    #[cfg(all(debug_assertions, not(windows)))]
     {
       let is_existed = super::BUFFER_DATA.with(|buffer_data| {
         let buffer = buffer_data.lock().expect("Unlock buffer data failed");
@@ -255,7 +244,7 @@ impl<'env> ArrayBuffer<'env> {
         "Borrowed data should not be null".to_owned(),
       ));
     }
-    #[cfg(all(debug_assertions, not(windows), not(target_family = "wasm")))]
+    #[cfg(all(debug_assertions, not(windows)))]
     {
       let is_existed = super::BUFFER_DATA.with(|buffer_data| {
         let buffer = buffer_data.lock().expect("Unlock buffer data failed");
@@ -556,49 +545,6 @@ macro_rules! impl_typed_array {
     }
 
     impl $name {
-      #[cfg(target_family = "wasm")]
-      pub fn sync(&mut self, env: &crate::Env) {
-        if let Some((reference, _)) = self.raw {
-          let mut value = ptr::null_mut();
-          let mut array_buffer = ptr::null_mut();
-          crate::check_status_or_throw!(
-            env.raw(),
-            unsafe { crate::sys::napi_get_reference_value(env.raw(), reference, &mut value) },
-            "Failed to get reference value from TypedArray while syncing"
-          );
-          crate::check_status_or_throw!(
-            env.raw(),
-            unsafe {
-              crate::sys::napi_get_typedarray_info(
-                env.raw(),
-                value,
-                &mut ($typed_array_type as i32) as *mut i32,
-                &mut self.length as *mut usize,
-                ptr::null_mut(),
-                &mut array_buffer,
-                &mut self.byte_offset as *mut usize,
-              )
-            },
-            "Failed to get ArrayBuffer under the TypedArray while syncing"
-          );
-          crate::check_status_or_throw!(
-            env.raw(),
-            unsafe {
-              emnapi_sync_memory(
-                env.raw(),
-                false,
-                array_buffer,
-                self.byte_offset,
-                self.length,
-              )
-            },
-            "Failed to sync memory"
-          );
-        } else {
-          return;
-        }
-      }
-
       pub fn new(mut data: Vec<$rust_type>) -> Self {
         data.shrink_to_fit();
         let ret = $name {
@@ -1035,7 +981,7 @@ macro_rules! impl_from_slice {
         let mut buf = ptr::null_mut();
         let mut data = data.into();
         let mut inner_ptr = data.as_mut_ptr();
-        #[cfg(all(debug_assertions, not(windows), not(target_family = "wasm")))]
+        #[cfg(all(debug_assertions, not(windows)))]
         {
           let is_existed = super::BUFFER_DATA.with(|buffer_data| {
             let buffer = buffer_data.lock().expect("Unlock buffer data failed");
@@ -1146,7 +1092,7 @@ macro_rules! impl_from_slice {
             "Borrowed data should not be null".to_owned(),
           ));
         }
-        #[cfg(all(debug_assertions, not(windows), not(target_family = "wasm")))]
+        #[cfg(all(debug_assertions, not(windows)))]
         {
           let is_existed = super::BUFFER_DATA.with(|buffer_data| {
             let buffer = buffer_data.lock().expect("Unlock buffer data failed");
@@ -1793,7 +1739,7 @@ impl<'env> Uint8ClampedSlice<'env> {
     let mut buf = ptr::null_mut();
     let mut data: Vec<u8> = data.into();
     let mut inner_ptr = data.as_mut_ptr();
-    #[cfg(all(debug_assertions, not(windows), not(target_family = "wasm")))]
+    #[cfg(all(debug_assertions, not(windows)))]
     {
       let is_existed = super::BUFFER_DATA.with(|buffer_data| {
         let buffer = buffer_data.lock().expect("Unlock buffer data failed");
@@ -1894,7 +1840,7 @@ impl<'env> Uint8ClampedSlice<'env> {
         "Borrowed data should not be null".to_owned(),
       ));
     }
-    #[cfg(all(debug_assertions, not(windows), not(target_family = "wasm")))]
+    #[cfg(all(debug_assertions, not(windows)))]
     {
       let is_existed = super::BUFFER_DATA.with(|buffer_data| {
         let buffer = buffer_data.lock().expect("Unlock buffer data failed");

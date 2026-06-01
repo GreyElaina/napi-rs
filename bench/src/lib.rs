@@ -42,7 +42,9 @@ pub fn create_array() -> Vec<u32> {
 }
 
 #[napi]
-pub fn create_array_with_serde_trait<'env>(env: &'env Env<'env>) -> Result<Unknown<'env>> {
+pub fn create_array_with_serde_trait<'env>(
+  #[napi(env)] env: &'env Env<'env>,
+) -> Result<Unknown<'env>> {
   let a: Vec<u32> = vec![42; 1000];
   env.to_js_value(&a)
 }
@@ -59,7 +61,10 @@ pub fn get_array_from_js_array(input: Vec<u32>) {
 }
 
 #[napi]
-pub fn get_array_with_for_loop<'env>(env: &mut Env<'env>, input: Object<'env>) -> Result<()> {
+pub fn get_array_with_for_loop<'env>(
+  #[napi(env)] env: &mut Env<'env>,
+  input: Object<'env>,
+) -> Result<()> {
   env.with_scope(|scope| {
     let array_length = input.get_array_length_unchecked()? as usize;
     let mut result = Vec::with_capacity(array_length);
@@ -72,7 +77,10 @@ pub fn get_array_with_for_loop<'env>(env: &mut Env<'env>, input: Object<'env>) -
 }
 
 #[napi]
-pub fn bench_blocking<'env>(env: &mut Env<'env>, buffer: Buffer) -> Result<Promise<'env, u32>> {
+pub fn bench_blocking<'env>(
+  #[napi(env)] env: &mut Env<'env>,
+  buffer: Buffer,
+) -> Result<Promise<'env, u32>> {
   env.with_scope(|scope| {
     scope
       .blocking(move || Ok(buffer.len() as u32 + 1))
@@ -95,7 +103,7 @@ pub fn bench_threadsafe_function(
 
 #[napi]
 pub fn bench_tokio_future<'env>(
-  env: &'env Env<'env>,
+  #[napi(env)] env: &'env Env<'env>,
   buffer: Buffer,
 ) -> Result<Promise<'env, u32>> {
   let len = buffer.len() as u32;
@@ -109,6 +117,7 @@ pub struct QueryEngine {
 impl QueryEngine {
   async fn query(&self) -> String {
     let data = serde_json::json!({
+      "datamodel": self.datamodel,
       "findFirstBooking": {
         "id": "ckovh15xa104945sj64rdk8oas",
         "name": "1883da9ff9152",

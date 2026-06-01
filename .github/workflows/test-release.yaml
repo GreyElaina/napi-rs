@@ -174,7 +174,7 @@ jobs:
       - name: 'Install dependencies'
         shell: bash
         run: |
-          yarn config set supportedArchitectures.cpu --json '["current", "x64", "ia32", "wasm32"]'
+          yarn config set supportedArchitectures.cpu --json '["current", "x64", "ia32"]'
           yarn install --mode=skip-build --immutable
 
       - name: Check build
@@ -503,9 +503,8 @@ jobs:
       - name: Install dependencies
         if: ${{ matrix.settings.arch == 's390x' }}
         run: |
-          yarn config set --json supportedArchitectures.cpu '["current", "wasm32"]'
+          yarn config set --json supportedArchitectures.cpu '["current", "s390x"]'
           yarn install --immutable --mode=skip-build
-          yarn workspace @napi-rs/wasm-runtime build
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v4
         if: ${{ !contains(matrix.settings.target, 'aarch64') }}
@@ -687,7 +686,7 @@ jobs:
 
       - name: 'Install dependencies'
         run: |
-          yarn config set supportedArchitectures.cpu --json '["current", "x64", "arm64", "wasm32"]'
+          yarn config set supportedArchitectures.cpu --json '["current", "x64", "arm64"]'
           yarn config set supportedArchitectures.os --json '["current", "freebsd"]'
           yarn install --mode=skip-build --immutable
       - name: Build
@@ -728,46 +727,6 @@ jobs:
             freebsd-version
             export NODE_OPTIONS="--max-old-space-size=8192"
             yarn workspace @examples/napi test-js -s
-
-  test-node-wasi:
-    runs-on: ubuntu-latest
-    name: Test node wasi target
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v6
-      - name: Setup node
-        uses: actions/setup-node@v6
-        with:
-          node-version: 24
-          cache: 'yarn'
-          cache-dependency-path: 'yarn.lock'
-      - name: Install
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
-          targets: wasm32-wasip1-threads
-      - name: Install dependencies
-        run: yarn install --immutable --mode=skip-build
-      - name: Check
-        run: cargo check -p napi --all-features --target wasm32-wasip1-threads
-        env:
-          RUSTFLAGS: '--cfg tokio_unstable'
-      - name: Build
-        run: |
-          yarn build
-          yarn workspace @examples/napi build --target wasm32-wasip1-threads --profile wasi
-        env:
-          RUSTFLAGS: '--cfg tokio_unstable'
-      - name: Test
-        run: yarn workspace @examples/napi test -s
-        env:
-          WASI_TEST: 'true'
-          NODE_OPTIONS: '--max-old-space-size=8192'
-          SKIP_UNWIND_TEST: 1
-      - name: Browser test
-        run: |
-          yarn workspace @examples/napi playwright install chromium
-          yarn workspace @examples/napi vitest
 
   test-latest-bun:
     runs-on: ubuntu-latest
@@ -846,7 +805,6 @@ jobs:
       - build_binary_crate
       - check-all-features
       - test-freebsd
-      - test-node-wasi
       - test-latest-bun
     steps:
       - run: exit 1

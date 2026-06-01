@@ -117,7 +117,7 @@ jobs:
       - name: Install dependencies
         run: |
           yarn config set --json supportedArchitectures.libc '["current", "musl"]'
-          yarn config set --json supportedArchitectures.cpu '["current", "arm64", "arm", "wasm32"]'
+          yarn config set --json supportedArchitectures.cpu '["current", "arm64", "arm"]'
           yarn install --immutable --mode=skip-build
       - name: Download artifacts
         uses: actions/download-artifact@v8

@@ -35,8 +35,6 @@ const TEMPLATE_REPOS = {
   pnpm: 'https://github.com/napi-rs/package-template-pnpm',
 } as const
 
-const WASI_TARGET = 'wasm32-wasip1-threads'
-
 async function checkGitCommand(): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
     const cp = exec('git --version')
@@ -103,11 +101,7 @@ async function downloadTemplate(
   }
 }
 
-async function copyDirectory(
-  src: string,
-  dest: string,
-  includeWasiBindings: boolean,
-): Promise<void> {
+async function copyDirectory(src: string, dest: string): Promise<void> {
   await mkdirAsync(dest, { recursive: true })
   const entries = await fs.readdir(src, { withFileTypes: true })
 
@@ -121,15 +115,14 @@ async function copyDirectory(
     }
 
     if (entry.isDirectory()) {
-      await copyDirectory(srcPath, destPath, includeWasiBindings)
+      await copyDirectory(srcPath, destPath)
     } else {
       if (
-        !includeWasiBindings &&
-        (entry.name.endsWith('.wasi-browser.js') ||
-          entry.name.endsWith('.wasi.cjs') ||
-          entry.name.endsWith('wasi-worker-browser.mjs') ||
-          entry.name.endsWith('wasi-worker.mjs') ||
-          entry.name === 'browser.js')
+        entry.name.endsWith('.wasi-browser.js') ||
+        entry.name.endsWith('.wasi.cjs') ||
+        entry.name.endsWith('wasi-worker-browser.mjs') ||
+        entry.name.endsWith('wasi-worker.mjs') ||
+        entry.name === 'browser.js'
       ) {
         continue
       }
@@ -144,7 +137,6 @@ async function filterTargetsInPackageJson(
 ): Promise<void> {
   const content = await fs.readFile(filePath, 'utf-8')
   const packageJson = JSON.parse(content)
-  const includeWasiBindings = enabledTargets.includes(WASI_TARGET)
 
   // Filter napi.targets
   if (packageJson.napi?.targets) {
@@ -153,22 +145,41 @@ async function filterTargetsInPackageJson(
     )
   }
 
-  if (!includeWasiBindings) {
-    if (
-      packageJson.browser === 'browser.js' ||
-      packageJson.browser === './browser.js'
-    ) {
-      delete packageJson.browser
-    }
+  if (
+    packageJson.browser === 'browser.js' ||
+    packageJson.browser === './browser.js'
+  ) {
+    delete packageJson.browser
+  }
 
-    if (Array.isArray(packageJson.files)) {
-      packageJson.files = packageJson.files.filter(
-        (file: unknown) => file !== 'browser.js' && file !== './browser.js',
-      )
-    }
+  if (Array.isArray(packageJson.files)) {
+    packageJson.files = packageJson.files.filter(
+      (file: unknown) => file !== 'browser.js' && file !== './browser.js',
+    )
   }
 
   await fs.writeFile(filePath, JSON.stringify(packageJson, null, 2) + '\n')
+}
+
+function ensureSupportedTargets(targets: readonly string[]): void {
+  for (const target of targets) {
+    parseTriple(target)
+  }
+}
+
+async function removeWasmGeneratedAttributes(filePath: string): Promise<void> {
+  const content = await fs.readFile(filePath, 'utf-8')
+  const updated = content
+    .split('\n')
+    .filter(
+      (line) =>
+        !line.includes('.wasi-browser.js') &&
+        !line.includes('.wasi.cjs') &&
+        !line.includes('wasi-worker-browser.mjs') &&
+        !line.includes('wasi-worker.mjs'),
+    )
+    .join('\n')
+  await fs.writeFile(filePath, updated)
 }
 
 async function updateCargoTomlTypeDef(
@@ -293,10 +304,6 @@ async function filterTargetsInGithubActions(
     }
   }
 
-  if (!enabledTargets.includes(WASI_TARGET)) {
-    jobsToRemove.push('test-wasi')
-  }
-
   if (!enabledTargets.includes('x86_64-unknown-freebsd')) {
     jobsToRemove.push('build-freebsd')
   }
@@ -363,19 +370,7 @@ function processOptions(options: RawNewOptions) {
       throw new Error('At least one target must be enabled')
     }
   }
-  if (
-    options.targets.some((target) => target === 'wasm32-wasi-preview1-threads')
-  ) {
-    const out = execSync(`rustup target list`, {
-      encoding: 'utf8',
-    })
-    if (out.includes(WASI_TARGET)) {
-      options.targets = options.targets.map((target) =>
-        target === 'wasm32-wasi-preview1-threads' ? WASI_TARGET : target,
-      )
-    }
-  }
-
+  ensureSupportedTargets(options.targets)
   return applyDefaultNewOptions(options) as NewOptions
 }
 
@@ -408,11 +403,12 @@ export async function newProject(userOptions: RawNewOptions) {
 
       // Copy template files to target directory
       const templatePath = path.join(cacheDir, 'repo')
-      await copyDirectory(
-        templatePath,
-        options.path,
-        options.targets.includes(WASI_TARGET),
-      )
+      await copyDirectory(templatePath, options.path)
+
+      const packageJsonPath = path.join(options.path, 'package.json')
+      if (existsSync(packageJsonPath)) {
+        await filterTargetsInPackageJson(packageJsonPath, options.targets)
+      }
 
       // Rename project using the rename API
       await renameProject({
@@ -426,10 +422,9 @@ export async function newProject(userOptions: RawNewOptions) {
         await updateCargoTomlTypeDef(cargoTomlPath, options.enableTypeDef)
       }
 
-      // Filter targets in package.json
-      const packageJsonPath = path.join(options.path, 'package.json')
-      if (existsSync(packageJsonPath)) {
-        await filterTargetsInPackageJson(packageJsonPath, options.targets)
+      const gitAttributesPath = path.join(options.path, '.gitattributes')
+      if (existsSync(gitAttributesPath)) {
+        await removeWasmGeneratedAttributes(gitAttributesPath)
       }
 
       // Filter targets in GitHub Actions CI

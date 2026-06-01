@@ -12,10 +12,9 @@ use serde::{de, ser};
 #[cfg(feature = "serde-json")]
 use serde_json::Error as SerdeJSONError;
 
-use crate::ValueType;
 use crate::{
   bindgen_runtime::{into_js_raw, FromJs, IntoJs, Local, Object, Scope},
-  sys, Env, JsValue, Status, Unknown,
+  sys, Env, JsValue, Status, Unknown, ValueType,
 };
 
 pub type Result<T, S = Status> = std::result::Result<T, Error<S>>;
@@ -107,7 +106,6 @@ impl From<SerdeJSONError> for Error {
   }
 }
 
-#[cfg(not(target_family = "wasm"))]
 impl From<Unknown<'_>> for Error {
   fn from(value: Unknown) -> Self {
     let maybe_error_message = error_message(value);
@@ -131,57 +129,6 @@ impl From<Unknown<'_>> for Error {
       cause: maybe_cause,
       js_code,
       js_name,
-    }
-  }
-}
-
-#[cfg(target_family = "wasm")]
-impl From<Unknown<'_>> for Error {
-  fn from(value: Unknown) -> Self {
-    let value_type = value.get_type();
-
-    let maybe_error_message;
-
-    if let Ok(vt) = value_type {
-      if vt == ValueType::Object {
-        maybe_error_message = value.coerce_to_object().and_then(|obj| {
-          let mut env = unsafe { Env::from_raw(value.0.env) };
-          env.with_scope(|scope| {
-            let message: Unknown = scope.get_named_property(&obj, "message")?;
-            message
-              .coerce_to_string()
-              .and_then(|message| message.into_utf8().and_then(|message| message.into_owned()))
-          })
-        });
-      } else {
-        maybe_error_message = value
-          .coerce_to_string()
-          .and_then(|a| a.into_utf8().and_then(|a| a.into_owned()));
-      }
-    } else {
-      maybe_error_message = value
-        .coerce_to_string()
-        .and_then(|a| a.into_utf8().and_then(|a| a.into_owned()));
-    };
-
-    let maybe_cause = extract_error_cause(value).unwrap_or(None);
-
-    if let Ok(error_message) = maybe_error_message {
-      return Self {
-        status: Status::GenericFailure,
-        reason: error_message,
-        cause: maybe_cause,
-        js_code: None,
-        js_name: None,
-      };
-    }
-
-    Self {
-      status: Status::GenericFailure,
-      reason: "".to_string(),
-      cause: maybe_cause,
-      js_code: None,
-      js_name: None,
     }
   }
 }

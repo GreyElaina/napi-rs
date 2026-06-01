@@ -6,6 +6,31 @@ Diverged from upstream napi-rs at [`e9c50bb4`](https://github.com/napi-rs/napi-r
 
 ---
 
+## 0. Breaking Change: WASM/WASI Support Removed
+
+This fork no longer supports WASM/WASI builds. The supported artifact model is native Node-API addons only.
+
+Removed support includes:
+
+- `wasm32-*` targets, including `wasm32-wasi-preview1-threads` and `wasm32-wasip1-threads`
+- `napi.wasm` package configuration
+- WASI JS binding generation, browser binding generation, and worker templates
+- `.wasm` artifact collection, rename, packaging, and pre-publish handling
+- the `@napi-rs/wasm-runtime` workspace package
+- `@emnapi/*`, `emnapi`, and `@napi-rs/wasm-tools` as direct CLI/example dependencies
+- Rust-side WASI build setup, WASM registration exports, and WASM-specific runtime branches
+
+Current behavior:
+
+- Passing a `wasm32-*` target to the CLI target parser is rejected immediately.
+- New projects generated from older external templates have stale WASI/browser files filtered out.
+- Per-target npm packages are generated only for native `.node` artifacts.
+- Native class/module registration uses the descriptor and `linkme` path only.
+
+Lockfile entries for third-party optional WASM packages may still appear when transitive tooling depends on them, for example `@oxc-node/core`, `oxc-parser`, `rolldown`, or `@napi-rs/tar/lzma`. Those entries are not part of this fork's runtime or CLI support surface.
+
+---
+
 ## 1. Lifetime Model
 
 Upstream passes raw `napi_value` (`*mut c_void`) everywhere with no lifetime tracking. This fork introduces a two-tier lifetime system:

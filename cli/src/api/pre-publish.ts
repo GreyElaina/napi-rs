@@ -154,9 +154,7 @@ export async function prePublish(userOptions: PrePublishOptions) {
       options.npmDir,
       `${target.platformArchABI}`,
     )
-    const ext =
-      target.platform === 'wasi' || target.platform === 'wasm' ? 'wasm' : 'node'
-    const filename = `${binaryName}.${target.platformArchABI}.${ext}`
+    const filename = `${binaryName}.${target.platformArchABI}.node`
     const dstPath = join(pkgDir, filename)
 
     if (!options.dryRun) {

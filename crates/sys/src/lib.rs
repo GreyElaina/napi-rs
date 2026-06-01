@@ -2,10 +2,7 @@
 
 #![allow(ambiguous_glob_reexports)]
 
-#[cfg(any(
-  target_env = "msvc",
-  all(not(target_family = "wasm"), feature = "dyn-symbols")
-))]
+#[cfg(any(target_env = "msvc", feature = "dyn-symbols"))]
 macro_rules! generate {
   (@stub_fn $name:ident($($param:ident: $ptype:ty,)*) -> napi_status) => {
     unsafe extern "C" fn $name($(_: $ptype,)*) -> napi_status {
@@ -79,10 +76,7 @@ macro_rules! generate {
   };
 }
 
-#[cfg(any(
-  target_family = "wasm",
-  all(not(target_env = "msvc"), not(feature = "dyn-symbols"))
-))]
+#[cfg(all(not(target_env = "msvc"), not(feature = "dyn-symbols")))]
 macro_rules! generate {
   (extern "C" {
     $(fn $name:ident($($param:ident: $ptype:ty$(,)?)*)$( -> $rtype:ty)?;)+
@@ -101,10 +95,7 @@ mod types;
 pub use functions::*;
 pub use types::*;
 
-#[cfg(any(
-  target_env = "msvc",
-  all(not(target_family = "wasm"), feature = "dyn-symbols")
-))]
+#[cfg(any(target_env = "msvc", feature = "dyn-symbols"))]
 /// Loads N-API symbols from host process.
 /// Must be called at least once before using any functions in bindings or
 /// they will panic

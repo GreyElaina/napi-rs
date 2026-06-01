@@ -197,12 +197,7 @@ pub fn test_latin1_methods(#[napi(env)] env: &Env, input: String) -> Result<Lati
   Ok(Latin1MethodsResult {
     length: latin1.len() as u32,
     is_empty: latin1.is_empty(),
-    as_slice: if cfg!(target_family = "wasm") {
-      #[allow(clippy::iter_cloned_collect)]
-      latin1.as_slice().iter().cloned().collect()
-    } else {
-      latin1.as_slice().to_vec()
-    },
+    as_slice: latin1.as_slice().to_vec(),
   })
 }
 

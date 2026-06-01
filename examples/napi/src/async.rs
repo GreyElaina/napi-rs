@@ -1,28 +1,18 @@
-#[cfg(not(target_family = "wasm"))]
 use futures::prelude::*;
 use napi::bindgen_prelude::*;
-#[cfg(not(target_family = "wasm"))]
 use napi::tokio::fs;
 
 #[napi]
 async fn read_file_async(path: String) -> Result<Buffer> {
-  #[cfg(not(target_family = "wasm"))]
-  {
-    fs::read(path)
-      .map(|r| match r {
-        Ok(content) => Ok(content.into()),
-        Err(e) => Err(Error::new(
-          Status::GenericFailure,
-          format!("failed to read file, {}", e),
-        )),
-      })
-      .await
-  }
-  #[cfg(target_family = "wasm")]
-  {
-    let conetent = std::fs::read(path)?;
-    Ok(conetent.into())
-  }
+  fs::read(path)
+    .map(|r| match r {
+      Ok(content) => Ok(content.into()),
+      Err(e) => Err(Error::new(
+        Status::GenericFailure,
+        format!("failed to read file, {}", e),
+      )),
+    })
+    .await
 }
 
 #[napi]
