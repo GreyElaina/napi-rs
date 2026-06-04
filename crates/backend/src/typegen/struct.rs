@@ -238,7 +238,7 @@ impl ToTypeDef for NapiImpl {
           .items
           .iter()
           .filter_map(|f| {
-            if f.skip_typescript {
+            if f.ts.skip_typescript {
               None
             } else {
               Some(format!(

@@ -2,6 +2,22 @@ use convert_case::Case;
 use proc_macro2::{Ident, Literal};
 use syn::{Attribute, Expr, Type};
 
+#[derive(Debug, Clone, Copy)]
+pub struct PropertyDescriptor {
+  pub writable: bool,
+  pub enumerable: bool,
+  pub configurable: bool,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct TsOverrides {
+  pub ts_type: Option<String>,
+  pub ts_args_type: Option<String>,
+  pub ts_return_type: Option<String>,
+  pub ts_generic_types: Option<String>,
+  pub skip_typescript: bool,
+}
+
 #[derive(Debug, Clone)]
 pub struct NapiFn {
   pub name: Ident,
@@ -21,17 +37,11 @@ pub struct NapiFn {
   pub strict: bool,
   pub return_if_invalid: bool,
   pub js_mod: Option<String>,
-  pub ts_generic_types: Option<String>,
-  pub ts_type: Option<String>,
-  pub ts_args_type: Option<String>,
-  pub ts_return_type: Option<String>,
-  pub skip_typescript: bool,
+  pub ts: TsOverrides,
   pub comments: Vec<String>,
   pub parent_is_generator: bool,
   pub parent_is_async_generator: bool,
-  pub writable: bool,
-  pub enumerable: bool,
-  pub configurable: bool,
+  pub descriptor: PropertyDescriptor,
   pub catch_unwind: bool,
   pub unsafe_: bool,
   pub register_name: Ident,
@@ -177,9 +187,7 @@ pub struct NapiStructField {
   pub ty: syn::Type,
   pub getter: bool,
   pub setter: bool,
-  pub writable: bool,
-  pub enumerable: bool,
-  pub configurable: bool,
+  pub descriptor: PropertyDescriptor,
   pub comments: Vec<String>,
   pub skip_typescript: bool,
   pub ts_type: Option<String>,

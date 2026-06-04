@@ -23,6 +23,7 @@ type-def = ["napi-derive-backend/type-def"]
 
 [dependencies]
 convert_case = "0.11"
+darling = "0.23"
 napi-derive-backend = { version = "5.0.4", path = "../backend" }
 proc-macro2 = "1"
 quote = "1"

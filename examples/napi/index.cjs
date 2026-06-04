@@ -53,9 +53,7 @@ const isMuslFromReport = () => {
 
 const isMuslFromChildProcess = () => {
   try {
-    return require('child_process')
-      .execSync('ldd --version', { encoding: 'utf8' })
-      .includes('musl')
+    return require('child_process').execSync('ldd --version', { encoding: 'utf8' }).includes('musl')
   } catch (e) {
     // If we reach this case, we don't know if the system is musl or not, so is better to just fallback to false
     return false
@@ -65,7 +63,7 @@ const isMuslFromChildProcess = () => {
 function requireNative() {
   if (process.env.NAPI_RS_NATIVE_LIBRARY_PATH) {
     try {
-      return require(process.env.NAPI_RS_NATIVE_LIBRARY_PATH)
+      return require(process.env.NAPI_RS_NATIVE_LIBRARY_PATH);
     } catch (err) {
       loadErrors.push(err)
     }
@@ -78,16 +76,9 @@ function requireNative() {
       }
       try {
         const binding = require('@examples/napi-android-arm64')
-        const bindingPackageVersion =
-          require('@examples/napi-android-arm64/package.json').version
-        if (
-          bindingPackageVersion !== '0.0.0' &&
-          process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
-          process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
-        ) {
-          throw new Error(
-            `Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
-          )
+        const bindingPackageVersion = require('@examples/napi-android-arm64/package.json').version
+        if (bindingPackageVersion !== '0.0.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+          throw new Error(`Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
         return binding
       } catch (e) {
@@ -101,77 +92,51 @@ function requireNative() {
       }
       try {
         const binding = require('@examples/napi-android-arm-eabi')
-        const bindingPackageVersion =
-          require('@examples/napi-android-arm-eabi/package.json').version
-        if (
-          bindingPackageVersion !== '0.0.0' &&
-          process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
-          process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
-        ) {
-          throw new Error(
-            `Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
-          )
+        const bindingPackageVersion = require('@examples/napi-android-arm-eabi/package.json').version
+        if (bindingPackageVersion !== '0.0.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+          throw new Error(`Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
         return binding
       } catch (e) {
         loadErrors.push(e)
       }
     } else {
-      loadErrors.push(
-        new Error(`Unsupported architecture on Android ${process.arch}`),
-      )
+      loadErrors.push(new Error(`Unsupported architecture on Android ${process.arch}`))
     }
   } else if (process.platform === 'win32') {
     if (process.arch === 'x64') {
-      if (
-        process.config?.variables?.shlib_suffix === 'dll.a' ||
-        process.config?.variables?.node_target_type === 'shared_library'
-      ) {
+      if (process.config?.variables?.shlib_suffix === 'dll.a' || process.config?.variables?.node_target_type === 'shared_library') {
         try {
-          return require('./example.win32-x64-gnu.node')
-        } catch (e) {
-          loadErrors.push(e)
+        return require('./example.win32-x64-gnu.node')
+      } catch (e) {
+        loadErrors.push(e)
+      }
+      try {
+        const binding = require('@examples/napi-win32-x64-gnu')
+        const bindingPackageVersion = require('@examples/napi-win32-x64-gnu/package.json').version
+        if (bindingPackageVersion !== '0.0.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+          throw new Error(`Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
-        try {
-          const binding = require('@examples/napi-win32-x64-gnu')
-          const bindingPackageVersion =
-            require('@examples/napi-win32-x64-gnu/package.json').version
-          if (
-            bindingPackageVersion !== '0.0.0' &&
-            process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
-            process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
-          ) {
-            throw new Error(
-              `Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
-            )
-          }
-          return binding
-        } catch (e) {
-          loadErrors.push(e)
-        }
+        return binding
+      } catch (e) {
+        loadErrors.push(e)
+      }
       } else {
         try {
-          return require('./example.win32-x64-msvc.node')
-        } catch (e) {
-          loadErrors.push(e)
+        return require('./example.win32-x64-msvc.node')
+      } catch (e) {
+        loadErrors.push(e)
+      }
+      try {
+        const binding = require('@examples/napi-win32-x64-msvc')
+        const bindingPackageVersion = require('@examples/napi-win32-x64-msvc/package.json').version
+        if (bindingPackageVersion !== '0.0.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+          throw new Error(`Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
-        try {
-          const binding = require('@examples/napi-win32-x64-msvc')
-          const bindingPackageVersion =
-            require('@examples/napi-win32-x64-msvc/package.json').version
-          if (
-            bindingPackageVersion !== '0.0.0' &&
-            process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
-            process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
-          ) {
-            throw new Error(
-              `Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
-            )
-          }
-          return binding
-        } catch (e) {
-          loadErrors.push(e)
-        }
+        return binding
+      } catch (e) {
+        loadErrors.push(e)
+      }
       }
     } else if (process.arch === 'ia32') {
       try {
@@ -181,16 +146,9 @@ function requireNative() {
       }
       try {
         const binding = require('@examples/napi-win32-ia32-msvc')
-        const bindingPackageVersion =
-          require('@examples/napi-win32-ia32-msvc/package.json').version
-        if (
-          bindingPackageVersion !== '0.0.0' &&
-          process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
-          process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
-        ) {
-          throw new Error(
-            `Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
-          )
+        const bindingPackageVersion = require('@examples/napi-win32-ia32-msvc/package.json').version
+        if (bindingPackageVersion !== '0.0.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+          throw new Error(`Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
         return binding
       } catch (e) {
@@ -204,25 +162,16 @@ function requireNative() {
       }
       try {
         const binding = require('@examples/napi-win32-arm64-msvc')
-        const bindingPackageVersion =
-          require('@examples/napi-win32-arm64-msvc/package.json').version
-        if (
-          bindingPackageVersion !== '0.0.0' &&
-          process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
-          process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
-        ) {
-          throw new Error(
-            `Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
-          )
+        const bindingPackageVersion = require('@examples/napi-win32-arm64-msvc/package.json').version
+        if (bindingPackageVersion !== '0.0.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+          throw new Error(`Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
         return binding
       } catch (e) {
         loadErrors.push(e)
       }
     } else {
-      loadErrors.push(
-        new Error(`Unsupported architecture on Windows: ${process.arch}`),
-      )
+      loadErrors.push(new Error(`Unsupported architecture on Windows: ${process.arch}`))
     }
   } else if (process.platform === 'darwin') {
     try {
@@ -232,16 +181,9 @@ function requireNative() {
     }
     try {
       const binding = require('@examples/napi-darwin-universal')
-      const bindingPackageVersion =
-        require('@examples/napi-darwin-universal/package.json').version
-      if (
-        bindingPackageVersion !== '0.0.0' &&
-        process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
-        process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
-      ) {
-        throw new Error(
-          `Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
-        )
+      const bindingPackageVersion = require('@examples/napi-darwin-universal/package.json').version
+      if (bindingPackageVersion !== '0.0.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+        throw new Error(`Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
       }
       return binding
     } catch (e) {
@@ -255,16 +197,9 @@ function requireNative() {
       }
       try {
         const binding = require('@examples/napi-darwin-x64')
-        const bindingPackageVersion =
-          require('@examples/napi-darwin-x64/package.json').version
-        if (
-          bindingPackageVersion !== '0.0.0' &&
-          process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
-          process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
-        ) {
-          throw new Error(
-            `Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
-          )
+        const bindingPackageVersion = require('@examples/napi-darwin-x64/package.json').version
+        if (bindingPackageVersion !== '0.0.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+          throw new Error(`Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
         return binding
       } catch (e) {
@@ -278,25 +213,16 @@ function requireNative() {
       }
       try {
         const binding = require('@examples/napi-darwin-arm64')
-        const bindingPackageVersion =
-          require('@examples/napi-darwin-arm64/package.json').version
-        if (
-          bindingPackageVersion !== '0.0.0' &&
-          process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
-          process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
-        ) {
-          throw new Error(
-            `Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
-          )
+        const bindingPackageVersion = require('@examples/napi-darwin-arm64/package.json').version
+        if (bindingPackageVersion !== '0.0.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+          throw new Error(`Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
         return binding
       } catch (e) {
         loadErrors.push(e)
       }
     } else {
-      loadErrors.push(
-        new Error(`Unsupported architecture on macOS: ${process.arch}`),
-      )
+      loadErrors.push(new Error(`Unsupported architecture on macOS: ${process.arch}`))
     }
   } else if (process.platform === 'freebsd') {
     if (process.arch === 'x64') {
@@ -307,16 +233,9 @@ function requireNative() {
       }
       try {
         const binding = require('@examples/napi-freebsd-x64')
-        const bindingPackageVersion =
-          require('@examples/napi-freebsd-x64/package.json').version
-        if (
-          bindingPackageVersion !== '0.0.0' &&
-          process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
-          process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
-        ) {
-          throw new Error(
-            `Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
-          )
+        const bindingPackageVersion = require('@examples/napi-freebsd-x64/package.json').version
+        if (bindingPackageVersion !== '0.0.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+          throw new Error(`Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
         return binding
       } catch (e) {
@@ -330,25 +249,16 @@ function requireNative() {
       }
       try {
         const binding = require('@examples/napi-freebsd-arm64')
-        const bindingPackageVersion =
-          require('@examples/napi-freebsd-arm64/package.json').version
-        if (
-          bindingPackageVersion !== '0.0.0' &&
-          process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
-          process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
-        ) {
-          throw new Error(
-            `Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
-          )
+        const bindingPackageVersion = require('@examples/napi-freebsd-arm64/package.json').version
+        if (bindingPackageVersion !== '0.0.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+          throw new Error(`Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
         return binding
       } catch (e) {
         loadErrors.push(e)
       }
     } else {
-      loadErrors.push(
-        new Error(`Unsupported architecture on FreeBSD: ${process.arch}`),
-      )
+      loadErrors.push(new Error(`Unsupported architecture on FreeBSD: ${process.arch}`))
     }
   } else if (process.platform === 'linux') {
     if (process.arch === 'x64') {
@@ -360,16 +270,9 @@ function requireNative() {
         }
         try {
           const binding = require('@examples/napi-linux-x64-musl')
-          const bindingPackageVersion =
-            require('@examples/napi-linux-x64-musl/package.json').version
-          if (
-            bindingPackageVersion !== '0.0.0' &&
-            process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
-            process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
-          ) {
-            throw new Error(
-              `Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
-            )
+          const bindingPackageVersion = require('@examples/napi-linux-x64-musl/package.json').version
+          if (bindingPackageVersion !== '0.0.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+            throw new Error(`Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
           return binding
         } catch (e) {
@@ -383,16 +286,9 @@ function requireNative() {
         }
         try {
           const binding = require('@examples/napi-linux-x64-gnu')
-          const bindingPackageVersion =
-            require('@examples/napi-linux-x64-gnu/package.json').version
-          if (
-            bindingPackageVersion !== '0.0.0' &&
-            process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
-            process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
-          ) {
-            throw new Error(
-              `Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
-            )
+          const bindingPackageVersion = require('@examples/napi-linux-x64-gnu/package.json').version
+          if (bindingPackageVersion !== '0.0.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+            throw new Error(`Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
           return binding
         } catch (e) {
@@ -408,16 +304,9 @@ function requireNative() {
         }
         try {
           const binding = require('@examples/napi-linux-arm64-musl')
-          const bindingPackageVersion =
-            require('@examples/napi-linux-arm64-musl/package.json').version
-          if (
-            bindingPackageVersion !== '0.0.0' &&
-            process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
-            process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
-          ) {
-            throw new Error(
-              `Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
-            )
+          const bindingPackageVersion = require('@examples/napi-linux-arm64-musl/package.json').version
+          if (bindingPackageVersion !== '0.0.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+            throw new Error(`Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
           return binding
         } catch (e) {
@@ -431,16 +320,9 @@ function requireNative() {
         }
         try {
           const binding = require('@examples/napi-linux-arm64-gnu')
-          const bindingPackageVersion =
-            require('@examples/napi-linux-arm64-gnu/package.json').version
-          if (
-            bindingPackageVersion !== '0.0.0' &&
-            process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
-            process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
-          ) {
-            throw new Error(
-              `Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
-            )
+          const bindingPackageVersion = require('@examples/napi-linux-arm64-gnu/package.json').version
+          if (bindingPackageVersion !== '0.0.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+            throw new Error(`Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
           return binding
         } catch (e) {
@@ -456,16 +338,9 @@ function requireNative() {
         }
         try {
           const binding = require('@examples/napi-linux-arm-musleabihf')
-          const bindingPackageVersion =
-            require('@examples/napi-linux-arm-musleabihf/package.json').version
-          if (
-            bindingPackageVersion !== '0.0.0' &&
-            process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
-            process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
-          ) {
-            throw new Error(
-              `Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
-            )
+          const bindingPackageVersion = require('@examples/napi-linux-arm-musleabihf/package.json').version
+          if (bindingPackageVersion !== '0.0.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+            throw new Error(`Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
           return binding
         } catch (e) {
@@ -479,16 +354,9 @@ function requireNative() {
         }
         try {
           const binding = require('@examples/napi-linux-arm-gnueabihf')
-          const bindingPackageVersion =
-            require('@examples/napi-linux-arm-gnueabihf/package.json').version
-          if (
-            bindingPackageVersion !== '0.0.0' &&
-            process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
-            process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
-          ) {
-            throw new Error(
-              `Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
-            )
+          const bindingPackageVersion = require('@examples/napi-linux-arm-gnueabihf/package.json').version
+          if (bindingPackageVersion !== '0.0.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+            throw new Error(`Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
           return binding
         } catch (e) {
@@ -504,16 +372,9 @@ function requireNative() {
         }
         try {
           const binding = require('@examples/napi-linux-loong64-musl')
-          const bindingPackageVersion =
-            require('@examples/napi-linux-loong64-musl/package.json').version
-          if (
-            bindingPackageVersion !== '0.0.0' &&
-            process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
-            process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
-          ) {
-            throw new Error(
-              `Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
-            )
+          const bindingPackageVersion = require('@examples/napi-linux-loong64-musl/package.json').version
+          if (bindingPackageVersion !== '0.0.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+            throw new Error(`Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
           return binding
         } catch (e) {
@@ -527,16 +388,9 @@ function requireNative() {
         }
         try {
           const binding = require('@examples/napi-linux-loong64-gnu')
-          const bindingPackageVersion =
-            require('@examples/napi-linux-loong64-gnu/package.json').version
-          if (
-            bindingPackageVersion !== '0.0.0' &&
-            process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
-            process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
-          ) {
-            throw new Error(
-              `Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
-            )
+          const bindingPackageVersion = require('@examples/napi-linux-loong64-gnu/package.json').version
+          if (bindingPackageVersion !== '0.0.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+            throw new Error(`Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
           return binding
         } catch (e) {
@@ -552,16 +406,9 @@ function requireNative() {
         }
         try {
           const binding = require('@examples/napi-linux-riscv64-musl')
-          const bindingPackageVersion =
-            require('@examples/napi-linux-riscv64-musl/package.json').version
-          if (
-            bindingPackageVersion !== '0.0.0' &&
-            process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
-            process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
-          ) {
-            throw new Error(
-              `Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
-            )
+          const bindingPackageVersion = require('@examples/napi-linux-riscv64-musl/package.json').version
+          if (bindingPackageVersion !== '0.0.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+            throw new Error(`Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
           return binding
         } catch (e) {
@@ -575,16 +422,9 @@ function requireNative() {
         }
         try {
           const binding = require('@examples/napi-linux-riscv64-gnu')
-          const bindingPackageVersion =
-            require('@examples/napi-linux-riscv64-gnu/package.json').version
-          if (
-            bindingPackageVersion !== '0.0.0' &&
-            process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
-            process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
-          ) {
-            throw new Error(
-              `Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
-            )
+          const bindingPackageVersion = require('@examples/napi-linux-riscv64-gnu/package.json').version
+          if (bindingPackageVersion !== '0.0.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+            throw new Error(`Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
           return binding
         } catch (e) {
@@ -599,16 +439,9 @@ function requireNative() {
       }
       try {
         const binding = require('@examples/napi-linux-ppc64-gnu')
-        const bindingPackageVersion =
-          require('@examples/napi-linux-ppc64-gnu/package.json').version
-        if (
-          bindingPackageVersion !== '0.0.0' &&
-          process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
-          process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
-        ) {
-          throw new Error(
-            `Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
-          )
+        const bindingPackageVersion = require('@examples/napi-linux-ppc64-gnu/package.json').version
+        if (bindingPackageVersion !== '0.0.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+          throw new Error(`Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
         return binding
       } catch (e) {
@@ -622,25 +455,16 @@ function requireNative() {
       }
       try {
         const binding = require('@examples/napi-linux-s390x-gnu')
-        const bindingPackageVersion =
-          require('@examples/napi-linux-s390x-gnu/package.json').version
-        if (
-          bindingPackageVersion !== '0.0.0' &&
-          process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
-          process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
-        ) {
-          throw new Error(
-            `Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
-          )
+        const bindingPackageVersion = require('@examples/napi-linux-s390x-gnu/package.json').version
+        if (bindingPackageVersion !== '0.0.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+          throw new Error(`Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
         return binding
       } catch (e) {
         loadErrors.push(e)
       }
     } else {
-      loadErrors.push(
-        new Error(`Unsupported architecture on Linux: ${process.arch}`),
-      )
+      loadErrors.push(new Error(`Unsupported architecture on Linux: ${process.arch}`))
     }
   } else if (process.platform === 'openharmony') {
     if (process.arch === 'arm64') {
@@ -651,16 +475,9 @@ function requireNative() {
       }
       try {
         const binding = require('@examples/napi-openharmony-arm64')
-        const bindingPackageVersion =
-          require('@examples/napi-openharmony-arm64/package.json').version
-        if (
-          bindingPackageVersion !== '0.0.0' &&
-          process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
-          process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
-        ) {
-          throw new Error(
-            `Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
-          )
+        const bindingPackageVersion = require('@examples/napi-openharmony-arm64/package.json').version
+        if (bindingPackageVersion !== '0.0.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+          throw new Error(`Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
         return binding
       } catch (e) {
@@ -674,16 +491,9 @@ function requireNative() {
       }
       try {
         const binding = require('@examples/napi-openharmony-x64')
-        const bindingPackageVersion =
-          require('@examples/napi-openharmony-x64/package.json').version
-        if (
-          bindingPackageVersion !== '0.0.0' &&
-          process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
-          process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
-        ) {
-          throw new Error(
-            `Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
-          )
+        const bindingPackageVersion = require('@examples/napi-openharmony-x64/package.json').version
+        if (bindingPackageVersion !== '0.0.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+          throw new Error(`Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
         return binding
       } catch (e) {
@@ -697,32 +507,19 @@ function requireNative() {
       }
       try {
         const binding = require('@examples/napi-openharmony-arm')
-        const bindingPackageVersion =
-          require('@examples/napi-openharmony-arm/package.json').version
-        if (
-          bindingPackageVersion !== '0.0.0' &&
-          process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
-          process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
-        ) {
-          throw new Error(
-            `Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`,
-          )
+        const bindingPackageVersion = require('@examples/napi-openharmony-arm/package.json').version
+        if (bindingPackageVersion !== '0.0.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+          throw new Error(`Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
         return binding
       } catch (e) {
         loadErrors.push(e)
       }
     } else {
-      loadErrors.push(
-        new Error(`Unsupported architecture on OpenHarmony: ${process.arch}`),
-      )
+      loadErrors.push(new Error(`Unsupported architecture on OpenHarmony: ${process.arch}`))
     }
   } else {
-    loadErrors.push(
-      new Error(
-        `Unsupported OS: ${process.platform}, architecture: ${process.arch}`,
-      ),
-    )
+    loadErrors.push(new Error(`Unsupported OS: ${process.platform}, architecture: ${process.arch}`))
   }
 }
 
@@ -732,8 +529,7 @@ function wireNativeClassPrototypes(binding) {
     return
   }
 
-  const classKey = (item) =>
-    `${typeof item.module === 'string' ? item.module : ''}\0${item.name}`
+  const classKey = (item) => `${typeof item.module === 'string' ? item.module : ''}\0${item.name}`
   const exportedClassValue = (item) => {
     const target =
       typeof item.module === 'string' && item.module.length > 0
@@ -744,11 +540,7 @@ function wireNativeClassPrototypes(binding) {
 
   const classes = new Map()
   for (const item of metadata) {
-    if (
-      item &&
-      typeof item.name === 'string' &&
-      typeof item.constructor === 'function'
-    ) {
+    if (item && typeof item.name === 'string' && typeof item.constructor === 'function') {
       classes.set(classKey(item), item)
     }
   }
@@ -758,43 +550,26 @@ function wireNativeClassPrototypes(binding) {
       continue
     }
 
-    const parent = classes.get(
-      classKey({ module: item.module, name: item.parent }),
-    )
+    const parent = classes.get(classKey({ module: item.module, name: item.parent }))
     if (!parent) {
-      throw new Error(
-        `Native class parent ${item.parent} for ${item.name} is not registered`,
-      )
+      throw new Error(`Native class parent ${item.parent} for ${item.name} is not registered`)
     }
 
-    Object.setPrototypeOf(
-      item.constructor.prototype,
-      parent.constructor.prototype,
-    )
-    if (
-      Object.getPrototypeOf(item.constructor.prototype) !==
-      parent.constructor.prototype
-    ) {
+    Object.setPrototypeOf(item.constructor.prototype, parent.constructor.prototype)
+    if (Object.getPrototypeOf(item.constructor.prototype) !== parent.constructor.prototype) {
       throw new Error(`Failed to wire native class prototype for ${item.name}`)
     }
 
     if (item.constructible && parent.constructible) {
       const childExport = exportedClassValue(item)
       const parentExport = exportedClassValue(parent)
-      if (
-        typeof childExport !== 'function' ||
-        typeof parentExport !== 'function'
-      ) {
-        throw new Error(
-          `Native class constructor edge for ${item.name} is not exported as functions`,
-        )
+      if (typeof childExport !== 'function' || typeof parentExport !== 'function') {
+        throw new Error(`Native class constructor edge for ${item.name} is not exported as functions`)
       }
 
       Object.setPrototypeOf(childExport, parentExport)
       if (Object.getPrototypeOf(childExport) !== parentExport) {
-        throw new Error(
-          `Failed to wire native class constructor for ${item.name}`,
-        )
+        throw new Error(`Failed to wire native class constructor for ${item.name}`)
       }
     }
   }
@@ -807,13 +582,8 @@ function wireNativeClassPrototypes(binding) {
       }
 
       Object.setPrototypeOf(item.constructor.prototype, IteratorCtor.prototype)
-      if (
-        Object.getPrototypeOf(item.constructor.prototype) !==
-        IteratorCtor.prototype
-      ) {
-        throw new Error(
-          `Failed to wire native iterator prototype for ${item.name}`,
-        )
+      if (Object.getPrototypeOf(item.constructor.prototype) !== IteratorCtor.prototype) {
+        throw new Error(`Failed to wire native iterator prototype for ${item.name}`)
       }
     }
   }
@@ -849,8 +619,7 @@ hideNativeClassMetadata(nativeBinding)
 
 module.exports = nativeBinding
 module.exports.Animal = nativeBinding.Animal
-module.exports.AnimalWithDefaultConstructor =
-  nativeBinding.AnimalWithDefaultConstructor
+module.exports.AnimalWithDefaultConstructor = nativeBinding.AnimalWithDefaultConstructor
 module.exports.AnotherClassForEither = nativeBinding.AnotherClassForEither
 module.exports.AnotherCssStyleSheet = nativeBinding.AnotherCssStyleSheet
 module.exports.Asset = nativeBinding.Asset
@@ -913,15 +682,11 @@ module.exports.acceptArraybuffer = nativeBinding.acceptArraybuffer
 module.exports.acceptSlice = nativeBinding.acceptSlice
 module.exports.acceptStream = nativeBinding.acceptStream
 module.exports.acceptThreadsafeFunction = nativeBinding.acceptThreadsafeFunction
-module.exports.acceptThreadsafeFunctionFatal =
-  nativeBinding.acceptThreadsafeFunctionFatal
-module.exports.acceptThreadsafeFunctionTupleArgs =
-  nativeBinding.acceptThreadsafeFunctionTupleArgs
-module.exports.acceptThreadsafeFunctionTupleNoFnArgs =
-  nativeBinding.acceptThreadsafeFunctionTupleNoFnArgs
+module.exports.acceptThreadsafeFunctionFatal = nativeBinding.acceptThreadsafeFunctionFatal
+module.exports.acceptThreadsafeFunctionTupleArgs = nativeBinding.acceptThreadsafeFunctionTupleArgs
+module.exports.acceptThreadsafeFunctionTupleNoFnArgs = nativeBinding.acceptThreadsafeFunctionTupleNoFnArgs
 module.exports.acceptUint8ClampedSlice = nativeBinding.acceptUint8ClampedSlice
-module.exports.acceptUint8ClampedSliceAndBufferSlice =
-  nativeBinding.acceptUint8ClampedSliceAndBufferSlice
+module.exports.acceptUint8ClampedSliceAndBufferSlice = nativeBinding.acceptUint8ClampedSliceAndBufferSlice
 module.exports.acceptUntypedTypedArray = nativeBinding.acceptUntypedTypedArray
 module.exports.add = nativeBinding.add
 module.exports.ALIAS = nativeBinding.ALIAS
@@ -950,46 +715,36 @@ module.exports.btreeSetToJs = nativeBinding.btreeSetToJs
 module.exports.btreeSetToRust = nativeBinding.btreeSetToRust
 module.exports.bufferPassThrough = nativeBinding.bufferPassThrough
 module.exports.bufferWithAsyncBlock = nativeBinding.bufferWithAsyncBlock
-module.exports.buildThreadsafeFunctionFromFunction =
-  nativeBinding.buildThreadsafeFunctionFromFunction
-module.exports.buildThreadsafeFunctionFromFunctionCalleeHandle =
-  nativeBinding.buildThreadsafeFunctionFromFunctionCalleeHandle
+module.exports.buildThreadsafeFunctionFromFunction = nativeBinding.buildThreadsafeFunctionFromFunction
+module.exports.buildThreadsafeFunctionFromFunctionCalleeHandle = nativeBinding.buildThreadsafeFunctionFromFunctionCalleeHandle
 module.exports.call0 = nativeBinding.call0
 module.exports.call1 = nativeBinding.call1
 module.exports.call2 = nativeBinding.call2
-module.exports.callAsyncWithUnknownReturnValue =
-  nativeBinding.callAsyncWithUnknownReturnValue
+module.exports.callAsyncWithUnknownReturnValue = nativeBinding.callAsyncWithUnknownReturnValue
 module.exports.callbackInSpawn = nativeBinding.callbackInSpawn
 module.exports.callbackReturnPromise = nativeBinding.callbackReturnPromise
-module.exports.callbackReturnPromiseAndSpawn =
-  nativeBinding.callbackReturnPromiseAndSpawn
+module.exports.callbackReturnPromiseAndSpawn = nativeBinding.callbackReturnPromiseAndSpawn
 module.exports.callCatchOnPromise = nativeBinding.callCatchOnPromise
 module.exports.callFinallyOnPromise = nativeBinding.callFinallyOnPromise
 module.exports.callFunction = nativeBinding.callFunction
 module.exports.callFunctionWithArg = nativeBinding.callFunctionWithArg
-module.exports.callFunctionWithArgAndCtx =
-  nativeBinding.callFunctionWithArgAndCtx
-module.exports.callLongThreadsafeFunction =
-  nativeBinding.callLongThreadsafeFunction
+module.exports.callFunctionWithArgAndCtx = nativeBinding.callFunctionWithArgAndCtx
+module.exports.callLongThreadsafeFunction = nativeBinding.callLongThreadsafeFunction
 module.exports.callRuleHandler = nativeBinding.callRuleHandler
 module.exports.callThenOnPromise = nativeBinding.callThenOnPromise
 module.exports.callThreadsafeFunction = nativeBinding.callThreadsafeFunction
-module.exports.callWithNestedFunctionArg =
-  nativeBinding.callWithNestedFunctionArg
+module.exports.callWithNestedFunctionArg = nativeBinding.callWithNestedFunctionArg
 module.exports.callWithTupleArg = nativeBinding.callWithTupleArg
 module.exports.captureErrorInCallback = nativeBinding.captureErrorInCallback
 module.exports.chronoDateAdd1Minute = nativeBinding.chronoDateAdd1Minute
 module.exports.chronoDateFixtureReturn1 = nativeBinding.chronoDateFixtureReturn1
 module.exports.chronoDateFixtureReturn2 = nativeBinding.chronoDateFixtureReturn2
-module.exports.chronoDateWithTimezoneReturn =
-  nativeBinding.chronoDateWithTimezoneReturn
-module.exports.chronoDateWithTimezoneToMillis =
-  nativeBinding.chronoDateWithTimezoneToMillis
+module.exports.chronoDateWithTimezoneReturn = nativeBinding.chronoDateWithTimezoneReturn
+module.exports.chronoDateWithTimezoneToMillis = nativeBinding.chronoDateWithTimezoneToMillis
 module.exports.chronoLocalDateReturn = nativeBinding.chronoLocalDateReturn
 module.exports.chronoLocalDateToMillis = nativeBinding.chronoLocalDateToMillis
 module.exports.chronoNativeDateTime = nativeBinding.chronoNativeDateTime
-module.exports.chronoNativeDateTimeReturn =
-  nativeBinding.chronoNativeDateTimeReturn
+module.exports.chronoNativeDateTimeReturn = nativeBinding.chronoNativeDateTimeReturn
 module.exports.chronoUtcDateReturn = nativeBinding.chronoUtcDateReturn
 module.exports.chronoUtcDateToMillis = nativeBinding.chronoUtcDateToMillis
 module.exports.compressSync = nativeBinding.compressSync
@@ -1001,43 +756,30 @@ module.exports.convertU32Array = nativeBinding.convertU32Array
 module.exports.createArraybuffer = nativeBinding.createArraybuffer
 module.exports.createBigInt = nativeBinding.createBigInt
 module.exports.createBigIntI64 = nativeBinding.createBigIntI64
-module.exports.createBufferSliceFromCopiedData =
-  nativeBinding.createBufferSliceFromCopiedData
+module.exports.createBufferSliceFromCopiedData = nativeBinding.createBufferSliceFromCopiedData
 module.exports.createExternal = nativeBinding.createExternal
-module.exports.createExternalBufferSlice =
-  nativeBinding.createExternalBufferSlice
-module.exports.createExternalLatin1CustomFinalize =
-  nativeBinding.createExternalLatin1CustomFinalize
-module.exports.createExternalLatin1Empty =
-  nativeBinding.createExternalLatin1Empty
+module.exports.createExternalBufferSlice = nativeBinding.createExternalBufferSlice
+module.exports.createExternalLatin1CustomFinalize = nativeBinding.createExternalLatin1CustomFinalize
+module.exports.createExternalLatin1Empty = nativeBinding.createExternalLatin1Empty
 module.exports.createExternalLatin1Long = nativeBinding.createExternalLatin1Long
-module.exports.createExternalLatin1Short =
-  nativeBinding.createExternalLatin1Short
-module.exports.createExternalLatin1String =
-  nativeBinding.createExternalLatin1String
-module.exports.createExternalLatin1WithLatin1Chars =
-  nativeBinding.createExternalLatin1WithLatin1Chars
+module.exports.createExternalLatin1Short = nativeBinding.createExternalLatin1Short
+module.exports.createExternalLatin1String = nativeBinding.createExternalLatin1String
+module.exports.createExternalLatin1WithLatin1Chars = nativeBinding.createExternalLatin1WithLatin1Chars
 module.exports.createExternalRef = nativeBinding.createExternalRef
 module.exports.createExternalString = nativeBinding.createExternalString
 module.exports.createExternalTypedArray = nativeBinding.createExternalTypedArray
-module.exports.createExternalUtf16String =
-  nativeBinding.createExternalUtf16String
+module.exports.createExternalUtf16String = nativeBinding.createExternalUtf16String
 module.exports.createFunction = nativeBinding.createFunction
-module.exports.createI32ArrayFromExternal =
-  nativeBinding.createI32ArrayFromExternal
+module.exports.createI32ArrayFromExternal = nativeBinding.createI32ArrayFromExternal
 module.exports.createObj = nativeBinding.createObj
 module.exports.createObjectRef = nativeBinding.createObjectRef
-module.exports.createObjectWithClassField =
-  nativeBinding.createObjectWithClassField
+module.exports.createObjectWithClassField = nativeBinding.createObjectWithClassField
 module.exports.createObjWithProperty = nativeBinding.createObjWithProperty
 module.exports.createOptionalExternal = nativeBinding.createOptionalExternal
 module.exports.createReadableStream = nativeBinding.createReadableStream
-module.exports.createReadableStreamFromClass =
-  nativeBinding.createReadableStreamFromClass
-module.exports.createReadableStreamWithObject =
-  nativeBinding.createReadableStreamWithObject
-module.exports.createReferenceOnFunction =
-  nativeBinding.createReferenceOnFunction
+module.exports.createReadableStreamFromClass = nativeBinding.createReadableStreamFromClass
+module.exports.createReadableStreamWithObject = nativeBinding.createReadableStreamWithObject
+module.exports.createReferenceOnFunction = nativeBinding.createReferenceOnFunction
 module.exports.createRejectedPromise = nativeBinding.createRejectedPromise
 module.exports.createResolvedPromise = nativeBinding.createResolvedPromise
 module.exports.createStaticLatin1String = nativeBinding.createStaticLatin1String
@@ -1045,14 +787,10 @@ module.exports.createStaticUtf16String = nativeBinding.createStaticUtf16String
 module.exports.createSymbol = nativeBinding.createSymbol
 module.exports.createSymbolFor = nativeBinding.createSymbolFor
 module.exports.createSymbolRef = nativeBinding.createSymbolRef
-module.exports.createUint8ClampedArrayFromData =
-  nativeBinding.createUint8ClampedArrayFromData
-module.exports.createUint8ClampedArrayFromExternal =
-  nativeBinding.createUint8ClampedArrayFromExternal
-module.exports.createZeroCopyLatin1String =
-  nativeBinding.createZeroCopyLatin1String
-module.exports.createZeroCopyUtf16String =
-  nativeBinding.createZeroCopyUtf16String
+module.exports.createUint8ClampedArrayFromData = nativeBinding.createUint8ClampedArrayFromData
+module.exports.createUint8ClampedArrayFromExternal = nativeBinding.createUint8ClampedArrayFromExternal
+module.exports.createZeroCopyLatin1String = nativeBinding.createZeroCopyLatin1String
+module.exports.createZeroCopyUtf16String = nativeBinding.createZeroCopyUtf16String
 module.exports.CustomNumEnum = nativeBinding.CustomNumEnum
 module.exports.customStatusCode = nativeBinding.customStatusCode
 module.exports.CustomStringEnum = nativeBinding.CustomStringEnum
@@ -1071,8 +809,7 @@ module.exports.eitherPromiseInEitherA = nativeBinding.eitherPromiseInEitherA
 module.exports.eitherStringOrNumber = nativeBinding.eitherStringOrNumber
 module.exports.Empty = nativeBinding.Empty
 module.exports.enumToI32 = nativeBinding.enumToI32
-module.exports.errorMessageContainsNullByte =
-  nativeBinding.errorMessageContainsNullByte
+module.exports.errorMessageContainsNullByte = nativeBinding.errorMessageContainsNullByte
 module.exports.esmResolve = nativeBinding.esmResolve
 module.exports.extendsJavascriptError = nativeBinding.extendsJavascriptError
 module.exports.f32ArrayToArray = nativeBinding.f32ArrayToArray
@@ -1080,8 +817,7 @@ module.exports.f64ArrayToArray = nativeBinding.f64ArrayToArray
 module.exports.fetch = nativeBinding.fetch
 module.exports.fibonacci = nativeBinding.fibonacci
 module.exports.fnReceivedAliased = nativeBinding.fnReceivedAliased
-module.exports.generateFunctionAndCallIt =
-  nativeBinding.generateFunctionAndCallIt
+module.exports.generateFunctionAndCallIt = nativeBinding.generateFunctionAndCallIt
 module.exports.getBigintJsonValue = nativeBinding.getBigintJsonValue
 module.exports.getBtreeMapping = nativeBinding.getBtreeMapping
 module.exports.getBuffer = nativeBinding.getBuffer
@@ -1093,8 +829,7 @@ module.exports.getEmptyTypedArray = nativeBinding.getEmptyTypedArray
 module.exports.getExternal = nativeBinding.getExternal
 module.exports.getGlobal = nativeBinding.getGlobal
 module.exports.getIndexMapping = nativeBinding.getIndexMapping
-module.exports.getIndexMappingWithHasher =
-  nativeBinding.getIndexMappingWithHasher
+module.exports.getIndexMappingWithHasher = nativeBinding.getIndexMappingWithHasher
 module.exports.getMapping = nativeBinding.getMapping
 module.exports.getMappingWithHasher = nativeBinding.getMappingWithHasher
 module.exports.getModuleFileName = nativeBinding.getModuleFileName
@@ -1129,20 +864,16 @@ module.exports.mutateArraybuffer = nativeBinding.mutateArraybuffer
 module.exports.mutateExternal = nativeBinding.mutateExternal
 module.exports.mutateOptionalExternal = nativeBinding.mutateOptionalExternal
 module.exports.mutateTypedArray = nativeBinding.mutateTypedArray
-module.exports.objectGetNamedPropertyShouldPerformTypecheck =
-  nativeBinding.objectGetNamedPropertyShouldPerformTypecheck
+module.exports.objectGetNamedPropertyShouldPerformTypecheck = nativeBinding.objectGetNamedPropertyShouldPerformTypecheck
 module.exports.objectWithCApis = nativeBinding.objectWithCApis
 module.exports.optionalCallbackTypes = nativeBinding.optionalCallbackTypes
 module.exports.optionEnd = nativeBinding.optionEnd
 module.exports.optionOnly = nativeBinding.optionOnly
 module.exports.optionStart = nativeBinding.optionStart
 module.exports.optionStartEnd = nativeBinding.optionStartEnd
-module.exports.overrideIndividualArgOnFunction =
-  nativeBinding.overrideIndividualArgOnFunction
-module.exports.overrideIndividualArgOnFunctionWithCbArg =
-  nativeBinding.overrideIndividualArgOnFunctionWithCbArg
-module.exports.overrideWholeFunctionType =
-  nativeBinding.overrideWholeFunctionType
+module.exports.overrideIndividualArgOnFunction = nativeBinding.overrideIndividualArgOnFunction
+module.exports.overrideIndividualArgOnFunctionWithCbArg = nativeBinding.overrideIndividualArgOnFunctionWithCbArg
+module.exports.overrideWholeFunctionType = nativeBinding.overrideWholeFunctionType
 module.exports.panic = nativeBinding.panic
 module.exports.panicInAsync = nativeBinding.panicInAsync
 module.exports.passSetToJs = nativeBinding.passSetToJs
@@ -1150,22 +881,18 @@ module.exports.passSetToRust = nativeBinding.passSetToRust
 module.exports.passSetWithHasherToJs = nativeBinding.passSetWithHasherToJs
 module.exports.plusOne = nativeBinding.plusOne
 module.exports.promiseInEither = nativeBinding.promiseInEither
-module.exports.promiseReturnClassInstance =
-  nativeBinding.promiseReturnClassInstance
+module.exports.promiseReturnClassInstance = nativeBinding.promiseReturnClassInstance
 module.exports.readFile = nativeBinding.readFile
 module.exports.readFileAsync = nativeBinding.readFileAsync
 module.exports.readPackageJson = nativeBinding.readPackageJson
 module.exports.receiveAllOptionalObject = nativeBinding.receiveAllOptionalObject
-module.exports.receiveBindingVitePluginMeta =
-  nativeBinding.receiveBindingVitePluginMeta
-module.exports.receiveBufferSliceWithLifetime =
-  nativeBinding.receiveBufferSliceWithLifetime
+module.exports.receiveBindingVitePluginMeta = nativeBinding.receiveBindingVitePluginMeta
+module.exports.receiveBufferSliceWithLifetime = nativeBinding.receiveBufferSliceWithLifetime
 module.exports.receiveClassOrNumber = nativeBinding.receiveClassOrNumber
 module.exports.receiveDifferentClass = nativeBinding.receiveDifferentClass
 module.exports.receiveMutClassOrNumber = nativeBinding.receiveMutClassOrNumber
 module.exports.receiveObjectOnlyFromJs = nativeBinding.receiveObjectOnlyFromJs
-module.exports.receiveObjectWithClassField =
-  nativeBinding.receiveObjectWithClassField
+module.exports.receiveObjectWithClassField = nativeBinding.receiveObjectWithClassField
 module.exports.receiveStrictObject = nativeBinding.receiveStrictObject
 module.exports.receiveString = nativeBinding.receiveString
 module.exports.referenceAsCallback = nativeBinding.referenceAsCallback
@@ -1180,8 +907,7 @@ module.exports.returnNull = nativeBinding.returnNull
 module.exports.returnObjectOnlyToJs = nativeBinding.returnObjectOnlyToJs
 module.exports.returnUndefined = nativeBinding.returnUndefined
 module.exports.returnUndefinedIfInvalid = nativeBinding.returnUndefinedIfInvalid
-module.exports.returnUndefinedIfInvalidPromise =
-  nativeBinding.returnUndefinedIfInvalidPromise
+module.exports.returnUndefinedIfInvalidPromise = nativeBinding.returnUndefinedIfInvalidPromise
 module.exports.roundtripStr = nativeBinding.roundtripStr
 module.exports.runScript = nativeBinding.runScript
 module.exports.setNullByteProperty = nativeBinding.setNullByteProperty
@@ -1198,26 +924,17 @@ module.exports.sumBtreeMapping = nativeBinding.sumBtreeMapping
 module.exports.sumIndexMapping = nativeBinding.sumIndexMapping
 module.exports.sumMapping = nativeBinding.sumMapping
 module.exports.sumNums = nativeBinding.sumNums
-module.exports.testEscapedQuotesInComments =
-  nativeBinding.testEscapedQuotesInComments
+module.exports.testEscapedQuotesInComments = nativeBinding.testEscapedQuotesInComments
 module.exports.testLatin1Methods = nativeBinding.testLatin1Methods
-module.exports.testSerdeBigNumberPrecision =
-  nativeBinding.testSerdeBigNumberPrecision
+module.exports.testSerdeBigNumberPrecision = nativeBinding.testSerdeBigNumberPrecision
 module.exports.testSerdeBufferBytes = nativeBinding.testSerdeBufferBytes
 module.exports.testSerdeRoundtrip = nativeBinding.testSerdeRoundtrip
-module.exports.testWorkers = nativeBinding.testWorkers
-module.exports.threadsafeFunctionBuildThrowErrorWithStatus =
-  nativeBinding.threadsafeFunctionBuildThrowErrorWithStatus
-module.exports.threadsafeFunctionClosureCapture =
-  nativeBinding.threadsafeFunctionClosureCapture
-module.exports.threadsafeFunctionFatalMode =
-  nativeBinding.threadsafeFunctionFatalMode
-module.exports.threadsafeFunctionFatalModeError =
-  nativeBinding.threadsafeFunctionFatalModeError
-module.exports.threadsafeFunctionThrowError =
-  nativeBinding.threadsafeFunctionThrowError
-module.exports.threadsafeFunctionThrowErrorWithStatus =
-  nativeBinding.threadsafeFunctionThrowErrorWithStatus
+module.exports.threadsafeFunctionBuildThrowErrorWithStatus = nativeBinding.threadsafeFunctionBuildThrowErrorWithStatus
+module.exports.threadsafeFunctionClosureCapture = nativeBinding.threadsafeFunctionClosureCapture
+module.exports.threadsafeFunctionFatalMode = nativeBinding.threadsafeFunctionFatalMode
+module.exports.threadsafeFunctionFatalModeError = nativeBinding.threadsafeFunctionFatalModeError
+module.exports.threadsafeFunctionThrowError = nativeBinding.threadsafeFunctionThrowError
+module.exports.threadsafeFunctionThrowErrorWithStatus = nativeBinding.threadsafeFunctionThrowErrorWithStatus
 module.exports.throwAsyncError = nativeBinding.throwAsyncError
 module.exports.throwError = nativeBinding.throwError
 module.exports.throwErrorWithCause = nativeBinding.throwErrorWithCause
@@ -1229,13 +946,10 @@ module.exports.tsfnInEither = nativeBinding.tsfnInEither
 module.exports.tsfnReturnPromise = nativeBinding.tsfnReturnPromise
 module.exports.tsfnReturnPromiseTimeout = nativeBinding.tsfnReturnPromiseTimeout
 module.exports.tsfnThrowFromJs = nativeBinding.tsfnThrowFromJs
-module.exports.tsfnThrowFromJsCallbackContainsTsfn =
-  nativeBinding.tsfnThrowFromJsCallbackContainsTsfn
+module.exports.tsfnThrowFromJsCallbackContainsTsfn = nativeBinding.tsfnThrowFromJsCallbackContainsTsfn
 module.exports.tsfnThrowFromJsCatch = nativeBinding.tsfnThrowFromJsCatch
-module.exports.tsfnThrowFromJsCatchHandled =
-  nativeBinding.tsfnThrowFromJsCatchHandled
-module.exports.tsfnThrowFromJsCatchRecover =
-  nativeBinding.tsfnThrowFromJsCatchRecover
+module.exports.tsfnThrowFromJsCatchHandled = nativeBinding.tsfnThrowFromJsCatchHandled
+module.exports.tsfnThrowFromJsCatchRecover = nativeBinding.tsfnThrowFromJsCatchRecover
 module.exports.tsfnWeak = nativeBinding.tsfnWeak
 module.exports.tsRename = nativeBinding.tsRename
 module.exports.u16ArrayToArray = nativeBinding.u16ArrayToArray
@@ -1263,19 +977,16 @@ module.exports.validatePromise = nativeBinding.validatePromise
 module.exports.validateString = nativeBinding.validateString
 module.exports.validateStringEnum = nativeBinding.validateStringEnum
 module.exports.validateStructuredEnum = nativeBinding.validateStructuredEnum
-module.exports.validateStructuredEnumLowercase =
-  nativeBinding.validateStructuredEnumLowercase
+module.exports.validateStructuredEnumLowercase = nativeBinding.validateStructuredEnumLowercase
 module.exports.validateSymbol = nativeBinding.validateSymbol
 module.exports.validateTypedArray = nativeBinding.validateTypedArray
 module.exports.validateTypedArraySlice = nativeBinding.validateTypedArraySlice
-module.exports.validateUint8ClampedSlice =
-  nativeBinding.validateUint8ClampedSlice
+module.exports.validateUint8ClampedSlice = nativeBinding.validateUint8ClampedSlice
 module.exports.validateUndefined = nativeBinding.validateUndefined
 module.exports.verifyEnvRecordCurrent = nativeBinding.verifyEnvRecordCurrent
 module.exports.withAbortController = nativeBinding.withAbortController
 module.exports.withAbortSignalHandle = nativeBinding.withAbortSignalHandle
-module.exports.withinAsyncRuntimeIfAvailable =
-  nativeBinding.withinAsyncRuntimeIfAvailable
+module.exports.withinAsyncRuntimeIfAvailable = nativeBinding.withinAsyncRuntimeIfAvailable
 module.exports.withoutAbortController = nativeBinding.withoutAbortController
 module.exports.xxh64Alias = nativeBinding.xxh64Alias
 module.exports.xxh2 = nativeBinding.xxh2

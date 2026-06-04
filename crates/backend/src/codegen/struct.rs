@@ -318,102 +318,17 @@ impl NapiStruct {
       quote! {}
     };
 
-    if let Some(parent) = &class.parent {
-      let parent = &parent.rust_path;
-      quote! {
-        #[repr(C)]
-        pub struct #layout_ty {
-          parent: <#parent as napi::bindgen_prelude::ClassChain>::Layout,
-          value: std::mem::MaybeUninit<#name>,
-        }
-
-        static #info_name: napi::bindgen_prelude::ClassInfo = unsafe {
-          napi::bindgen_prelude::ClassInfo::new(#rust_name, #js_name, #subclassable)
-        };
-
-        static #entry_name: napi::bindgen_prelude::ClassEntry = unsafe {
-          napi::bindgen_prelude::ClassEntry::new(
-            &#info_name,
-            std::mem::offset_of!(#layout_ty, value),
-          )
-        };
-
-        static #layout_name: napi::bindgen_prelude::ClassLayout = unsafe {
-          napi::bindgen_prelude::ClassLayout::new(
-            Some(<#parent as napi::bindgen_prelude::ClassChain>::LAYOUT),
-            #entry_name,
-            std::mem::size_of::<#layout_ty>(),
-            std::mem::align_of::<#layout_ty>(),
-            #drop_fn,
-          )
-        };
-
-        fn #layout_fn() -> &'static napi::bindgen_prelude::ClassLayout {
-          &#layout_name
-        }
-
-        static #def_name: napi::bindgen_prelude::ClassDef<#name> = unsafe {
-          napi::bindgen_prelude::ClassDef::new(&#info_name, #layout_fn)
-        };
-
-        unsafe impl napi::bindgen_prelude::NapiClass for #name {
-          type Parent = #parent;
-
-          const CLASS: &'static napi::bindgen_prelude::ClassDef<Self> = &#def_name;
-        }
-
-        unsafe impl napi::bindgen_prelude::NapiReceiver for #name {
-          type Access = napi::bindgen_prelude::ClassAccess;
-
-          type Borrow<'a> = napi::bindgen_prelude::ClassBorrow<'a, Self>
-          where
-            Self: 'a;
-
-          type BorrowMut<'a> = napi::bindgen_prelude::ClassBorrowMut<'a, Self>
-          where
-            Self: 'a;
-
-          unsafe fn validate_raw_object<'scope>(
-            scope: &mut napi::bindgen_prelude::Scope<'_, 'scope>,
-            object: napi::bindgen_prelude::sys::napi_value,
-          ) -> napi::Result<(Self::Access, napi::bindgen_prelude::ClassStorageRef<'scope>)> {
-            unsafe { napi::bindgen_prelude::ClassStorageRef::validate_raw_object(
-              scope,
-              object,
-              <Self as napi::bindgen_prelude::NapiClass>::CLASS.info(),
-            ) }
-          }
-
-          unsafe fn ref_from_validated_object<'scope>(
-            storage: napi::bindgen_prelude::ClassStorageRef<'scope>,
-            access: Self::Access,
-          ) -> napi::Result<Self::Borrow<'scope>> {
-            unsafe {
-              napi::bindgen_prelude::ClassBorrow::from_validated_parts(storage, access)
-            }
-          }
-
-          unsafe fn mut_from_validated_object<'scope>(
-            storage: napi::bindgen_prelude::ClassStorageRef<'scope>,
-            access: Self::Access,
-          ) -> napi::Result<Self::BorrowMut<'scope>> {
-            unsafe {
-              napi::bindgen_prelude::ClassBorrowMut::from_validated_parts(storage, access)
-            }
-          }
-        }
-
-        #subclass_impl
-
-        unsafe impl napi::bindgen_prelude::ClassChain for #name {
-          type Layout = #layout_ty;
-
-          const LAYOUT: &'static napi::bindgen_prelude::ClassLayout = &#layout_name;
-
-          unsafe fn write_init(
-            init: napi::bindgen_prelude::ClassInitializer<Self>,
-            dst: std::ptr::NonNull<Self::Layout>,
-          ) {
+    let (layout_fields, parent_layout_ref, parent_type, write_init_body, drop_segments_body) =
+      if let Some(parent) = &class.parent {
+        let parent = &parent.rust_path;
+        (
+          quote! {
+            parent: <#parent as napi::bindgen_prelude::ClassChain>::Layout,
+            value: std::mem::MaybeUninit<#name>,
+          },
+          quote! { Some(<#parent as napi::bindgen_prelude::ClassChain>::LAYOUT) },
+          quote! { #parent },
+          quote! {
             let (value, parent) = init.into_value_and_parent();
             let layout = dst.as_ptr();
             unsafe {
@@ -423,9 +338,8 @@ impl NapiStruct {
               );
               (*layout).value.write(value);
             }
-          }
-
-          unsafe fn drop_segments(data: std::ptr::NonNull<Self::Layout>) {
+          },
+          quote! {
             let layout = data.as_ptr();
             unsafe {
               napi::bindgen_prelude::drop_segment(
@@ -435,140 +349,141 @@ impl NapiStruct {
                 std::ptr::NonNull::new_unchecked(&mut (*layout).parent),
               );
             }
-          }
-
-          unsafe fn drop_initialized(data: std::ptr::NonNull<u8>) {
-            unsafe {
-              <Self as napi::bindgen_prelude::ClassChain>::drop_segments(data.cast());
-            }
-          }
-        }
-
-        unsafe fn #drop_fn(data: std::ptr::NonNull<u8>) {
-          unsafe { <#name as napi::bindgen_prelude::ClassChain>::drop_initialized(data) }
-        }
-      }
-    } else {
-      quote! {
-        #[repr(C)]
-        pub struct #layout_ty {
-          value: std::mem::MaybeUninit<#name>,
-        }
-
-        static #info_name: napi::bindgen_prelude::ClassInfo = unsafe {
-          napi::bindgen_prelude::ClassInfo::new(#rust_name, #js_name, #subclassable)
-        };
-
-        static #entry_name: napi::bindgen_prelude::ClassEntry = unsafe {
-          napi::bindgen_prelude::ClassEntry::new(
-            &#info_name,
-            std::mem::offset_of!(#layout_ty, value),
-          )
-        };
-
-        static #layout_name: napi::bindgen_prelude::ClassLayout = unsafe {
-          napi::bindgen_prelude::ClassLayout::new(
-            None,
-            #entry_name,
-            std::mem::size_of::<#layout_ty>(),
-            std::mem::align_of::<#layout_ty>(),
-            #drop_fn,
-          )
-        };
-
-        fn #layout_fn() -> &'static napi::bindgen_prelude::ClassLayout {
-          &#layout_name
-        }
-
-        static #def_name: napi::bindgen_prelude::ClassDef<#name> = unsafe {
-          napi::bindgen_prelude::ClassDef::new(&#info_name, #layout_fn)
-        };
-
-        unsafe impl napi::bindgen_prelude::NapiClass for #name {
-          type Parent = ();
-
-          const CLASS: &'static napi::bindgen_prelude::ClassDef<Self> = &#def_name;
-        }
-
-        unsafe impl napi::bindgen_prelude::NapiReceiver for #name {
-          type Access = napi::bindgen_prelude::ClassAccess;
-
-          type Borrow<'a> = napi::bindgen_prelude::ClassBorrow<'a, Self>
-          where
-            Self: 'a;
-
-          type BorrowMut<'a> = napi::bindgen_prelude::ClassBorrowMut<'a, Self>
-          where
-            Self: 'a;
-
-          unsafe fn validate_raw_object<'scope>(
-            scope: &mut napi::bindgen_prelude::Scope<'_, 'scope>,
-            object: napi::bindgen_prelude::sys::napi_value,
-          ) -> napi::Result<(Self::Access, napi::bindgen_prelude::ClassStorageRef<'scope>)> {
-            unsafe { napi::bindgen_prelude::ClassStorageRef::validate_raw_object(
-              scope,
-              object,
-              <Self as napi::bindgen_prelude::NapiClass>::CLASS.info(),
-            ) }
-          }
-
-          unsafe fn ref_from_validated_object<'scope>(
-            storage: napi::bindgen_prelude::ClassStorageRef<'scope>,
-            access: Self::Access,
-          ) -> napi::Result<Self::Borrow<'scope>> {
-            unsafe {
-              napi::bindgen_prelude::ClassBorrow::from_validated_parts(storage, access)
-            }
-          }
-
-          unsafe fn mut_from_validated_object<'scope>(
-            storage: napi::bindgen_prelude::ClassStorageRef<'scope>,
-            access: Self::Access,
-          ) -> napi::Result<Self::BorrowMut<'scope>> {
-            unsafe {
-              napi::bindgen_prelude::ClassBorrowMut::from_validated_parts(storage, access)
-            }
-          }
-        }
-
-        #subclass_impl
-
-        unsafe impl napi::bindgen_prelude::ClassChain for #name {
-          type Layout = #layout_ty;
-
-          const LAYOUT: &'static napi::bindgen_prelude::ClassLayout = &#layout_name;
-
-          unsafe fn write_init(
-            init: napi::bindgen_prelude::ClassInitializer<Self>,
-            dst: std::ptr::NonNull<Self::Layout>,
-          ) {
+          },
+        )
+      } else {
+        (
+          quote! { value: std::mem::MaybeUninit<#name> },
+          quote! { None },
+          quote! { () },
+          quote! {
             let (value, parent) = init.into_value_and_parent();
             let layout = dst.as_ptr();
             std::mem::drop(parent);
             unsafe {
               (*layout).value.write(value);
             }
-          }
-
-          unsafe fn drop_segments(data: std::ptr::NonNull<Self::Layout>) {
+          },
+          quote! {
             let layout = data.as_ptr();
             unsafe {
               napi::bindgen_prelude::drop_segment(
                 std::ptr::NonNull::new_unchecked((*layout).value.as_mut_ptr()),
               );
             }
-          }
+          },
+        )
+      };
 
-          unsafe fn drop_initialized(data: std::ptr::NonNull<u8>) {
-            unsafe {
-              <Self as napi::bindgen_prelude::ClassChain>::drop_segments(data.cast());
-            }
+    quote! {
+      #[repr(C)]
+      pub struct #layout_ty {
+        #layout_fields
+      }
+
+      static #info_name: napi::bindgen_prelude::ClassInfo = unsafe {
+        napi::bindgen_prelude::ClassInfo::new(#rust_name, #js_name, #subclassable)
+      };
+
+      static #entry_name: napi::bindgen_prelude::ClassEntry = unsafe {
+        napi::bindgen_prelude::ClassEntry::new(
+          &#info_name,
+          std::mem::offset_of!(#layout_ty, value),
+        )
+      };
+
+      static #layout_name: napi::bindgen_prelude::ClassLayout = unsafe {
+        napi::bindgen_prelude::ClassLayout::new(
+          #parent_layout_ref,
+          #entry_name,
+          std::mem::size_of::<#layout_ty>(),
+          std::mem::align_of::<#layout_ty>(),
+          #drop_fn,
+        )
+      };
+
+      fn #layout_fn() -> &'static napi::bindgen_prelude::ClassLayout {
+        &#layout_name
+      }
+
+      static #def_name: napi::bindgen_prelude::ClassDef<#name> = unsafe {
+        napi::bindgen_prelude::ClassDef::new(&#info_name, #layout_fn)
+      };
+
+      unsafe impl napi::bindgen_prelude::NapiClass for #name {
+        type Parent = #parent_type;
+
+        const CLASS: &'static napi::bindgen_prelude::ClassDef<Self> = &#def_name;
+      }
+
+      unsafe impl napi::bindgen_prelude::NapiReceiver for #name {
+        type Access = napi::bindgen_prelude::ClassAccess;
+
+        type Borrow<'a> = napi::bindgen_prelude::ClassBorrow<'a, Self>
+        where
+          Self: 'a;
+
+        type BorrowMut<'a> = napi::bindgen_prelude::ClassBorrowMut<'a, Self>
+        where
+          Self: 'a;
+
+        unsafe fn validate_raw_object<'scope>(
+          scope: &mut napi::bindgen_prelude::Scope<'_, 'scope>,
+          object: napi::bindgen_prelude::sys::napi_value,
+        ) -> napi::Result<(Self::Access, napi::bindgen_prelude::ClassStorageRef<'scope>)> {
+          unsafe { napi::bindgen_prelude::ClassStorageRef::validate_raw_object(
+            scope,
+            object,
+            <Self as napi::bindgen_prelude::NapiClass>::CLASS.info(),
+          ) }
+        }
+
+        unsafe fn ref_from_validated_object<'scope>(
+          storage: napi::bindgen_prelude::ClassStorageRef<'scope>,
+          access: Self::Access,
+        ) -> napi::Result<Self::Borrow<'scope>> {
+          unsafe {
+            napi::bindgen_prelude::ClassBorrow::from_validated_parts(storage, access)
           }
         }
 
-        unsafe fn #drop_fn(data: std::ptr::NonNull<u8>) {
-          unsafe { <#name as napi::bindgen_prelude::ClassChain>::drop_initialized(data) }
+        unsafe fn mut_from_validated_object<'scope>(
+          storage: napi::bindgen_prelude::ClassStorageRef<'scope>,
+          access: Self::Access,
+        ) -> napi::Result<Self::BorrowMut<'scope>> {
+          unsafe {
+            napi::bindgen_prelude::ClassBorrowMut::from_validated_parts(storage, access)
+          }
         }
+      }
+
+      #subclass_impl
+
+      unsafe impl napi::bindgen_prelude::ClassChain for #name {
+        type Layout = #layout_ty;
+
+        const LAYOUT: &'static napi::bindgen_prelude::ClassLayout = &#layout_name;
+
+        unsafe fn write_init(
+          init: napi::bindgen_prelude::ClassInitializer<Self>,
+          dst: std::ptr::NonNull<Self::Layout>,
+        ) {
+          #write_init_body
+        }
+
+        unsafe fn drop_segments(data: std::ptr::NonNull<Self::Layout>) {
+          #drop_segments_body
+        }
+
+        unsafe fn drop_initialized(data: std::ptr::NonNull<u8>) {
+          unsafe {
+            <Self as napi::bindgen_prelude::ClassChain>::drop_segments(data.cast());
+          }
+        }
+      }
+
+      unsafe fn #drop_fn(data: std::ptr::NonNull<u8>) {
+        unsafe { <#name as napi::bindgen_prelude::ClassChain>::drop_initialized(data) }
       }
     }
   }
@@ -1194,13 +1109,13 @@ impl NapiStruct {
 
       let js_name = &field.js_name;
       let mut attribute = super::PROPERTY_ATTRIBUTE_DEFAULT;
-      if field.writable {
+      if field.descriptor.writable {
         attribute |= super::PROPERTY_ATTRIBUTE_WRITABLE;
       }
-      if field.enumerable {
+      if field.descriptor.enumerable {
         attribute |= super::PROPERTY_ATTRIBUTE_ENUMERABLE;
       }
-      if field.configurable {
+      if field.descriptor.configurable {
         attribute |= super::PROPERTY_ATTRIBUTE_CONFIGURABLE;
       }
 
@@ -1218,7 +1133,7 @@ impl NapiStruct {
         (quote! { .with_getter(#getter_name) }).to_tokens(&mut prop);
       }
 
-      if field.writable && field.setter {
+      if field.descriptor.writable && field.setter {
         let setter_name = Ident::new(
           &format!("set_{}", rm_raw_prefix(&field_name)),
           Span::call_site(),
@@ -1863,13 +1778,13 @@ impl NapiImpl {
       methods.push(item.try_to_token_stream()?);
 
       let mut attribute = super::PROPERTY_ATTRIBUTE_DEFAULT;
-      if item.writable {
+      if item.descriptor.writable {
         attribute |= super::PROPERTY_ATTRIBUTE_WRITABLE;
       }
-      if item.enumerable {
+      if item.descriptor.enumerable {
         attribute |= super::PROPERTY_ATTRIBUTE_ENUMERABLE;
       }
-      if item.configurable {
+      if item.descriptor.configurable {
         attribute |= super::PROPERTY_ATTRIBUTE_CONFIGURABLE;
       }
 

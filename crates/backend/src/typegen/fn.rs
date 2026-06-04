@@ -173,7 +173,7 @@ impl FromIterator<FnArg> for FnArgList {
 
 impl ToTypeDef for NapiFn {
   fn to_type_def(&self) -> Option<TypeDef> {
-    if self.skip_typescript
+    if self.ts.skip_typescript
       || self.module_exports
       || self.no_export
       || self.kind == crate::FnKind::PostInit
@@ -182,21 +182,24 @@ impl ToTypeDef for NapiFn {
     }
 
     let prefix = self.gen_ts_func_prefix();
-    let def = match self.ts_type.as_ref() {
+    let def = match self.ts.ts_type.as_ref() {
       Some(ts_type) => format!("{prefix} {name}{ts_type}", name = self.js_name),
       None => format!(
         r#"{prefix} {name}{generic}({args}){ret}"#,
         name = &self.js_name,
         generic = &self
+          .ts
           .ts_generic_types
           .as_ref()
           .map(|g| format!("<{g}>"))
           .unwrap_or_default(),
         args = self
+          .ts
           .ts_args_type
           .clone()
           .unwrap_or_else(|| self.gen_ts_func_args()),
         ret = self
+          .ts
           .ts_return_type
           .clone()
           .map(|t| format!(": {t}"))
