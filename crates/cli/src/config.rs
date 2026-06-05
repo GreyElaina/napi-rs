@@ -3,6 +3,7 @@ use std::path::Path;
 use anyhow::Context;
 use serde::Deserialize;
 
+use crate::shell;
 use crate::target::{Target, parse_triple};
 
 #[derive(Debug, Deserialize, Default)]
@@ -78,8 +79,9 @@ pub fn read_napi_config(
             .with_context(|| format!("Failed to parse config {}", config_path.display()))?;
 
         if pkg_json.napi.is_some() {
-            eprintln!(
-                "Warning: Both napi field in package.json and separate config file found. Config file takes precedence."
+            shell::warn(
+                "both napi field in package.json and separate config file found, \
+                 config file takes precedence",
             );
         }
 
@@ -89,7 +91,7 @@ pub fn read_napi_config(
     // deprecated name field
     if let Some(ref name) = user_config.name {
         if user_config.binary_name.is_none() {
-            eprintln!("Warning: napi.name is deprecated, use napi.binaryName instead.");
+            shell::warn("napi.name is deprecated, use napi.binaryName instead");
             user_config.binary_name = Some(name.clone());
         }
     }

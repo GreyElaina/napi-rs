@@ -9,6 +9,7 @@ use cargo_metadata::Package;
 use sha2::{Digest, Sha256};
 
 use crate::config::{NapiConfig, read_napi_config};
+use crate::shell;
 use crate::js_binding::{create_cjs_binding, create_esm_binding};
 use crate::target::{Target, get_target_linker, get_system_default_target, parse_triple, target_to_env_var};
 use crate::typegen::{DEFAULT_TYPE_DEF_HEADER, process_type_def};
@@ -233,9 +234,9 @@ impl<'a> Builder<'a> {
         });
 
         if !enable_type_def {
-            eprintln!(
-                "Warning: `napi-derive` crate is not used or `type-def` feature is not enabled. \
-                 Skipping .node and .d.ts generation."
+            shell::warn(
+                "`napi-derive` crate is not used or `type-def` feature is not enabled, \
+                 skipping type definition generation",
             );
         }
 
@@ -282,7 +283,7 @@ impl<'a> Builder<'a> {
             let msg = "Missing `crate-type = [\"cdylib\"]` in [lib] config. \
                        The build result will not be available as node addon.";
             if self.bin_name().is_some() {
-                eprintln!("Warning: {msg}");
+                shell::warn(msg);
             } else {
                 bail!("{msg}");
             }
@@ -468,7 +469,7 @@ impl<'a> Builder<'a> {
             bail!("`--use-cross` and `--cross-compile` cannot be used together");
         }
 
-        eprintln!("Running: {cargo} {}", self.args.join(" "));
+        shell::status("Running", format_args!("`{cargo} {}`", self.args.join(" ")));
 
         let mut full_env: HashMap<String, String> = env::vars().collect();
         full_env.extend(self.envs.clone());
@@ -603,7 +604,7 @@ impl<'a> Builder<'a> {
             if let Some(ref header_file) = self.config.dts_header_file {
                 match fs::read_to_string(self.cwd.join(header_file)) {
                     Ok(content) => header = content,
-                    Err(e) => eprintln!("Warning: Failed to read dts header file {header_file}: {e}"),
+                    Err(e) => shell::warn(format_args!("failed to read dts header file {header_file}: {e}")),
                 }
             } else if let Some(h) = dts_header {
                 header = h.to_string();
@@ -731,6 +732,15 @@ pub enum OutputKind {
     Exe,
 }
 
+impl OutputKind {
+    pub fn label(&self) -> &'static str {
+        match self {
+            OutputKind::Node | OutputKind::Exe => "Copied",
+            OutputKind::Dts | OutputKind::Js => "Generated",
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct OutputFile {
     pub kind: OutputKind,
@@ -757,10 +767,10 @@ fn pipe_through_command(cmd: &str, file: &Path) -> anyhow::Result<()> {
         .with_context(|| format!("Failed to run pipe command: {cmd}"))?;
 
     if !status.success() {
-        eprintln!(
-            "Warning: pipe command `{cmd}` exited with code {}",
+        shell::warn(format_args!(
+            "pipe command `{cmd}` exited with code {}",
             status.code().unwrap_or(-1)
-        );
+        ));
     }
     Ok(())
 }

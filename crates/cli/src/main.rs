@@ -1,8 +1,11 @@
 mod build;
 mod config;
 mod js_binding;
+mod shell;
 mod target;
 mod typegen;
+
+use std::env;
 
 use clap::{Parser, Subcommand};
 
@@ -32,9 +35,14 @@ fn main() -> anyhow::Result<()> {
 
     match args.command {
         NapiCommand::Build(options) => {
+            let cwd = env::current_dir().ok();
             let outputs = build::run_build(options)?;
             for output in &outputs {
-                eprintln!("  {:?} → {}", output.kind, output.path.display());
+                let display_path = cwd
+                    .as_deref()
+                    .and_then(|cwd| output.path.strip_prefix(cwd).ok())
+                    .unwrap_or(&output.path);
+                shell::status(output.kind.label(), display_path.display());
             }
             Ok(())
         }
