@@ -435,6 +435,16 @@ impl<T: NapiClass> ClassRef<T> {
     self.storage_ref().access_for(U::CLASS.info())
   }
 
+  pub fn borrow_as<U: NapiClass>(&self) -> Result<ClassBorrow<'_, U>> {
+    let access = self.access_for::<U>()?;
+    unsafe { ClassBorrow::from_validated_parts(self.storage_ref(), access) }
+  }
+
+  pub fn borrow_mut_as<U: NapiClass>(&self) -> Result<ClassBorrowMut<'_, U>> {
+    let access = self.access_for::<U>()?;
+    unsafe { ClassBorrowMut::from_validated_parts(self.storage_ref(), access) }
+  }
+
   /// # Safety
   ///
   /// The caller must hold a borrow from `borrow_cell()` before dereferencing
