@@ -21,9 +21,9 @@ use crate::{
     PromiseFuture, Scope, TypeName, Unknown, ValidateNapiValue, NAPI_AUTO_LENGTH,
   },
   bindgen_runtime::{CallbackDecoder, EnvRecord, IntoJs},
-  check_status, sys,
-  threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode},
-  Env, Error, JsError, JsValue, Result, Status, Value, ValueType,
+  check_status,
+  env::AsyncChannel,
+  sys, Env, Error, JsError, JsValue, Result, Status, Value, ValueType,
 };
 
 pub struct ReadableStream<'env, T> {
@@ -131,21 +131,23 @@ impl<T> ReadableStream<'_, T> {
 
 impl<T: Send + Sync + 'static + for<'env, 'scope> FromJs<'env, 'scope>> ReadableStream<'_, T> {
   pub fn read(&self) -> Result<Reader<T>> {
-    let read_function = self.with_stream_object(|scope, stream, stream_object| {
+    let (read_ref, channel) = self.with_stream_object(|scope, stream, stream_object| {
       let get_reader: Function<'_, (), Object<'_>> =
         scope.get_named_property(&stream_object, "getReader")?;
       let reader = scope.apply(&get_reader, stream, ())?;
       let read: Function<'_, (), PromiseFuture<IteratorValue<T>>> =
         scope.get_named_property(&reader, "read")?;
-      scope
-        .bind_function(&read, reader)?
-        .build_threadsafe_function()
-        .callee_handled::<true>()
-        .weak::<true>()
-        .build()
+      let bound = scope.bind_function(&read, reader)?;
+      let read_ref = ControllerFunctionRef::new(scope, &bound)?;
+      let channel = scope
+        .record()
+        .gc_channel()
+        .ok_or_else(|| Error::new(Status::GenericFailure, "Async driver is not available"))?;
+      Ok((read_ref, channel))
     })?;
     Ok(Reader {
-      inner: read_function,
+      read_ref,
+      channel,
       state: Arc::new((RwLock::new(Ok(None)), AtomicBool::new(false))),
     })
   }
@@ -465,7 +467,8 @@ where
 }
 
 pub struct Reader<T: Send + Sync + 'static + for<'env, 'scope> FromJs<'env, 'scope>> {
-  inner: ThreadsafeFunction<(), PromiseFuture<IteratorValue<T>>, (), Status, true, true>,
+  read_ref: ControllerFunctionRef<(), PromiseFuture<IteratorValue<T>>>,
+  channel: Arc<AsyncChannel>,
   state: Arc<(RwLock<Result<Option<T>>>, AtomicBool)>,
 }
 
@@ -494,59 +497,80 @@ impl<T: Send + Sync + 'static + for<'env, 'scope> FromJs<'env, 'scope>> futures_
     let waker_for_spawn_error = waker.clone();
     let state_for_spawn_error = state.clone();
 
-    self.inner.call_with_return_value(
-      Ok(()),
-      ThreadsafeFunctionCallMode::NonBlocking,
-      move |iterator, env| {
-        let iterator = iterator?;
-        let task = env.spawn_future(async move {
-          let result = iterator.await;
-          let update_result = match result {
-            Ok(iterator) => {
-              if iterator.done {
-                state.1.store(true, Ordering::Relaxed);
-              }
-              if let Some(val) = iterator.value {
-                state
-                  .0
-                  .write()
-                  .map(|mut chunk| {
-                    *chunk = Ok(Some(val));
-                  })
-                  .map_err(|_| Error::new(Status::InvalidArg, "Poisoned lock in Reader::poll_next"))
-              } else {
-                Ok(())
-              }
-            }
-            Err(error) => state_in_catch
-              .0
-              .write()
-              .map(|mut chunk| {
-                *chunk = Err(error);
-              })
-              .map_err(|_| Error::new(Status::InvalidArg, "Poisoned lock in Reader::poll_next")),
+    let read_ref_ptr = self.read_ref.raw as usize;
+
+    self.channel.push(Box::new(move |env_wrapper| {
+      let raw_env = env_wrapper.raw();
+      let ref_ = read_ref_ptr as sys::napi_ref;
+
+      let call_result: Result<()> = unsafe {
+        EnvRecord::enter_scope(raw_env, |scope| {
+          let read_fn = ControllerFunctionRef::<(), PromiseFuture<IteratorValue<T>>> {
+            raw: ref_,
+            marker: PhantomData,
           };
-          if let Err(error) = update_result {
-            if let Ok(mut chunk) = state_in_catch.0.write() {
-              *chunk = Err(error);
+          let read_fn_local = read_fn.borrow(scope)?;
+          let iterator = scope.call(&read_fn_local, ())?;
+          mem::forget(read_fn);
+
+          let task = env_wrapper.spawn_future(async move {
+            let result = iterator.await;
+            let update_result = match result {
+              Ok(iterator) => {
+                if iterator.done {
+                  state.1.store(true, Ordering::Relaxed);
+                }
+                if let Some(val) = iterator.value {
+                  state
+                    .0
+                    .write()
+                    .map(|mut chunk| {
+                      *chunk = Ok(Some(val));
+                    })
+                    .map_err(|_| {
+                      Error::new(Status::InvalidArg, "Poisoned lock in Reader::poll_next")
+                    })
+                } else {
+                  Ok(())
+                }
+              }
+              Err(error) => state_in_catch
+                .0
+                .write()
+                .map(|mut chunk| {
+                  *chunk = Err(error);
+                })
+                .map_err(|_| {
+                  Error::new(Status::InvalidArg, "Poisoned lock in Reader::poll_next")
+                }),
+            };
+            if let Err(error) = update_result {
+              if let Ok(mut chunk) = state_in_catch.0.write() {
+                *chunk = Err(error);
+              }
+            }
+            waker.wake();
+          });
+          match task {
+            Ok(task) => {
+              task.detach();
+            }
+            Err(error) => {
+              if let Ok(mut chunk) = state_for_spawn_error.0.write() {
+                *chunk = Err(error);
+              }
+              waker_for_spawn_error.wake();
             }
           }
-          waker.wake();
-        });
-        match task {
-          Ok(task) => {
-            task.detach();
-          }
-          Err(error) => {
-            if let Ok(mut chunk) = state_for_spawn_error.0.write() {
-              *chunk = Err(error);
-            }
-            waker_for_spawn_error.wake();
-          }
-        }
-        Ok(())
-      },
-    );
+          Ok(())
+        })
+      };
+
+      if let Err(error) = call_result {
+        unsafe { JsError::from(error).throw_into(raw_env) };
+      }
+    }));
+
     let mut chunk = self
       .state
       .0

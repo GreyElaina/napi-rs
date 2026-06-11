@@ -68,8 +68,6 @@ mod env;
 mod error;
 mod js_values;
 mod status;
-#[cfg(feature = "napi4")]
-pub mod threadsafe_function;
 mod value_type;
 
 mod version;

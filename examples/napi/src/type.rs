@@ -1,9 +1,7 @@
 use napi::{
   bindgen_prelude::{Either, Function, PromiseFuture, Scope},
-  threadsafe_function::ThreadsafeFunction,
-  Result, Status,
+  Result,
 };
-use std::sync::Arc;
 
 #[napi]
 pub type CustomU32 = u32;
@@ -46,15 +44,6 @@ pub struct PluginLoadResult {
   pub version: String,
 }
 
-// Test fixture for ThreadsafeFunction with single argument (issue #2726)
-#[napi]
-pub type ExternalLinterLoadPluginCb =
-  Arc<ThreadsafeFunction<String, PluginLoadResult, String, Status, false>>;
-
-#[napi]
-#[allow(unused_parens)]
-pub type ExternalLinterLoadPluginCb2 =
-  Arc<ThreadsafeFunction<(String), PluginLoadResult, (String), Status, false>>;
 
 // Test fixtures for format_js_property_name function
 // These test that property names are correctly quoted/unquoted in TypeScript definitions

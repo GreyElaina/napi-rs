@@ -49,7 +49,6 @@ const createWindowAndReload = async () => {
 async function main() {
   const {
     readFileAsync,
-    callThreadsafeFunction,
     getBufferSlice,
     createExternalBufferSlice,
     createUint8ClampedArrayFromData,
@@ -64,26 +63,6 @@ async function main() {
   const buf = await readFileAsync(__filename)
   assert(FILE_CONTENT === buf.toString('utf8'))
 
-  const value = await new Promise((resolve, reject) => {
-    let i = 0
-    let value = 0
-    callThreadsafeFunction((err, v) => {
-      if (err != null) {
-        reject(err)
-        return
-      }
-      i++
-      value += v
-      if (i === 100) {
-        resolve(value)
-      }
-    })
-  })
-
-  assert(
-    value ===
-      Array.from({ length: 100 }, (_, i) => i).reduce((a, b) => a + b),
-  )
   console.info(createExternalTypedArray())
 
   const stream = await createReadableStream()

@@ -466,6 +466,15 @@ impl EnvData {
   }
 }
 
+impl EnvRecord {
+  #[cfg(feature = "async")]
+  pub(crate) fn gc_channel(&self) -> Option<std::sync::Arc<crate::env::AsyncChannel>> {
+    self.with_data(|data| data.async_driver().map(|d| d.channel().clone()))
+      .ok()
+      .flatten()
+  }
+}
+
 impl UserInstanceData {
   #[doc(hidden)]
   pub fn get<T: 'static>(&self) -> Result<Option<&T>> {

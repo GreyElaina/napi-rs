@@ -1,11 +1,11 @@
 import { Buffer } from 'node:buffer'
-import { exec } from 'node:child_process'
+
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createReadStream } from 'node:fs'
 import { readFile as nodeReadFile } from 'node:fs/promises'
 import { Readable } from 'node:stream'
-import { Subject, take } from 'rxjs'
+
 import Sinon, { spy } from 'sinon'
 
 import 'core-js/features/promise/with-resolvers.js'
@@ -22,7 +22,6 @@ import {
   callFunction,
   callFunctionWithArg,
   callFunctionWithArgAndCtx,
-  createReferenceOnFunction,
   referenceAsCallback,
   contains,
   concatLatin1,
@@ -100,17 +99,6 @@ import {
   createBigInt,
   createBigIntI64,
   bigintGetU64AsString,
-  callThreadsafeFunction,
-  threadsafeFunctionThrowError,
-  threadsafeFunctionThrowErrorWithStatus,
-  threadsafeFunctionBuildThrowErrorWithStatus,
-  threadsafeFunctionClosureCapture,
-  tsfnCallWithCallback,
-  tsfnAsyncCall,
-  tsfnThrowFromJs,
-  tsfnThrowFromJsCatch,
-  tsfnThrowFromJsCatchHandled,
-  tsfnThrowFromJsCatchRecover,
   asyncPlus100,
   getGlobal,
   getUndefined,
@@ -119,7 +107,6 @@ import {
   createSymbol,
   createSymbolFor,
   createSymbolRef,
-  threadsafeFunctionFatalMode,
   createExternal,
   getExternal,
   mutateExternal,
@@ -167,7 +154,6 @@ import {
   testSerdeBufferBytes,
   getBigintJsonValue,
   createObjWithProperty,
-  receiveObjectOnlyFromJs,
   dateToNumber,
   chronoUtcDateToMillis,
   chronoLocalDateToMillis,
@@ -203,13 +189,8 @@ import {
   captureErrorInCallback,
   bigintFromI128,
   bigintFromI64,
-  acceptThreadsafeFunction,
-  acceptThreadsafeFunctionFatal,
-  acceptThreadsafeFunctionTupleArgs,
   promiseInEither,
   runScript,
-  tsfnReturnPromise,
-  tsfnReturnPromiseTimeout,
   returnFromSharedCrate,
   chronoNativeDateTime,
   chronoNativeDateTimeReturn,
@@ -218,8 +199,6 @@ import {
   throwSyntaxError,
   type AliasedStruct,
   returnObjectOnlyToJs,
-  buildThreadsafeFunctionFromFunction,
-  buildThreadsafeFunctionFromFunctionCalleeHandle,
   createOptionalExternal,
   getOptionalExternal,
   mutateOptionalExternal,
@@ -241,7 +220,6 @@ import {
   createExternalBufferSlice,
   createBufferSliceFromCopiedData,
   Reader,
-
   errorMessageContainsNullByte,
   returnCString,
   receiveBufferSliceWithLifetime,
@@ -261,7 +239,6 @@ import {
   createReadableStream,
   createReadableStreamWithObject,
   createReadableStreamFromClass,
-  spawnThreadInThread,
   esmResolve,
   mergeTupleArray,
   TupleToArray,
@@ -269,10 +246,8 @@ import {
   getClassFromArray,
   extendsJavascriptError,
   shutdownRuntime,
-  callAsyncWithUnknownReturnValue,
   shorterScope,
   shorterEscapableScope,
-  tsfnThrowFromJsCallbackContainsTsfn,
   MyJsNamedClass,
   JSOnlyMethodsClass,
   RustOnlyMethodsClass,
@@ -492,7 +467,7 @@ test('structured enum', (t) => {
   t.throws(() => validateStructuredEnumLowercase({ type: 'greeting' } as any))
 })
 
-test('function call', async (t) => {
+test('function call', (t) => {
   t.is(
     call0((...args) => {
       console.error(args)
@@ -540,9 +515,6 @@ test('function call', async (t) => {
     '可乐',
   )
   t.is(ctx3.name, '可乐')
-  const cbSpy = spy()
-  await createReferenceOnFunction(cbSpy)
-  t.is(cbSpy.callCount, 1)
   t.is(
     referenceAsCallback((a, b) => a + b, 42, 10),
     52,
@@ -1728,87 +1700,6 @@ BigIntTest('from i128 i64', (t) => {
   t.is(bigintFromI128(), BigInt('-100'))
 })
 
-Napi4Test('call ThreadsafeFunction', (t) => {
-  let i = 0
-  let value = 0
-  return new Promise((resolve) => {
-    callThreadsafeFunction((err, v) => {
-      t.is(err, null)
-      i++
-      value += v
-      if (i === 100) {
-        resolve()
-        t.is(
-          value,
-          Array.from({ length: 100 }, (_, i) => i).reduce((a, b) => a + b),
-        )
-      }
-    })
-  })
-})
-
-Napi4Test('throw error from ThreadsafeFunction', async (t) => {
-  const throwPromise = new Promise((_, reject) => {
-    threadsafeFunctionThrowError(reject)
-  })
-  const err = await t.throwsAsync(throwPromise)
-  t.is(err?.message, 'ThrowFromNative')
-})
-
-Napi4Test('throw error from ThreadsafeFunction with status', async (t) => {
-  const throwPromise = new Promise((_, reject) => {
-    threadsafeFunctionThrowErrorWithStatus(reject)
-  })
-  const err = await t.throwsAsync(throwPromise)
-  t.is((err as Error & { code?: string })?.code, 'CustomErrorStatus')
-})
-
-Napi4Test(
-  'throw error from ThreadsafeFunction with builder and status',
-  async (t) => {
-    const throwPromise = new Promise((_, reject) => {
-      threadsafeFunctionBuildThrowErrorWithStatus(reject)
-    })
-    const err = await t.throwsAsync(throwPromise)
-    t.is((err as Error & { code?: string })?.code, 'CustomErrorStatus')
-  },
-)
-
-Napi4Test('ThreadsafeFunction closure capture data', (t) => {
-  return new Promise((resolve) => {
-    threadsafeFunctionClosureCapture((value) => {
-      resolve()
-      t.is(value, 'test')
-    })
-  })
-})
-
-Napi4Test('resolve value from thread safe function fatal mode', async (t) => {
-  const tsfnFatalMode = new Promise<boolean>((resolve) => {
-    threadsafeFunctionFatalMode(resolve)
-  })
-  t.true(await tsfnFatalMode)
-})
-
-Napi4Test('throw error from thread safe function fatal mode', (t) => {
-  const p = exec('node ./tsfn-error.cjs', {
-    cwd: __dirname,
-  })
-  let stderr = Buffer.from([])
-  p.stderr?.on('data', (data) => {
-    stderr = Buffer.concat([stderr, Buffer.from(data)])
-  })
-  return new Promise<void>((resolve) => {
-    p.on('exit', (code) => {
-      t.is(code, 1)
-      const stderrMsg = stderr.toString('utf8')
-      console.info(stderrMsg)
-      t.true(stderrMsg.includes(`Error: Failed to convert JavaScript value`))
-      resolve()
-    })
-  })
-})
-
 Napi4Test('await Promise in rust', async (t) => {
   const fx = 20
   const result = await asyncPlus100(
@@ -1824,227 +1715,6 @@ Napi4Test('Promise should reject raw error in rust', async (t) => {
   await t.throwsAsync(() => asyncPlus100(Promise.reject(fxError)), {
     message: fxError.message,
   })
-})
-
-Napi4Test('call ThreadsafeFunction with callback', async (t) => {
-  await t.notThrowsAsync(
-    () =>
-      new Promise<void>((resolve) => {
-        tsfnCallWithCallback(() => {
-          resolve()
-          return 'ReturnFromJavaScriptRawCallback'
-        })
-      }),
-  )
-})
-
-Napi4Test('async call ThreadsafeFunction', async (t) => {
-  await t.notThrowsAsync(() =>
-    tsfnAsyncCall((arg1, arg2, arg3) => {
-      t.is(arg1, 0)
-      t.is(arg2, 1)
-      t.is(arg3, 2)
-      return 'ReturnFromJavaScriptRawCallback'
-    }),
-  )
-})
-
-// https://github.com/napi-rs/napi-rs/issues/2727
-test('provide undefined to tsfn', async (t) => {
-  // @ts-expect-error
-  t.throws(() => tsfnAsyncCall(), {
-    code: 'InvalidArg',
-  })
-})
-
-test('Throw from ThreadsafeFunction JavaScript callback', async (t) => {
-  const errMsg = 'ThrowFromJavaScriptRawCallback'
-  await t.throwsAsync(
-    () =>
-      tsfnThrowFromJs(() => {
-        throw new Error(errMsg)
-      }),
-    {
-      message: errMsg,
-    },
-  )
-
-  await t.throwsAsync(
-    async () => {
-      await tsfnThrowFromJs(() => {
-        const a = {}
-        // @ts-expect-error
-        a.c.d = 2
-        return Promise.resolve(1)
-      })
-      await tsfnThrowFromJsCallbackContainsTsfn(() => {
-        const a = {}
-        // @ts-expect-error
-        a.b.c = 1
-        tsfnThrowFromJs(() => {
-          // @ts-expect-error
-          a.c.d = 2
-          return Promise.resolve(1)
-        })
-        return Promise.resolve(1)
-      })
-    },
-    {
-      message: "Cannot set properties of undefined (setting 'd')",
-    },
-  )
-})
-
-test('call_async_catch catches throw from CalleeHandled=false ThreadsafeFunction', async (t) => {
-  await t.throwsAsync(
-    () =>
-      tsfnThrowFromJsCatch((arg) => {
-        throw new Error(arg)
-      }),
-    {
-      message: 'foo',
-    },
-  )
-})
-
-test('call_async_catch on CalleeHandled=true ThreadsafeFunction propagates throw', async (t) => {
-  await t.throwsAsync(
-    () =>
-      tsfnThrowFromJsCatchHandled((_err, arg) => {
-        throw new Error(arg)
-      }),
-    {
-      message: 'foo',
-    },
-  )
-})
-
-test('call_async_catch copies JS exception fields', async (t) => {
-  const thrown = new Error('foo')
-  // @ts-expect-error custom property on Error
-  thrown.code = 'E_FOO'
-  const err = await t.throwsAsync(() =>
-    tsfnThrowFromJsCatchRecover(() => {
-      throw thrown
-    }),
-  )
-  // @ts-expect-error reading custom property on Error
-  t.is(err?.code, 'E_FOO')
-  t.is(err?.message, 'foo')
-})
-
-Napi4Test('accept ThreadsafeFunction', async (t) => {
-  await new Promise<void>((resolve, reject) => {
-    acceptThreadsafeFunction((err, value) => {
-      if (err) {
-        reject(err)
-      } else {
-        t.is(value, 1)
-        resolve()
-      }
-    })
-  })
-})
-
-Napi4Test('accept ThreadsafeFunction Fatal', async (t) => {
-  await new Promise<void>((resolve) => {
-    acceptThreadsafeFunctionFatal((value) => {
-      t.is(value, 1)
-      resolve()
-    })
-  })
-})
-
-Napi4Test('accept ThreadsafeFunction tuple args', async (t) => {
-  await new Promise<void>((resolve, reject) => {
-    acceptThreadsafeFunctionTupleArgs((err, num, bool, str) => {
-      if (err) {
-        return reject(err)
-      }
-      t.is(num, 1)
-      t.is(bool, false)
-      t.is(str, 'NAPI-RS')
-      resolve()
-    })
-  })
-})
-
-Napi4Test('threadsafe function return Promise and await in Rust', async (t) => {
-  const value = await tsfnReturnPromise((err, value) => {
-    if (err) {
-      throw err
-    }
-    return Promise.resolve(value + 2)
-  })
-  t.is(value, 5)
-  await t.throwsAsync(
-    () =>
-      tsfnReturnPromiseTimeout((err, value) => {
-        if (err) {
-          throw err
-        }
-        return new Promise((resolve) => {
-          setTimeout(() => {
-            resolve(value + 2)
-          }, 300)
-        })
-      }),
-    {
-      message: 'Timeout',
-    },
-  )
-  // trigger Promise.then in Rust after `Promise` is dropped
-  await new Promise((resolve) => setTimeout(resolve, 400))
-})
-
-Napi4Test('call async with unknown return value', async (t) => {
-  await new Promise<number>((resolve, reject) => {
-    return callAsyncWithUnknownReturnValue((err, value) => {
-      if (err) {
-        reject(err)
-      } else {
-        resolve(value)
-        t.is(value, 42)
-        return {}
-      }
-    }).then((result) => {
-      t.is(result, 110)
-    })
-  })
-})
-
-Napi4Test('object only from js', (t) => {
-  return new Promise((resolve, reject) => {
-    receiveObjectOnlyFromJs({
-      count: 100,
-      callback: (err: Error | null, count: number) => {
-        if (err) {
-          reject(err)
-        } else {
-          t.is(count, 100)
-          resolve()
-        }
-      },
-    })
-  })
-})
-
-Napi4Test('build ThreadsafeFunction from Function', (t) => {
-  const subject = new Subject<void>()
-  const fn = (a: number, b: number) => {
-    t.is(a, 1)
-    t.is(b, 2)
-    subject.next()
-    return a * b
-  }
-
-  buildThreadsafeFunctionFromFunction(fn)
-
-  t.notThrows(() => {
-    buildThreadsafeFunctionFromFunctionCalleeHandle(() => {})
-  })
-
-  return subject.pipe(take(3))
 })
 
 Napi4Test('promise in either', async (t) => {
@@ -2224,21 +1894,6 @@ test('readable stream cancellation should cleanup resources', async (t) => {
   // Subsequent reads should return done
   const afterCancel = await reader.read()
   t.true(afterCancel.done)
-})
-
-test('spawnThreadInThread should be fine', async (t) => {
-  await new Promise((resolve, reject) => {
-    spawnThreadInThread((err, num) => {
-      if (err) {
-        reject(err)
-      } else {
-        t.is(num, 42)
-        resolve(void 0)
-      }
-      return 0
-    })
-  })
-  t.pass()
 })
 
 test('should generate correct type def file', async (t) => {

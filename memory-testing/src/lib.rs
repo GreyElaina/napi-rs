@@ -1,9 +1,4 @@
-use std::thread::spawn;
-
-use napi::{
-  bindgen_prelude::*,
-  threadsafe_function::{ThreadsafeCallContext, ThreadsafeFunctionCallMode},
-};
+use napi::bindgen_prelude::*;
 
 #[macro_use]
 extern crate napi_derive;
@@ -115,19 +110,6 @@ impl ChildReference {
   }
 }
 
-#[napi]
-pub fn leaking_func(func: Function<String, String>) -> napi::Result<()> {
-  let tsfn = func
-    .build_threadsafe_function()
-    .weak::<true>()
-    .build_callback(|ctx: ThreadsafeCallContext<String>| Ok(ctx.value))?;
-
-  spawn(move || {
-    tsfn.call("foo".into(), ThreadsafeFunctionCallMode::Blocking);
-  });
-
-  Ok(())
-}
 
 #[napi]
 pub fn buffer_convert(buffer: Buffer) -> Buffer {

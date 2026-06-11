@@ -1,7 +1,6 @@
 use napi::{
-  bindgen_prelude::{Class, EnvRecord, FnArgs, Function, FunctionRef, Promise, Ref, Scope},
-  threadsafe_function::{ThreadsafeFunctionCallMode, UnknownReturnValue},
-  Env, Error, Result, Status,
+  bindgen_prelude::{Class, EnvRecord, FnArgs, Function, FunctionRef, Ref, Scope},
+  Env, Result,
 };
 
 use crate::class::Animal;
@@ -84,18 +83,6 @@ pub fn call_function_with_arg(
   scope.call(&cb, FnArgs::from((arg0, arg1)))
 }
 
-#[napi(ts_return_type = "Promise<void>")]
-pub fn create_reference_on_function<'env>(
-  #[napi(env)] env: &'env Env,
-  cb: Function<'env, (), ()>,
-) -> Result<Promise<'env, ()>> {
-  let tsfn = cb.build_threadsafe_function().build()?;
-  env.spawn_promise(async move {
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    tsfn.call((), ThreadsafeFunctionCallMode::NonBlocking);
-    Ok(())
-  })
-}
 
 #[napi]
 pub fn call_function_with_arg_and_ctx(
@@ -129,57 +116,6 @@ pub fn reference_with_tuple_arg(
   scope.call(&callback, (arg0, arg1))
 }
 
-#[napi]
-pub fn build_threadsafe_function_from_function(
-  callback: Function<FnArgs<(u32, u32)>, u32>,
-) -> Result<()> {
-  let tsfn = callback.build_threadsafe_function().build()?;
-  let jh1 = std::thread::spawn(move || {
-    tsfn.call((1, 2).into(), ThreadsafeFunctionCallMode::NonBlocking);
-  });
-  let tsfn_max_queue_size_1 = callback
-    .build_threadsafe_function()
-    .max_queue_size::<1>()
-    .build()?;
-
-  let jh2 = std::thread::spawn(move || {
-    tsfn_max_queue_size_1.call((1, 2).into(), ThreadsafeFunctionCallMode::NonBlocking);
-  });
-
-  let tsfn_weak = callback
-    .build_threadsafe_function()
-    .weak::<true>()
-    .build()?;
-
-  let jh3 = std::thread::spawn(move || {
-    tsfn_weak.call((1, 2).into(), ThreadsafeFunctionCallMode::NonBlocking);
-  });
-
-  jh1.join().unwrap();
-  jh2.join().unwrap();
-  jh3.join().unwrap();
-
-  Ok(())
-}
-
-#[napi]
-pub fn build_threadsafe_function_from_function_callee_handle(
-  callback: Function<(), ()>,
-) -> Result<()> {
-  let tsfn = callback
-    .build_threadsafe_function()
-    .callee_handled::<true>()
-    .build()?;
-
-  std::thread::spawn(move || {
-    tsfn.call(
-      Err(Error::new(Status::GenericFailure, "run tsfn failed")),
-      ThreadsafeFunctionCallMode::NonBlocking,
-    );
-  });
-
-  Ok(())
-}
 
 #[napi]
 pub fn create_function<'env>(#[napi(env)] env: &'env Env) -> Result<Function<'env, u32, u32>> {
@@ -194,7 +130,7 @@ pub fn no_export_function(input: u32) -> u32 {
 #[napi]
 pub fn optional_callback_types(
   #[napi(scope)] scope: &mut Scope,
-  callback: Option<Function<String, UnknownReturnValue>>,
+  callback: Option<Function<String, ()>>,
 ) -> Result<()> {
   if let Some(callback) = callback {
     scope.call(&callback, "Hello".to_owned())?;

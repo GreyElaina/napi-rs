@@ -10,5 +10,4 @@ pub mod ts_arg_type_1;
 pub mod ts_arg_type_2;
 pub mod ts_arg_type_3;
 pub mod ts_arg_type_4;
-pub mod tsfn_reference_capture;
 pub mod weak_reference_signature;

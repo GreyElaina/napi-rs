@@ -6,11 +6,9 @@ use super::{
   ValidateNapiValue,
 };
 
-#[cfg(feature = "napi4")]
-use crate::threadsafe_function::{ThreadsafeCallContext, ThreadsafeFunction};
 use crate::{
   bindgen_runtime::JsObjectValue, check_pending_exception, check_status, sys, Env, JsValue, Result,
-  Status, ValueType,
+  ValueType,
 };
 
 pub trait IntoJsArgs<'scope> {
@@ -346,21 +344,6 @@ impl<Args, Return> Function<'_, Args, Return> {
     Unknown::from_js(scope, value)
   }
 
-  #[cfg(feature = "napi4")]
-  /// Create a threadsafe function from the JavaScript function.
-  pub fn build_threadsafe_function<T: 'static>(
-    &self,
-  ) -> ThreadsafeFunctionBuilder<'_, T, Args, Return>
-  where
-    Args: 'static,
-  {
-    ThreadsafeFunctionBuilder {
-      env: self.env,
-      value: self.value,
-      _args: std::marker::PhantomData,
-      _return: std::marker::PhantomData,
-    }
-  }
 }
 
 pub type FunctionRef<Args, Return> = Ref<Func<Args, Return>>;
@@ -530,162 +513,6 @@ unsafe fn call_function_raw(
     "Call Function failed"
   )?;
   Ok(raw_return)
-}
-
-#[cfg(feature = "napi4")]
-pub struct ThreadsafeFunctionBuilder<
-  'env,
-  T: 'static,
-  Args: 'static,
-  Return,
-  ErrorStatus: AsRef<str> + From<Status> + Send + 'static = Status,
-  const CalleeHandled: bool = false,
-  const Weak: bool = false,
-  const MaxQueueSize: usize = 0,
-> {
-  pub(crate) env: sys::napi_env,
-  pub(crate) value: sys::napi_value,
-  _args: std::marker::PhantomData<(T, &'env Args, ErrorStatus)>,
-  _return: std::marker::PhantomData<Return>,
-}
-
-#[cfg(feature = "napi4")]
-impl<
-    'env,
-    T: 'static,
-    Args: 'static,
-    Return: for<'value_env, 'value_scope> FromJs<'value_env, 'value_scope>,
-    ErrorStatus: AsRef<str> + From<Status> + Send + 'static,
-    const CalleeHandled: bool,
-    const Weak: bool,
-    const MaxQueueSize: usize,
-  >
-  ThreadsafeFunctionBuilder<'env, T, Args, Return, ErrorStatus, CalleeHandled, Weak, MaxQueueSize>
-{
-  pub fn error_status<NewErrorStatus: AsRef<str> + From<Status> + Send + 'static>(
-    self,
-  ) -> ThreadsafeFunctionBuilder<
-    'env,
-    T,
-    Args,
-    Return,
-    NewErrorStatus,
-    CalleeHandled,
-    Weak,
-    MaxQueueSize,
-  > {
-    ThreadsafeFunctionBuilder {
-      env: self.env,
-      value: self.value,
-      _args: std::marker::PhantomData,
-      _return: std::marker::PhantomData,
-    }
-  }
-
-  pub fn weak<const NewWeak: bool>(
-    self,
-  ) -> ThreadsafeFunctionBuilder<
-    'env,
-    T,
-    Args,
-    Return,
-    ErrorStatus,
-    CalleeHandled,
-    NewWeak,
-    MaxQueueSize,
-  > {
-    ThreadsafeFunctionBuilder {
-      env: self.env,
-      value: self.value,
-      _args: std::marker::PhantomData,
-      _return: std::marker::PhantomData,
-    }
-  }
-
-  pub fn callee_handled<const NewCalleeHandled: bool>(
-    self,
-  ) -> ThreadsafeFunctionBuilder<
-    'env,
-    T,
-    Args,
-    Return,
-    ErrorStatus,
-    NewCalleeHandled,
-    Weak,
-    MaxQueueSize,
-  > {
-    ThreadsafeFunctionBuilder {
-      env: self.env,
-      value: self.value,
-      _args: std::marker::PhantomData,
-      _return: std::marker::PhantomData,
-    }
-  }
-
-  pub fn max_queue_size<const NewMaxQueueSize: usize>(
-    self,
-  ) -> ThreadsafeFunctionBuilder<
-    'env,
-    T,
-    Args,
-    Return,
-    ErrorStatus,
-    CalleeHandled,
-    Weak,
-    NewMaxQueueSize,
-  > {
-    ThreadsafeFunctionBuilder {
-      env: self.env,
-      value: self.value,
-      _args: std::marker::PhantomData,
-      _return: std::marker::PhantomData,
-    }
-  }
-
-  pub fn build_callback<CallJsBackArgs, Callback>(
-    &self,
-    call_js_back: Callback,
-  ) -> Result<
-    ThreadsafeFunction<T, Return, CallJsBackArgs, ErrorStatus, CalleeHandled, Weak, MaxQueueSize>,
-  >
-  where
-    for<'scope> CallJsBackArgs: 'static + IntoJsArgs<'scope>,
-    Callback: Send
-      + 'static
-      + for<'scope> FnMut(ThreadsafeCallContext<'scope, T>) -> Result<CallJsBackArgs>,
-    ErrorStatus: AsRef<str>,
-    ErrorStatus: From<Status>,
-    ErrorStatus: Send + 'static,
-  {
-    ThreadsafeFunction::<T, Return, Args, ErrorStatus, CalleeHandled, Weak, MaxQueueSize>::create(
-      self.env,
-      self.value,
-      call_js_back,
-    )
-  }
-}
-
-#[cfg(feature = "napi4")]
-impl<
-    T: 'static,
-    Return: for<'value_env, 'value_scope> FromJs<'value_env, 'value_scope>,
-    ErrorStatus: AsRef<str> + From<Status> + Send + 'static,
-    const CalleeHandled: bool,
-    const Weak: bool,
-    const MaxQueueSize: usize,
-  > ThreadsafeFunctionBuilder<'_, T, T, Return, ErrorStatus, CalleeHandled, Weak, MaxQueueSize>
-where
-  for<'scope> T: IntoJsArgs<'scope>,
-{
-  pub fn build(
-    &self,
-  ) -> Result<ThreadsafeFunction<T, Return, T, ErrorStatus, CalleeHandled, Weak, MaxQueueSize>> {
-    ThreadsafeFunction::<T, Return, T, ErrorStatus, CalleeHandled, Weak, MaxQueueSize>::create(
-      self.env,
-      self.value,
-      |ctx| Ok(ctx.value),
-    )
-  }
 }
 
 impl<Args, Return> Ref<Func<Args, Return>> {

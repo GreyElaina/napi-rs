@@ -1,5 +1,3 @@
-#[cfg(all(feature = "napi4", not(feature = "noop")))]
-use std::cell::Cell;
 #[cfg(not(feature = "noop"))]
 use std::collections::HashMap;
 #[cfg(not(feature = "noop"))]
@@ -27,8 +25,6 @@ use rustc_hash::FxBuildHasher;
 use crate::bindgen_runtime::ErasedClassDef;
 #[cfg(not(feature = "noop"))]
 use crate::bindgen_runtime::{ClassInfo, ClassKey, ClassStorageRef, EnvRecord, ErasedClassDef};
-#[cfg(all(not(feature = "noop"), feature = "napi4"))]
-use crate::Env;
 #[cfg(all(not(feature = "noop"), feature = "node_version_detect"))]
 use crate::NodeVersion;
 #[cfg(not(feature = "noop"))]
@@ -421,16 +417,6 @@ static MODULE_COUNT: AtomicUsize = AtomicUsize::new(0);
 static FIRST_MODULE_REGISTERED: AtomicBool = AtomicBool::new(false);
 #[cfg(not(feature = "noop"))]
 static MODULE_INIT_ONCE: Once = Once::new();
-#[cfg(all(feature = "napi4", not(feature = "noop")))]
-pub(crate) static CUSTOM_GC_TSFN: std::sync::atomic::AtomicPtr<sys::napi_threadsafe_function__> =
-  std::sync::atomic::AtomicPtr::new(ptr::null_mut());
-#[cfg(all(feature = "napi4", not(feature = "noop")))]
-pub(crate) static CUSTOM_GC_TSFN_DESTROYED: AtomicBool = AtomicBool::new(false);
-thread_local! {
-  #[cfg(all(feature = "napi4", not(feature = "noop")))]
-  // Store thread id of the thread that created the CustomGC ThreadsafeFunction.
-  pub(crate) static THREADS_CAN_ACCESS_ENV: Cell<bool> = const { Cell::new(false) };
-}
 
 #[cfg(not(feature = "noop"))]
 #[inline]
@@ -1012,126 +998,7 @@ unsafe fn napi_register_module_v1_inner(
     return ptr::null_mut();
   }
 
-  #[cfg(feature = "napi4")]
-  {
-    create_custom_gc(env);
-  }
-
   FIRST_MODULE_REGISTERED.store(true, Ordering::SeqCst);
   exports
 }
 
-#[cfg(all(feature = "napi4", not(feature = "noop")))]
-fn create_custom_gc(env: sys::napi_env) {
-  if !FIRST_MODULE_REGISTERED.load(Ordering::SeqCst) {
-    let mut custom_gc_fn = ptr::null_mut();
-    check_status_or_throw!(
-      env,
-      unsafe {
-        sys::napi_create_function(
-          env,
-          c"custom_gc".as_ptr(),
-          9,
-          Some(empty),
-          ptr::null_mut(),
-          &mut custom_gc_fn,
-        )
-      },
-      "Create Custom GC Function in napi_register_module_v1 failed"
-    );
-    let mut async_resource_name = ptr::null_mut();
-    check_status_or_throw!(
-      env,
-      unsafe {
-        sys::napi_create_string_utf8(env, c"CustomGC".as_ptr(), 8, &mut async_resource_name)
-      },
-      "Create async resource string in napi_register_module_v1"
-    );
-    let mut custom_gc_tsfn = ptr::null_mut();
-    check_status_or_throw!(
-      env,
-      unsafe {
-        sys::napi_create_threadsafe_function(
-          env,
-          custom_gc_fn,
-          ptr::null_mut(),
-          async_resource_name,
-          0,
-          1,
-          ptr::null_mut(),
-          Some(custom_gc_finalize),
-          ptr::null_mut(),
-          Some(custom_gc),
-          &mut custom_gc_tsfn,
-        )
-      },
-      "Create Custom GC ThreadsafeFunction in napi_register_module_v1 failed"
-    );
-    check_status_or_throw!(
-      env,
-      unsafe { sys::napi_unref_threadsafe_function(env, custom_gc_tsfn) },
-      "Unref Custom GC ThreadsafeFunction in napi_register_module_v1 failed"
-    );
-    CUSTOM_GC_TSFN.store(custom_gc_tsfn, Ordering::Relaxed);
-  }
-
-  THREADS_CAN_ACCESS_ENV.with(|cell| cell.set(true));
-}
-
-#[cfg(all(feature = "napi4", not(feature = "noop")))]
-#[allow(unused)]
-unsafe extern "C" fn empty(env: sys::napi_env, info: sys::napi_callback_info) -> sys::napi_value {
-  ptr::null_mut()
-}
-
-#[cfg(all(feature = "napi4", not(feature = "noop")))]
-#[allow(unused_variables)]
-unsafe extern "C" fn custom_gc_finalize(
-  env: sys::napi_env,
-  finalize_data: *mut std::ffi::c_void,
-  finalize_hint: *mut std::ffi::c_void,
-) {
-  CUSTOM_GC_TSFN_DESTROYED.store(true, Ordering::SeqCst);
-}
-
-#[cfg(all(feature = "napi4", not(feature = "noop")))]
-// recycle the ArrayBuffer/Buffer Reference if the ArrayBuffer/Buffer is not dropped on the main thread
-unsafe extern "C" fn custom_gc(
-  env: sys::napi_env,
-  js_callback: sys::napi_value,
-  _context: *mut std::ffi::c_void,
-  data: *mut std::ffi::c_void,
-) {
-  if env.is_null() || js_callback.is_null() || data.is_null() {
-    return;
-  }
-
-  let result = unsafe {
-    crate::bindgen_runtime::EnvRecord::enter_scope(env, |scope| custom_gc_impl(scope.env(), data))
-  };
-  if let Err(error) = result {
-    unsafe { JsError::from(error).throw_into(env) };
-  }
-}
-
-#[cfg(all(feature = "napi4", not(feature = "noop")))]
-fn custom_gc_impl(env_wrapper: &Env<'_>, data: *mut std::ffi::c_void) -> Result<()> {
-  if THREADS_CAN_ACCESS_ENV.with(|cell| !cell.get()) {
-    return Ok(());
-  }
-  let env = env_wrapper.raw();
-  let mut ref_count = 0;
-  check_status!(
-    unsafe { sys::napi_reference_unref(env, data.cast(), &mut ref_count) },
-    "Failed to unref Buffer reference in Custom GC"
-  )?;
-  debug_assert!(
-    ref_count == 0,
-    "Buffer reference count in Custom GC is not 0"
-  );
-  check_status!(
-    unsafe { sys::napi_delete_reference(env, data.cast()) },
-    "Failed to delete Buffer reference in Custom GC"
-  )?;
-  Ok(())
-}

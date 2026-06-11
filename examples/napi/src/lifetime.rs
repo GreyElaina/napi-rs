@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use napi::{bindgen_prelude::*, threadsafe_function::UnknownReturnValue, JsString};
+use napi::{bindgen_prelude::*, JsString};
 
 use crate::{class::Animal, r#enum::Kind};
 
@@ -60,7 +60,7 @@ fn create_string<'env>(env: &'env Env, path: &Path) -> Result<JsString<'env>> {
 #[napi]
 pub fn callback_in_spawn<'env>(
   #[napi(env)] env: &mut Env<'env>,
-  callback: Function<Object, UnknownReturnValue>,
+  callback: Function<Object, ()>,
 ) -> Result<()> {
   env.with_scope(|scope| {
     let callback_ref = scope.create_ref(&callback)?;

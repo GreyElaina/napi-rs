@@ -483,17 +483,13 @@ fn is_ts_union_type(rust_ty: &str) -> bool {
 }
 
 // Type constants for function types
-const TSFN_RUST_TY: &str = "ThreadsafeFunction";
 const FUNCTION_TY: &str = "Function";
 const FUNCTION_ARG_TY: &str = "FnArgs";
 const FUNCTION_REF_TY: &str = "FunctionRef";
 
 /// Checks if a Rust type is a generic function type
 fn is_generic_function_type(rust_ty: &str) -> bool {
-  rust_ty == TSFN_RUST_TY
-    || rust_ty == FUNCTION_TY
-    || rust_ty == FUNCTION_ARG_TY
-    || rust_ty == FUNCTION_REF_TY
+  rust_ty == FUNCTION_TY || rust_ty == FUNCTION_ARG_TY || rust_ty == FUNCTION_REF_TY
 }
 
 /// Checks if a type uses TypeScript function type notation
@@ -562,43 +558,6 @@ fn handle_class_input_type(args: &[(String, bool)], rust_ty: String) -> Option<(
     .or_else(|| Some((rust_ty, false)))
 }
 
-/// Handles conversion of ThreadsafeFunction to TypeScript function type
-fn handle_threadsafe_function_type(args: &[(String, bool)]) -> Option<(String, bool)> {
-  let handled_tsfn = match args.get(4) {
-    Some((arg, _)) => arg == "true",
-    _ => true,
-  };
-
-  let fn_args = args
-    .get(2)
-    .or_else(|| args.first())
-    .map(|(arg, _)| {
-      // If the argument is just a type without parameter names (e.g., "string"),
-      // we need to add a parameter name for function signatures
-      if arg.contains(':') || arg.is_empty() {
-        // Already has parameter names or is empty
-        arg.clone()
-      } else {
-        // Single type without parameter name, add one
-        format!("arg: {arg}")
-      }
-    })
-    .unwrap();
-
-  let return_ty = args
-    .get(1)
-    .map(|(ty, _)| ty.clone())
-    .unwrap_or("any".to_owned());
-
-  if handled_tsfn {
-    Some((
-      format!("((err: Error | null, {fn_args}) => {return_ty})"),
-      false,
-    ))
-  } else {
-    Some((format!("(({fn_args}) => {return_ty})"), false))
-  }
-}
 
 /// Handles known types from the KNOWN_TYPES map
 fn handle_known_type(
@@ -677,8 +636,8 @@ fn process_generic_arguments(arguments: &syn::PathArguments, rust_ty: &str) -> V
   let is_ts_union_type = is_ts_union_type(rust_ty);
   let mut is_function_with_lifetime = false;
   // Only `FnArgs<T>` unpacks an inner tuple `T` into variadic positional
-  // params. `Function`, `FunctionRef`, and `ThreadsafeFunction` keep their
-  // `Args` generic as a single value (which may itself be `FnArgs<...>`).
+  // params. `Function` and `FunctionRef` keep their `Args` generic as a
+  // single value (which may itself be `FnArgs<...>`).
   let is_fn_args = rust_ty == FUNCTION_ARG_TY;
   let is_fn_like = is_generic_function_type(rust_ty);
 
@@ -711,7 +670,6 @@ fn process_generic_arguments(arguments: &syn::PathArguments, rust_ty: &str) -> V
             },
           )
         }
-        // const Generic for `ThreadsafeFunction` generic
         syn::GenericArgument::Const(syn::Expr::Lit(syn::ExprLit {
           lit: syn::Lit::Bool(bo),
           ..
@@ -730,8 +688,8 @@ fn process_generic_arguments(arguments: &syn::PathArguments, rust_ty: &str) -> V
   }
 }
 
-/// Normalizes a generic argument of `Function`, `FunctionRef`, or
-/// `ThreadsafeFunction` so it slots into a TypeScript function signature.
+/// Normalizes a generic argument of `Function` or `FunctionRef` so it
+/// slots into a TypeScript function signature.
 ///
 /// - empty tuple `()` → `""` for params, `"void"` for the return slot
 /// - non-empty tuple → wrap as `arg: [T1, T2, ...]` (a single tuple-typed arg)
@@ -805,8 +763,6 @@ fn handle_type_path(
       .with(|c| c.borrow_mut().get(rust_ty.as_str()).cloned())
     {
       Some((t, false))
-    } else if rust_ty == TSFN_RUST_TY {
-      handle_threadsafe_function_type(&args)
     } else {
       handle_generic_type(&rust_ty, &args)
     }

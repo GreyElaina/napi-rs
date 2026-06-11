@@ -5,11 +5,13 @@ use std::mem;
 use std::ops::{Deref, DerefMut};
 use std::ptr::{self, NonNull};
 use std::slice;
+#[cfg(feature = "async")]
+use std::sync::Arc;
 #[cfg(all(debug_assertions, not(windows)))]
 use std::sync::Mutex;
 
-#[cfg(all(feature = "napi4", not(feature = "noop")))]
-use crate::bindgen_prelude::{CUSTOM_GC_TSFN, CUSTOM_GC_TSFN_DESTROYED, THREADS_CAN_ACCESS_ENV};
+#[cfg(feature = "async")]
+use crate::env::AsyncChannel;
 use crate::{
   bindgen_prelude::*, check_status, env::EMPTY_VEC, sys, JsValue, Result, Value, ValueType,
 };
@@ -311,55 +313,51 @@ pub struct Buffer {
   pub(crate) len: usize,
   pub(crate) capacity: usize,
   raw: Option<(sys::napi_ref, sys::napi_env)>,
+  #[cfg(feature = "async")]
+  gc_channel: Option<Arc<AsyncChannel>>,
 }
 
 impl Drop for Buffer {
   fn drop(&mut self) {
-    if let Some((ref_, env)) = self.raw {
+    if let Some((ref_, _env)) = self.raw {
       if ref_.is_null() {
         return;
       }
-      // Buffer is sent to the other thread which is not the JavaScript thread
-      // This only happens with `napi4` feature enabled
-      // We send back the Buffer reference value into the `CustomGC` ThreadsafeFunction callback
-      // and destroy the reference in the thread where registered the `napi_register_module_v1`
-      #[cfg(all(feature = "napi4", not(feature = "noop")))]
-      {
-        if CUSTOM_GC_TSFN_DESTROYED.load(std::sync::atomic::Ordering::SeqCst) {
-          return;
-        }
-        // Check if the current thread is the JavaScript thread
-        if !THREADS_CAN_ACCESS_ENV.with(|cell| cell.get()) {
-          let status = unsafe {
-            sys::napi_call_threadsafe_function(
-              CUSTOM_GC_TSFN.load(std::sync::atomic::Ordering::SeqCst),
-              ref_.cast(),
-              1,
-            )
-          };
-          assert!(
-            status == sys::Status::napi_ok || status == sys::Status::napi_closing,
-            "Call custom GC in Buffer::drop failed {}",
-            Status::from(status)
+      #[cfg(feature = "async")]
+      if let Some(channel) = self.gc_channel.take() {
+        let ref_ptr = ref_ as usize;
+        channel.push(Box::new(move |env_wrapper| {
+          let env = env_wrapper.raw();
+          let ref_ = ref_ptr as sys::napi_ref;
+          let mut ref_count = 0;
+          crate::check_status_or_throw!(
+            env,
+            unsafe { sys::napi_reference_unref(env, ref_, &mut ref_count) },
+            "Failed to unref Buffer reference in GC"
           );
-          return;
-        }
+          crate::check_status_or_throw!(
+            env,
+            unsafe { sys::napi_delete_reference(env, ref_) },
+            "Failed to delete Buffer reference in GC"
+          );
+        }));
+        return;
       }
-      let mut ref_count = 0;
-      check_status_or_throw!(
-        env,
-        unsafe { sys::napi_reference_unref(env, ref_, &mut ref_count) },
-        "Failed to unref Buffer reference in drop"
-      );
-      debug_assert!(
-        ref_count == 0,
-        "Buffer reference count in Buffer::drop is not zero"
-      );
-      check_status_or_throw!(
-        env,
-        unsafe { sys::napi_delete_reference(env, ref_) },
-        "Failed to delete Buffer reference in drop"
-      );
+      #[cfg(not(feature = "async"))]
+      {
+        let env = _env;
+        let mut ref_count = 0;
+        check_status_or_throw!(
+          env,
+          unsafe { sys::napi_reference_unref(env, ref_, &mut ref_count) },
+          "Failed to unref Buffer reference in drop"
+        );
+        check_status_or_throw!(
+          env,
+          unsafe { sys::napi_delete_reference(env, ref_) },
+          "Failed to delete Buffer reference in drop"
+        );
+      }
     } else {
       unsafe { Vec::from_raw_parts(self.inner.as_ptr(), self.len, self.capacity) };
     }
@@ -401,6 +399,8 @@ impl From<Vec<u8>> for Buffer {
       len,
       capacity,
       raw: None,
+      #[cfg(feature = "async")]
+      gc_channel: None,
     }
   }
 }
@@ -495,6 +495,8 @@ impl Buffer {
       len,
       capacity: len,
       raw: Some((ref_, env)),
+      #[cfg(feature = "async")]
+      gc_channel: EnvRecord::current().ok().and_then(|(_, r)| r.gc_channel()),
     })
   }
 }

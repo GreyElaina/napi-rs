@@ -3,11 +3,6 @@ use std::marker::PhantomData;
 use std::mem;
 use std::ops::Deref;
 use std::ptr::{self, NonNull};
-#[cfg(all(feature = "napi4", not(feature = "noop")))]
-use std::sync::atomic::Ordering;
-
-#[cfg(all(feature = "napi4", not(feature = "noop")))]
-use crate::bindgen_prelude::{CUSTOM_GC_TSFN, CUSTOM_GC_TSFN_DESTROYED, THREADS_CAN_ACCESS_ENV};
 use crate::{
   bindgen_prelude::{
     FromJs, IntoJs, JsObjectValue, JsValue, Local, Scope, This, TypeName, Unknown,
@@ -471,6 +466,8 @@ macro_rules! impl_typed_array {
       byte_offset: usize,
       raw: Option<(crate::sys::napi_ref, crate::sys::napi_env)>,
       finalizer_notify: *mut dyn FnOnce(*mut $rust_type, usize),
+      #[cfg(feature = "async")]
+      gc_channel: Option<std::sync::Arc<crate::env::AsyncChannel>>,
     }
 
     /// SAFETY: This is undefined behavior, as the JS side may always modify the underlying buffer,
@@ -488,48 +485,45 @@ macro_rules! impl_typed_array {
 
     impl Drop for $name {
       fn drop(&mut self) {
-        if let Some((ref_, env)) = self.raw {
-          // If the ref is null, the TypedArray has moved its JS reference into a value conversion.
-          // If the env is null, the TypedArray is a copied view whose reference is owned by the copied value.
-          if ref_.is_null() || env.is_null() {
+        if let Some((ref_, _env)) = self.raw {
+          if ref_.is_null() || _env.is_null() {
             return;
           }
-          #[cfg(all(feature = "napi4", not(feature = "noop")))]
-          {
-            if CUSTOM_GC_TSFN_DESTROYED.load(Ordering::SeqCst) {
-              return;
-            }
-            if !THREADS_CAN_ACCESS_ENV.with(|cell| cell.get()) {
-              let status = unsafe {
-                sys::napi_call_threadsafe_function(
-                  CUSTOM_GC_TSFN.load(std::sync::atomic::Ordering::SeqCst),
-                  ref_.cast(),
-                  1,
-                )
-              };
-              assert!(
-                status == sys::Status::napi_ok || status == sys::Status::napi_closing,
-                "Call custom GC in ArrayBuffer::drop failed {}",
-                Status::from(status)
+          #[cfg(feature = "async")]
+          if let Some(channel) = self.gc_channel.take() {
+            let ref_ptr = ref_ as usize;
+            channel.push(Box::new(move |env_wrapper| {
+              let env = env_wrapper.raw();
+              let ref_ = ref_ptr as crate::sys::napi_ref;
+              let mut ref_count = 0;
+              crate::check_status_or_throw!(
+                env,
+                unsafe { sys::napi_reference_unref(env, ref_, &mut ref_count) },
+                "Failed to unref TypedArray reference in GC"
               );
-              return;
-            }
+              crate::check_status_or_throw!(
+                env,
+                unsafe { sys::napi_delete_reference(env, ref_) },
+                "Failed to delete TypedArray reference in GC"
+              );
+            }));
+            return;
           }
-          let mut ref_count = 0;
-          crate::check_status_or_throw!(
-            env,
-            unsafe { sys::napi_reference_unref(env, ref_, &mut ref_count) },
-            "Failed to unref ArrayBuffer reference in drop"
-          );
-          debug_assert!(
-            ref_count == 0,
-            "ArrayBuffer reference count in ArrayBuffer::drop is not zero"
-          );
-          crate::check_status_or_throw!(
-            env,
-            unsafe { sys::napi_delete_reference(env, ref_) },
-            "Failed to delete ArrayBuffer reference in drop"
-          );
+          #[cfg(not(feature = "async"))]
+          {
+            let env = _env;
+            let mut ref_count = 0;
+            crate::check_status_or_throw!(
+              env,
+              unsafe { sys::napi_reference_unref(env, ref_, &mut ref_count) },
+              "Failed to unref ArrayBuffer reference in drop"
+            );
+            crate::check_status_or_throw!(
+              env,
+              unsafe { sys::napi_delete_reference(env, ref_) },
+              "Failed to delete ArrayBuffer reference in drop"
+            );
+          }
           return;
         }
         // If the `finalizer_notify` is not null, it means the data is external, and we call the finalizer instead of the `Vec::from_raw_parts`
@@ -554,6 +548,8 @@ macro_rules! impl_typed_array {
           byte_offset: 0,
           raw: None,
           finalizer_notify: ptr::null_mut::<fn(*mut $rust_type, usize)>(),
+          #[cfg(feature = "async")]
+          gc_channel: None,
         };
         mem::forget(data);
         ret
@@ -571,6 +567,8 @@ macro_rules! impl_typed_array {
           finalizer_notify: ptr::null_mut::<fn(*mut $rust_type, usize)>(),
           raw: None,
           byte_offset: 0,
+          #[cfg(feature = "async")]
+          gc_channel: None,
         };
         mem::forget(data_copied);
         ret
@@ -590,6 +588,8 @@ macro_rules! impl_typed_array {
           finalizer_notify: Box::into_raw(Box::new(notify)),
           raw: None,
           byte_offset: 0,
+          #[cfg(feature = "async")]
+          gc_channel: None,
         }
       }
 
@@ -648,6 +648,10 @@ macro_rules! impl_typed_array {
           byte_offset,
           raw: Some((ref_, env)),
           finalizer_notify: ptr::null_mut::<fn(*mut $rust_type, usize)>(),
+          #[cfg(feature = "async")]
+          gc_channel: crate::bindgen_runtime::EnvRecord::current()
+            .ok()
+            .and_then(|(_, r)| r.gc_channel()),
         })
       }
     }
@@ -883,6 +887,8 @@ macro_rules! impl_typed_array {
             byte_offset: self.byte_offset,
             raw: None,
             finalizer_notify: self.finalizer_notify,
+            #[cfg(feature = "async")]
+            gc_channel: None,
           };
           let hint_ref: &mut $name = Box::leak(Box::new(val_copy));
           let hint_ptr = hint_ref as *mut $name;
@@ -1612,6 +1618,8 @@ impl Uint8Array {
       })),
       byte_offset: 0,
       raw: None,
+      #[cfg(feature = "async")]
+      gc_channel: None,
     };
     mem::forget(s);
     ret

@@ -1,9 +1,6 @@
-use std::{str::FromStr, thread};
+use std::str::FromStr;
 
-use napi::{
-  bindgen_prelude::*,
-  threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode, UnknownReturnValue},
-};
+use napi::bindgen_prelude::*;
 use serde_json::{from_str, to_string};
 
 #[macro_use]
@@ -88,18 +85,6 @@ pub fn bench_blocking<'env>(
   })
 }
 
-#[napi]
-pub fn bench_threadsafe_function(
-  buffer: Buffer,
-  callback: ThreadsafeFunction<u32, UnknownReturnValue>,
-) {
-  thread::spawn(move || {
-    callback.call(
-      Ok(buffer.len() as u32 + 1),
-      ThreadsafeFunctionCallMode::NonBlocking,
-    );
-  });
-}
 
 #[napi]
 pub fn bench_tokio_future<'env>(

@@ -529,14 +529,6 @@ export declare function acceptSlice(fixture: Uint8Array): bigint
 
 export declare function acceptStream(stream: ReadableStream<Uint8Array>): Promise<AcceptedStream>
 
-export declare function acceptThreadsafeFunction(func: ((err: Error | null, arg: number) => any)): void
-
-export declare function acceptThreadsafeFunctionFatal(func: ((arg: number) => void)): void
-
-export declare function acceptThreadsafeFunctionTupleArgs(func: ((err: Error | null, arg0: number, arg1: boolean, arg2: string) => any)): void
-
-export declare function acceptThreadsafeFunctionTupleNoFnArgs(func: ((err: Error | null, arg: [number, boolean, string]) => any)): void
-
 export declare function acceptUint8ClampedSlice(input: Uint8ClampedArray): bigint
 
 export declare function acceptUint8ClampedSliceAndBufferSlice(a: Buffer, b: Uint8ClampedArray): bigint
@@ -623,10 +615,6 @@ export declare function bufferPassThrough(buf: Buffer): Promise<Buffer>
 
 export declare function bufferWithAsyncBlock(buf: Buffer): Promise<number>
 
-export declare function buildThreadsafeFunctionFromFunction(callback: (arg0: number, arg1: number) => number): void
-
-export declare function buildThreadsafeFunctionFromFunctionCalleeHandle(callback: () => void): void
-
 export interface C {
   baz: number
 }
@@ -637,9 +625,7 @@ export declare function call1(callback: (arg: number) => number, arg: number): n
 
 export declare function call2(callback: (arg0: number, arg1: number) => number, arg1: number, arg2: number): number
 
-export declare function callAsyncWithUnknownReturnValue(tsfn: ((err: Error | null, arg: number) => unknown)): Promise<number>
-
-export declare function callbackInSpawn(callback: (arg: object) => unknown): void
+export declare function callbackInSpawn(callback: (arg: object) => void): void
 
 export declare function callbackReturnPromise<T>(functionInput: () => T | Promise<T>, callback: (err: Error | null, result: T) => void): T | Promise<T>
 
@@ -655,13 +641,9 @@ export declare function callFunctionWithArg(cb: (arg0: number, arg1: number) => 
 
 export declare function callFunctionWithArgAndCtx(ctx: Class<Animal>, cb: (arg: string) => void, name: string): void
 
-export declare function callLongThreadsafeFunction(tsfn: ((err: Error | null, arg: number) => unknown)): void
-
 export declare function callRuleHandler(rule: Rule, arg: number): number
 
 export declare function callThenOnPromise(input: Promise<number>): Promise<string>
-
-export declare function callThreadsafeFunction(tsfn: ((err: Error | null, arg: number) => unknown)): void
 
 export declare function callWithNestedFunctionArg(callback: (arg: (arg: number) => number) => number): number
 
@@ -804,8 +786,6 @@ export declare function createReadableStreamFromClass(readableStreamClass: typeo
 
 export declare function createReadableStreamWithObject(): ReadableStream<StreamItem>
 
-export declare function createReferenceOnFunction(cb: () => void): Promise<void>
-
 export declare function createRejectedPromise(message: string): Promise<number>
 
 export declare function createResolvedPromise(value: number): Promise<number>
@@ -910,12 +890,6 @@ export declare function errorMessageContainsNullByte(msg: string): void
 export declare function esmResolve(next: () => Promise<undefined>): Promise<undefined>
 
 export declare function extendsJavascriptError(errorClass: any): void
-
-export type ExternalLinterLoadPluginCb =
-  ((arg: string) => PluginLoadResult)
-
-export type ExternalLinterLoadPluginCb2 =
-  ((arg: string) => PluginLoadResult)
 
 export declare function f32ArrayToArray(input: Float32Array): Array<number>
 
@@ -1090,11 +1064,6 @@ export interface ObjectFieldClassReference {
 
 export declare function objectGetNamedPropertyShouldPerformTypecheck(obj: { foo: number; bar: string; }): void
 
-export interface ObjectOnlyFromJs {
-  count: number
-  callback: ((err: Error | null, arg: number) => any)
-}
-
 export interface ObjectOnlyToJs {
   name: number
   dependencies: any
@@ -1102,7 +1071,7 @@ export interface ObjectOnlyToJs {
 
 export declare function objectWithCApis(): object
 
-export declare function optionalCallbackTypes(callback?: ((arg: string) => unknown) | undefined | null): void
+export declare function optionalCallbackTypes(callback?: ((arg: string) => void) | undefined | null): void
 
 export declare function optionEnd(callback: (arg0: string, arg1?: string | undefined | null) => void): void
 
@@ -1136,12 +1105,6 @@ export declare function passSetToJs(): Set<string>
 export declare function passSetToRust(set: Set<string>): void
 
 export declare function passSetWithHasherToJs(): Set<string>
-
-export interface Pet {
-  name: string
-  kind: number
-  eitherTsfn: string | ((err: Error | null, arg: number) => number)
-}
 
 export interface PluginLoadResult {
   name: string
@@ -1203,8 +1166,6 @@ export declare function receiveClassOrNumber(either: number | Class<JsClassForEi
 export declare function receiveDifferentClass(either: Class<JsClassForEither> | Class<AnotherClassForEither>): number
 
 export declare function receiveMutClassOrNumber(either: number | Class<JsClassForEither>): number
-
-export declare function receiveObjectOnlyFromJs(obj: { count: number, callback: (err: Error | null, count: number) => void }): void
 
 export declare function receiveObjectWithClassField(object: ObjectFieldClassReference): Class<Bird>
 
@@ -1273,8 +1234,6 @@ export type SpanPos =
 
 export declare function spawnFutureLifetime(input: number): Promise<string>
 
-export declare function spawnThreadInThread(tsfn: ((err: Error | null, arg: number) => number)): void
-
 export declare const enum Status {
   Pristine = 'Pristine',
   Loading = 'Loading',
@@ -1339,18 +1298,6 @@ export declare function testSerdeBufferBytes(obj: object): bigint
 
 export declare function testSerdeRoundtrip(data: any): any
 
-export declare function threadsafeFunctionBuildThrowErrorWithStatus(cb: (arg: boolean) => unknown): void
-
-export declare function threadsafeFunctionClosureCapture(func: (arg: string) => void): void
-
-export declare function threadsafeFunctionFatalMode(cb: ((arg: boolean) => unknown)): void
-
-export declare function threadsafeFunctionFatalModeError(cb: ((arg: boolean) => string)): void
-
-export declare function threadsafeFunctionThrowError(cb: ((err: Error | null, arg: boolean) => unknown)): void
-
-export declare function threadsafeFunctionThrowErrorWithStatus(cb: ((err: Error | null, arg: boolean) => unknown)): void
-
 export declare function throwAsyncError(): Promise<void>
 
 export declare function throwError(): void
@@ -1360,28 +1307,6 @@ export declare function throwErrorWithCause(): void
 export declare function throwSyntaxError(error: string, code?: string | undefined | null): void
 
 export declare function toJsObj(): object
-
-export declare function tsfnAsyncCall(func: (arg0: number, arg1: number, arg2: number) => string): Promise<void>
-
-export declare function tsfnCallWithCallback(tsfn: ((err: Error | null, ) => string)): void
-
-export declare function tsfnInEither(pet: Pet): void
-
-export declare function tsfnReturnPromise(func: ((err: Error | null, arg: number) => Promise<number>)): Promise<number>
-
-export declare function tsfnReturnPromiseTimeout(func: ((err: Error | null, arg: number) => Promise<number>)): Promise<number>
-
-export declare function tsfnThrowFromJs(tsfn: ((err: Error | null, arg: number) => Promise<number>)): Promise<number>
-
-export declare function tsfnThrowFromJsCallbackContainsTsfn(tsfn: ((err: Error | null, arg: number) => Promise<number>)): Promise<void>
-
-export declare function tsfnThrowFromJsCatch(tsfn: ((arg0: string) => void)): Promise<void>
-
-export declare function tsfnThrowFromJsCatchHandled(tsfn: ((err: Error | null, arg0: string) => void)): Promise<void>
-
-export declare function tsfnThrowFromJsCatchRecover(tsfn: ((arg0: string) => void)): Promise<void>
-
-export declare function tsfnWeak(tsfn: (() => void)): Promise<void>
 
 export declare function tsRename(a: { foo: number }): string[]
 
