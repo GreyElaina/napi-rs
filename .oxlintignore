@@ -2,3 +2,4 @@
 dist
 target
 bench/**/*.ts
+crates/cli/src/templates/**

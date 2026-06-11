@@ -4,7 +4,7 @@ use anyhow::Context;
 use serde::Deserialize;
 
 use crate::shell;
-use crate::target::{Target, parse_triple};
+use crate::target::parse_triple;
 
 #[derive(Debug, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -27,18 +27,12 @@ pub struct PackageJson {
     pub name: String,
     pub version: String,
     pub napi: Option<UserNapiConfig>,
-    #[serde(flatten)]
-    pub extra: serde_json::Value,
 }
 
 #[derive(Debug)]
 pub struct NapiConfig {
     pub binary_name: String,
     pub package_name: String,
-    pub npm_client: String,
-    pub targets: Vec<Target>,
-    pub const_enum: Option<bool>,
-    pub runtime_string_enum: Option<bool>,
     pub dts_header: Option<String>,
     pub dts_header_file: Option<String>,
     pub package_json: PackageJson,
@@ -56,8 +50,6 @@ pub fn read_napi_config(
     let mut user_config = pkg_json.napi.as_ref().map_or_else(
         UserNapiConfig::default,
         |c| {
-            // serde doesn't give us ownership easily here, so re-parse from the extra field
-            // Actually we already have the reference, let's just clone the fields we need
             UserNapiConfig {
                 binary_name: c.binary_name.clone(),
                 package_name: c.package_name.clone(),
@@ -96,21 +88,15 @@ pub fn read_napi_config(
         }
     }
 
-    let target_strings = user_config.targets.unwrap_or_default();
-    let targets: Vec<Target> = target_strings
-        .iter()
-        .map(|t| parse_triple(t))
-        .collect::<anyhow::Result<_>>()?;
+    for target in user_config.targets.unwrap_or_default() {
+        parse_triple(&target)?;
+    }
 
     Ok(NapiConfig {
         binary_name: user_config
             .binary_name
             .unwrap_or_else(|| "index".to_string()),
         package_name: user_config.package_name.unwrap_or_else(|| pkg_json.name.clone()),
-        npm_client: user_config.npm_client.unwrap_or_else(|| "npm".to_string()),
-        targets,
-        const_enum: user_config.const_enum,
-        runtime_string_enum: user_config.runtime_string_enum,
         dts_header: user_config.dts_header,
         dts_header_file: user_config.dts_header_file,
         package_json: pkg_json,
