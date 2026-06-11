@@ -11,10 +11,9 @@ use std::{
   task::{Context, Poll},
 };
 
-use tokio::sync::Mutex;
-
+use futures::lock::Mutex;
+use futures::stream::StreamExt;
 use futures_core::Stream;
-use tokio_stream::StreamExt;
 
 use crate::{
   bindgen_prelude::{
@@ -491,12 +490,16 @@ impl<T: Send + Sync + 'static + for<'env, 'scope> FromJs<'env, 'scope>> futures_
     let waker = cx.waker().clone();
     let state = self.state.clone();
     let state_in_catch = state.clone();
+
+    let waker_for_spawn_error = waker.clone();
+    let state_for_spawn_error = state.clone();
+
     self.inner.call_with_return_value(
       Ok(()),
       ThreadsafeFunctionCallMode::NonBlocking,
-      move |iterator, _| {
+      move |iterator, env| {
         let iterator = iterator?;
-        crate::spawn(async move {
+        let task = env.spawn_future(async move {
           let result = iterator.await;
           let update_result = match result {
             Ok(iterator) => {
@@ -530,6 +533,17 @@ impl<T: Send + Sync + 'static + for<'env, 'scope> FromJs<'env, 'scope>> futures_
           }
           waker.wake();
         });
+        match task {
+          Ok(task) => {
+            task.detach();
+          }
+          Err(error) => {
+            if let Ok(mut chunk) = state_for_spawn_error.0.write() {
+              *chunk = Err(error);
+            }
+            waker_for_spawn_error.wake();
+          }
+        }
         Ok(())
       },
     );
@@ -714,7 +728,7 @@ fn cancel_callback_impl<S>(env: Env<'_>, info: sys::napi_callback_info) -> Resul
       // Try to take the stream - use try_lock to avoid blocking the event loop.
       // If we can't get the lock (pull is in progress), that's fine - pull will
       // see the cancelled flag and handle cleanup.
-      if let Ok(mut guard) = state.stream.try_lock() {
+      if let Some(mut guard) = state.stream.try_lock() {
         drop(guard.take());
       };
       // Borrowed Arc drops here, decrementing ref count (but not freeing - invoke handles that)
@@ -767,7 +781,7 @@ fn pull_callback_impl<
 
   let state_for_async = state.clone();
 
-  let promise = env_wrapper.spawn_future_with_callback(
+  let promise = env_wrapper.spawn_promise_with(
     async move {
       let mut guard = state_for_async.stream.lock().await;
       if let Some(ref mut stream) = *guard {
@@ -778,6 +792,7 @@ fn pull_callback_impl<
     },
     move |scope, val| {
       // Use inner closure to ensure controller refs close on all paths.
+      let val = val?;
       let result = {
         // Re-check cancelled flag after async work completes to prevent
         // enqueueing if cancel was called while waiting for the next item
@@ -791,7 +806,7 @@ fn pull_callback_impl<
           scope.call(&close_fn, ())?;
           // Stream ended - take the inner stream to free resources early
           // (the Arc itself is freed by the invoke when underlying_source is GC'd)
-          if let Ok(mut guard) = state.stream.try_lock() {
+          if let Some(mut guard) = state.stream.try_lock() {
             let _ = guard.take();
           }
         }
@@ -852,7 +867,7 @@ fn pull_callback_impl_bytes<
 
   let state_for_async = state.clone();
 
-  let promise = env_wrapper.spawn_future_with_callback(
+  let promise = env_wrapper.spawn_promise_with(
     async move {
       let mut guard = state_for_async.stream.lock().await;
       if let Some(ref mut stream) = *guard {
@@ -867,6 +882,7 @@ fn pull_callback_impl_bytes<
     },
     move |scope, val| {
       // Use inner closure to ensure controller refs close on all paths.
+      let val = val?;
       let result = {
         // Re-check cancelled flag after async work completes to prevent
         // enqueueing if cancel was called while waiting for the next item
@@ -882,7 +898,7 @@ fn pull_callback_impl_bytes<
           scope.call(&close_fn, ())?;
           // Stream ended - take the inner stream to free resources early
           // (the Arc itself is freed by the invoke when underlying_source is GC'd)
-          if let Ok(mut guard) = state.stream.try_lock() {
+          if let Some(mut guard) = state.stream.try_lock() {
             let _ = guard.take();
           }
         }

@@ -40,7 +40,7 @@ where
 /// Implement a Iterator for the JavaScript Class.
 /// This feature is an experimental feature and is not yet stable.
 pub trait AsyncGenerator {
-  type Yield: for<'scope> IntoJs<'scope> + Send + 'static;
+  type Yield: for<'scope> IntoJs<'scope> + 'static;
   type Next: for<'env, 'scope> FromJs<'env, 'scope>;
   type Return: for<'env, 'scope> FromJs<'env, 'scope>;
 
@@ -49,7 +49,7 @@ pub trait AsyncGenerator {
   fn next(
     &mut self,
     value: Option<Self::Next>,
-  ) -> impl Future<Output = crate::Result<Option<Self::Yield>>> + Send + 'static + use<Self>;
+  ) -> impl Future<Output = crate::Result<Option<Self::Yield>>> + 'static + use<Self>;
 
   #[allow(unused_variables)]
   /// Implement complete to handle the `AsyncGenerator.return()`
@@ -57,7 +57,7 @@ pub trait AsyncGenerator {
   fn complete(
     &mut self,
     value: Option<Self::Return>,
-  ) -> impl Future<Output = crate::Result<Option<Self::Yield>>> + Send + 'static + use<Self> {
+  ) -> impl Future<Output = crate::Result<Option<Self::Yield>>> + 'static + use<Self> {
     async move { Ok(None) }
   }
 
@@ -68,7 +68,7 @@ pub trait AsyncGenerator {
     &mut self,
     env: Env,
     value: Unknown,
-  ) -> impl Future<Output = crate::Result<Option<Self::Yield>>> + Send + 'static + use<Self> {
+  ) -> impl Future<Output = crate::Result<Option<Self::Yield>>> + 'static + use<Self> {
     let err = value.into();
     async move { Err(err) }
   }
@@ -370,7 +370,8 @@ fn generator_next_fn<T: AsyncGenerator + NapiClass>(
       <T as AsyncGenerator>::next(&mut *generator, input)
     };
 
-    let promise = env.spawn_future_with_callback(item, |_, value| {
+    let promise = env.spawn_promise_with(item, |_, value| {
+      let value = value?;
       Ok(AsyncIteratorResult {
         done: value.is_none(),
         value,
@@ -411,8 +412,9 @@ fn generator_return_impl<T: AsyncGenerator + NapiClass>(
       <T as AsyncGenerator>::complete(&mut *generator, input)
     };
 
-    let promise = env.spawn_future_with_callback(item, |_, value| {
+    let promise = env.spawn_promise_with(item, |_, value| {
       // Per async iterator protocol, return() must ALWAYS set done: true.
+      let value = value?;
       Ok(AsyncIteratorResult { value, done: true })
     })?;
     Ok(promise.inner)
@@ -449,7 +451,8 @@ fn generator_throw_impl<T: AsyncGenerator + NapiClass>(
       let mut generator = unsafe { T::mut_from_validated_object(storage, access)? };
       <T as AsyncGenerator>::catch(&mut *generator, env, thrown)
     };
-    let promise = env.spawn_future_with_callback(caught, |_, value| {
+    let promise = env.spawn_promise_with(caught, |_, value| {
+      let value = value?;
       Ok(AsyncIteratorResult { value, done: false })
     })?;
     Ok(promise.inner)
