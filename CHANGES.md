@@ -343,7 +343,7 @@ This is a **breaking change**: bare `#[napi]` on data-carrying enums now produce
 |--------|-------------|
 | `async_work` | `blocking_work` |
 | `task` (Task trait) | `blocking_work` closures |
-| `tokio_runtime` | removed (external runtime management) |
+| `tokio_runtime` (embedded) | libuv `async` driver in `napi`; optional `napi-runtime-tokio` adapter |
 | `call_context` | `CallbackFrame` / `FrameScope` |
 | `cleanup_env` | `EnvRecord` lifecycle |
 | `sendable_resolver` | removed |
@@ -367,3 +367,92 @@ Methods previously on `Scope` are now on the types themselves:
 | `scope.close_reference(ref)`       | `ref.close(scope)`               |
 | `scope.create_reference(&local)`   | `local.to_ref(scope)`            |
 | `scope.create_weak_reference(&local)` | `local.to_weak_ref(scope)`    |
+
+## 9. Async Runtime (libuv + LocalExecutor)
+
+Upstream (and the earlier fork) embedded a **Tokio `Runtime` in a background thread** when `tokio_rt` / `async` was enabled. Module init started it; `Env::spawn_future` scheduled work on that pool and resolved promises back on the JS thread via `JsDeferred`.
+
+This fork replaces that model with a **per-`napi_env` libuv-driven driver**:
+
+```
+JS thread                         other threads
+   │                                    │
+   │  LocalExecutor polls Runnable      │  channel.push(closure)
+   │  from async_task                   ├──────────────────────────►
+   │                                    │
+   │  uv_async_send → drain queue       │
+   │  → resolve/reject deferred           │
+```
+
+`EnvRecord` owns an `AsyncDriver` (created on first use, torn down with the env). `AsyncChannel` wraps `uv_async_t` for cross-thread dispatch; registered handles are closed via `uv_close` on drop.
+
+### Feature flags
+
+| Before | After |
+|--------|-------|
+| `async = ["tokio_rt"]` | `async = ["async-task", "napi4"]` |
+| `web_stream` depended on `tokio_rt` | `web_stream = ["futures-core", "napi5", "async"]` |
+
+`tokio` remains an **optional dependency** for `tokio_*` feature flags (`tokio_fs`, `tokio_net`, …). It is no longer required to run `#[napi] async fn` exports.
+
+### Breaking API renames
+
+| Removed / old | Replacement |
+|---------------|-------------|
+| `Env::spawn_future` | `Env::spawn_promise` |
+| `Env::spawn_future_with_callback` | `Env::spawn_promise_with` |
+| `Env::spawn_future_with_callback_and_finalize` | `spawn_promise_with` (completion always runs; see below) |
+| `Env::create_deferred` | `Env::deferred` |
+| `#[napi(async_runtime)]` | removed — use `napi-runtime-tokio` if Tokio context is needed |
+| `create_custom_tokio_runtime` / `start_async_runtime` / `shutdown_async_runtime` | removed from `napi` |
+| `within_runtime_if_available` | removed |
+| `napi::tokio::*` re-exports | use `tokio` directly, or `napi-runtime-tokio` for poll integration |
+
+### `spawn_promise_with` completion contract
+
+Codegen and manual callers use a completion callback that receives **`Result<T>`**, not `T`:
+
+```rust
+env.spawn_promise_with(fut, |scope, result| {
+    let value = result?;  // async Err → promise reject
+    Ok(transform(scope, value)?)
+})?;
+```
+
+The completion runs on **success, async `Err`, and panic** paths so `AsyncArgRefs::finalize` always executes. `spawn_promise` is `spawn_promise_with(fut, |_, r| r)`.
+
+If `spawn_future` fails after the deferred handle is created, the promise is **rejected** instead of staying pending.
+
+### `DeferredCompletion` / `JsDeferred`
+
+Promise settle/reject is centralized in `DeferredCompletion` (stack stitching for async errors, `AsyncKeepAlive` for env lifetime). Pending state is held in `Option<PendingState>` and taken before `napi_resolve_deferred` / `napi_reject_deferred`, avoiding false "dropped unsettled" warnings during normal settle.
+
+`JsDeferred::resolve` / `reject` still dispatch through `AsyncChannel` for cross-thread use.
+
+### `napi-runtime-tokio` (new workspace crate)
+
+Tokio is **opt-in** at the addon boundary:
+
+```rust
+#[napi(module_exports)]
+pub fn exports(#[napi(env)] env: Env, export: Object) -> Result<()> {
+    napi_runtime_tokio::install_factory(&env, || {
+        tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap()
+    })?;
+    // ...
+}
+```
+
+| API | Purpose |
+|-----|---------|
+| `install` | Own a `Runtime` for the env's poll context |
+| `install_factory` | Lazy-create `Runtime` on first async poll |
+| `install_handle` / `install_current` | Use an existing Tokio handle |
+
+The driver calls the installed context's `enter()` around each `Runnable` poll so `tokio::fs`, timers, etc. work inside `#[napi] async fn` without embedding Tokio inside `napi` itself.
+
+### Other async-related changes
+
+- `#[napi] async fn` futures no longer require `Send` — they are polled on the main thread.
+- `web_stream` pull paths use `futures::lock::Mutex` and `spawn_promise_with` instead of `tokio::sync::Mutex` + `spawn_future_with_callback`.
+- Module registration no longer calls `start_async_runtime` / `shutdown_async_runtime` on load/unload.
