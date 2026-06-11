@@ -11,9 +11,9 @@ pub use module_register::*;
 use super::sys;
 use crate::Result;
 
-#[cfg(feature = "tokio_rt")]
+#[cfg(feature = "async")]
 pub mod async_iterator;
-#[cfg(feature = "tokio_rt")]
+#[cfg(feature = "async")]
 pub use async_iterator::AsyncGenerator;
 pub(crate) mod callback_info;
 mod env;

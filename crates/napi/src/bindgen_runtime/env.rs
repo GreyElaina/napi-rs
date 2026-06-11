@@ -40,6 +40,8 @@ pub struct EnvRecord {
 pub struct EnvData {
   constructors: ClassConstructorStore,
   user_instance_data: UserInstanceData,
+  #[cfg(feature = "async")]
+  async_driver: Option<crate::env::AsyncDriver>,
 }
 
 #[doc(hidden)]
@@ -106,7 +108,7 @@ impl EnvRecord {
       records
         .entry(key)
         .or_insert_with(|| {
-          let record = Rc::new(Self::new());
+          let record = Rc::new(Self::new(raw));
           Self::install_holder(raw, key).expect("Install napi-rs EnvRecord holder failed");
           record
         })
@@ -315,11 +317,26 @@ impl EnvRecord {
   }
 
   #[doc(hidden)]
-  pub fn new() -> Self {
+  pub fn new(raw: sys::napi_env) -> Self {
+    #[cfg(feature = "async")]
+    let async_driver = {
+      let env = unsafe { Env::from_raw(raw) };
+      match crate::env::AsyncDriver::new(&env) {
+        Ok(driver) => Some(driver),
+        Err(e) => {
+          eprintln!("napi-rs: failed to initialize async driver: {e:?}");
+          None
+        }
+      }
+    };
+    let _ = raw;
+
     Self {
       data: RefCell::new(EnvData {
         constructors: HashMap::new(),
         user_instance_data: UserInstanceData { value: None },
+        #[cfg(feature = "async")]
+        async_driver,
       }),
       deferred_refs: DeferredRefs {
         refs: Cell::new(Vec::new()),
@@ -371,6 +388,15 @@ impl EnvRecord {
 
   fn teardown(&self, env: &mut Env<'_>) {
     let mut first_error = None;
+
+    #[cfg(feature = "async")]
+    {
+      if let Ok(mut data) = self.data.try_borrow_mut() {
+        if let Some(driver) = data.async_driver.take() {
+          driver.teardown(env);
+        }
+      }
+    }
 
     if let Err(error) = self.drain_deferred_refs(env) {
       first_error.get_or_insert(error);
@@ -427,6 +453,16 @@ impl EnvData {
   #[doc(hidden)]
   pub fn user_instance_data_mut(&mut self) -> &mut UserInstanceData {
     &mut self.user_instance_data
+  }
+
+  #[cfg(feature = "async")]
+  pub(crate) fn async_driver(&self) -> Option<&crate::env::AsyncDriver> {
+    self.async_driver.as_ref()
+  }
+
+  #[cfg(feature = "async")]
+  pub(crate) fn async_driver_mut(&mut self) -> Option<&mut crate::env::AsyncDriver> {
+    self.async_driver.as_mut()
   }
 }
 
@@ -766,16 +802,16 @@ impl<'env, 'scope> Scope<'env, 'scope> {
     Ok(keys)
   }
 
-  #[cfg(all(feature = "tokio_rt", feature = "napi4"))]
+  #[cfg(all(feature = "async", feature = "napi4"))]
   pub fn spawn_future<T, F>(&mut self, future: F) -> Result<super::Promise<'scope, T>>
   where
-    T: 'static + Send,
-    F: 'static + Send + std::future::Future<Output = Result<T>>,
+    T: 'static,
+    F: 'static + std::future::Future<Output = Result<T>>,
     for<'local> T: super::IntoJs<'local>,
   {
     use crate::JsValue;
 
-    let promise = self.env.spawn_future(future)?;
+    let promise = self.env.spawn_promise(future)?;
     Ok(unsafe { super::Promise::from_raw(self.env.raw(), promise.raw()) })
   }
 

@@ -456,7 +456,7 @@ impl<'env, 'scope> CallbackFrame<'env, 'scope> {
     generator_factory_on_this::<T>(self.context.scope_mut().env().raw(), js_name, init)
   }
 
-  #[cfg(feature = "tokio_rt")]
+  #[cfg(feature = "async")]
   pub fn construct_async_generator<
     const IsEmptyStructHint: bool,
     T: crate::bindgen_runtime::AsyncGenerator + NapiClass + ClassChain + 'static,
@@ -468,7 +468,7 @@ impl<'env, 'scope> CallbackFrame<'env, 'scope> {
     construct_async_generator_on_this(self.constructor_receiver::<T>()?, js_name, init)
   }
 
-  #[cfg(feature = "tokio_rt")]
+  #[cfg(feature = "async")]
   pub fn async_generator_factory<
     T: crate::bindgen_runtime::AsyncGenerator + NapiClass + ClassChain + 'static,
   >(
@@ -654,7 +654,7 @@ where
   Ok(instance)
 }
 
-#[cfg(feature = "tokio_rt")]
+#[cfg(feature = "async")]
 fn construct_async_generator_on_this<T>(
   receiver: ConstructorReceiver<'_, '_, '_, T>,
   js_name: &str,
@@ -671,7 +671,7 @@ where
   Ok(instance)
 }
 
-#[cfg(feature = "tokio_rt")]
+#[cfg(feature = "async")]
 fn async_generator_factory_on_this<T>(
   env: sys::napi_env,
   js_name: &str,

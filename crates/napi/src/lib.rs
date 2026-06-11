@@ -14,22 +14,19 @@
 //!
 //! The details of N-API versions and support matrix: [Node-API version matrix](https://nodejs.org/api/n-api.html#node-api-version-matrix)
 //!
-//! ### tokio_rt
-//! With `tokio_rt` feature, `napi-rs` provides a ***tokio runtime*** in an additional thread.
-//! And you can easily run tokio `future` in it and return `promise`.
+//! ### async
+//! With `async` feature, `napi-rs` provides a libuv-driven async executor that polls
+//! Rust futures directly on the Node.js event loop.
 //!
 //! ```
-//! use futures::prelude::*;
 //! use napi::bindgen_prelude::*;
-//! use tokio;
 //!
 //! #[napi]
-//! pub fn tokio_readfile(js_filepath: String) -> Result<Buffer> {
-//!     ctx.env().spawn_future_with_callback(
-//!         tokio::fs::read(js_filepath)
-//!           .map(|v| v.map_err(|e| Error::new(Status::Unknown, format!("failed to read file, {}", e)))),
-//!         |_, data| data.into(),
-//!     )
+//! async fn read_file_async(path: String) -> Result<Buffer> {
+//!     tokio::fs::read(path)
+//!         .await
+//!         .map(|v| v.into())
+//!         .map_err(|e| Error::new(Status::Unknown, format!("failed to read file, {}", e)))
 //! }
 //! ```
 //!
@@ -133,11 +130,6 @@ macro_rules! napi_ts {
 }
 
 pub mod bindgen_prelude {
-  #[cfg(feature = "tokio_rt")]
-  pub use crate::env::{
-    block_on, create_custom_tokio_runtime, shutdown_async_runtime, spawn, spawn_blocking,
-    start_async_runtime, within_runtime_if_available,
-  };
   pub use crate::{
     assert_type_of, bindgen_runtime::*, check_pending_exception, check_status,
     check_status_or_throw, error, error::*, sys, type_of, JsError, JsValue, Property,
@@ -145,13 +137,8 @@ pub mod bindgen_prelude {
   };
   #[cfg(feature = "tracing")]
   pub use ::tracing;
-
-  /// If the feature `tokio_rt` has been enabled this will enter the runtime context and
-  /// then call the provided closure. Otherwise it will just call the provided closure.
-  #[cfg(not(all(feature = "tokio_rt", feature = "napi4")))]
-  pub fn within_runtime_if_available<F: FnOnce() -> T, T>(f: F) -> T {
-    f()
-  }
+  #[cfg(feature = "async")]
+  pub use async_task::Task;
 }
 
 fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
@@ -200,7 +187,7 @@ pub mod __private {
   };
   pub use linkme;
 
-  #[cfg(feature = "tokio_rt")]
+  #[cfg(feature = "async")]
   pub use crate::bindgen_runtime::async_iterator::create_async_iterator;
 
   pub use crate::bindgen_runtime::AsyncArgRefs;
@@ -330,13 +317,8 @@ pub mod __private {
   }
 }
 
-#[cfg(feature = "tokio_rt")]
-pub extern crate tokio;
-
 #[cfg(feature = "error_anyhow")]
 pub extern crate anyhow;
 
 #[cfg(feature = "web_stream")]
 pub extern crate futures_core;
-#[cfg(feature = "web_stream")]
-pub extern crate tokio_stream;

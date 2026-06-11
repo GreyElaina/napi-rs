@@ -18,8 +18,6 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Once;
 #[cfg(all(not(feature = "noop"), feature = "node_version_detect"))]
 use std::sync::OnceLock;
-#[cfg(all(feature = "tokio_rt", not(feature = "noop")))]
-use std::sync::RwLock;
 
 use linkme::distributed_slice;
 #[cfg(not(feature = "noop"))]
@@ -423,8 +421,6 @@ static MODULE_COUNT: AtomicUsize = AtomicUsize::new(0);
 static FIRST_MODULE_REGISTERED: AtomicBool = AtomicBool::new(false);
 #[cfg(not(feature = "noop"))]
 static MODULE_INIT_ONCE: Once = Once::new();
-#[cfg(all(feature = "tokio_rt", not(feature = "noop")))]
-static ENV_CLEANUP_HOOK_ADDED: RwLock<bool> = RwLock::new(false);
 #[cfg(all(feature = "napi4", not(feature = "noop")))]
 pub(crate) static CUSTOM_GC_TSFN: std::sync::atomic::AtomicPtr<sys::napi_threadsafe_function__> =
   std::sync::atomic::AtomicPtr::new(ptr::null_mut());
@@ -1019,20 +1015,6 @@ unsafe fn napi_register_module_v1_inner(
   #[cfg(feature = "napi4")]
   {
     create_custom_gc(env);
-    #[cfg(feature = "tokio_rt")]
-    {
-      crate::env::start_async_runtime();
-      let mut env_cleanup_hook_added = ENV_CLEANUP_HOOK_ADDED.write().unwrap();
-      if !*env_cleanup_hook_added {
-        check_status_or_throw!(
-          env,
-          unsafe { sys::napi_add_env_cleanup_hook(env, Some(thread_cleanup), ptr::null_mut()) },
-          "Failed to add env cleanup hook"
-        );
-        *env_cleanup_hook_added = true;
-        drop(env_cleanup_hook_added);
-      }
-    }
   }
 
   FIRST_MODULE_REGISTERED.store(true, Ordering::SeqCst);
@@ -1094,13 +1076,6 @@ fn create_custom_gc(env: sys::napi_env) {
   }
 
   THREADS_CAN_ACCESS_ENV.with(|cell| cell.set(true));
-}
-
-#[cfg(all(not(feature = "noop"), all(feature = "tokio_rt", feature = "napi4"),))]
-unsafe extern "C" fn thread_cleanup(_data: *mut std::ffi::c_void) {
-  if MODULE_COUNT.fetch_sub(1, Ordering::Relaxed) == 1 {
-    crate::env::shutdown_async_runtime();
-  }
 }
 
 #[cfg(all(feature = "napi4", not(feature = "noop")))]

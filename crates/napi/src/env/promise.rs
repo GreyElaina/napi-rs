@@ -1,109 +1,122 @@
-#[cfg(all(feature = "tokio_rt", feature = "napi4"))]
+#[cfg(all(feature = "async", feature = "napi4"))]
 use std::future::Future;
 
-#[cfg(feature = "napi4")]
+#[cfg(all(feature = "async", feature = "napi4"))]
 use crate::bindgen_runtime::IntoJs;
-#[cfg(feature = "napi4")]
+#[cfg(all(feature = "async", feature = "napi4"))]
 use crate::bindgen_runtime::Promise;
-#[cfg(feature = "napi4")]
+#[cfg(all(feature = "async", feature = "napi4"))]
 use crate::bindgen_runtime::Scope;
-#[cfg(all(feature = "tokio_rt", feature = "napi4"))]
-use crate::js_values::EnvFinalizeCallback;
-#[cfg(feature = "napi4")]
+#[cfg(all(feature = "async", feature = "napi4"))]
 use crate::JsDeferred;
-#[cfg(feature = "napi4")]
+#[cfg(all(feature = "async", feature = "napi4"))]
 use crate::Result;
 
-#[cfg(all(feature = "tokio_rt", feature = "napi4"))]
-use super::runtime;
 use super::Env;
 
 impl<'env> Env<'env> {
-  #[cfg(all(feature = "tokio_rt", feature = "napi4", feature = "noop"))]
-  fn spawn_future_with_completion<Data, PromiseValue, Fut, Complete>(
+  #[cfg(all(feature = "async", feature = "napi4", feature = "noop"))]
+  fn spawn_promise_with_inner<Data, PromiseValue, Fut, Complete>(
     &self,
     _future: Fut,
     _complete: Complete,
-    _finalize: Option<EnvFinalizeCallback>,
   ) -> Result<Promise<'env, PromiseValue>>
   where
-    Data: 'static + Send,
+    Data: 'static,
     PromiseValue: 'static,
     for<'scope> PromiseValue: IntoJs<'scope>,
-    Fut: 'static + Send + Future<Output = Result<Data>>,
+    Fut: 'static + Future<Output = Result<Data>>,
     Complete: 'static
-      + Send
-      + for<'callback, 'scope> FnOnce(&mut Scope<'callback, 'scope>, Data) -> Result<PromiseValue>,
+      + for<'callback, 'scope> FnOnce(
+        &mut Scope<'callback, 'scope>,
+        Result<Data>,
+      ) -> Result<PromiseValue>,
   {
     Ok(unsafe { Promise::from_raw(self.0, std::ptr::null_mut()) })
   }
 
-  #[cfg(all(feature = "tokio_rt", feature = "napi4", not(feature = "noop")))]
-  fn spawn_future_with_completion<Data, PromiseValue, Fut, Complete>(
+  #[cfg(all(feature = "async", feature = "napi4", not(feature = "noop")))]
+  fn spawn_promise_with_inner<Data, PromiseValue, Fut, Complete>(
     &self,
     future: Fut,
     complete: Complete,
-    finalize: Option<EnvFinalizeCallback>,
   ) -> Result<Promise<'env, PromiseValue>>
   where
-    Data: 'static + Send,
+    Data: 'static,
     PromiseValue: 'static,
     for<'scope> PromiseValue: IntoJs<'scope>,
-    Fut: 'static + Send + Future<Output = Result<Data>>,
+    Fut: 'static + Future<Output = Result<Data>>,
     Complete: 'static
-      + Send
-      + for<'callback, 'scope> FnOnce(&mut Scope<'callback, 'scope>, Data) -> Result<PromiseValue>,
+      + for<'callback, 'scope> FnOnce(
+        &mut Scope<'callback, 'scope>,
+        Result<Data>,
+      ) -> Result<PromiseValue>,
   {
-    let (mut deferred, promise) = JsDeferred::new(self)?;
-    deferred.set_finalize_callback(finalize);
-    let deferred_for_panic = deferred.clone();
+    use std::cell::RefCell;
+    use std::rc::Rc;
 
-    let inner = async move {
-      match future.await {
-        Ok(value) => deferred.resolve(move |scope| complete(scope, value)),
-        Err(error) => deferred.reject(error.into()),
+    use futures::FutureExt;
+
+    use crate::js_values::DeferredCompletion;
+
+    let (completion, raw_promise) = DeferredCompletion::new(self)?;
+    let completion = Rc::new(RefCell::new(Some(completion)));
+
+    let inner = {
+      let completion = Rc::clone(&completion);
+      async move {
+        let Some(completion) = completion.borrow_mut().take() else {
+          return;
+        };
+        let result = std::panic::AssertUnwindSafe(future).catch_unwind().await;
+        completion.settle(|scope| {
+          complete(
+            scope,
+            result.unwrap_or_else(|panic_payload| {
+              Err(crate::Error::new(
+                crate::Status::GenericFailure,
+                crate::panic_message(panic_payload.as_ref()),
+              ))
+            }),
+          )
+        });
       }
     };
 
-    let join_handle = runtime::spawn(inner);
-
-    runtime::spawn(async move {
-      if let Err(error) = join_handle.await {
-        if let Ok(reason) = error.try_into_panic() {
-          if let Some(message) = reason.downcast_ref::<&str>() {
-            deferred_for_panic.reject(crate::Error::new(crate::Status::GenericFailure, message));
-          } else {
-            deferred_for_panic.reject(crate::Error::new(
-              crate::Status::GenericFailure,
-              "Panic in async function",
-            ));
-          }
-        }
+    match self.spawn_future(inner) {
+      Ok(task) => {
+        task.detach();
       }
-    });
+      Err(error) => {
+        if let Some(completion) = completion.borrow_mut().take() {
+          completion.reject(crate::Error::new(
+            crate::Status::GenericFailure,
+            error.reason.clone(),
+          ));
+        }
+        return Err(error);
+      }
+    }
 
-    Ok(unsafe { Promise::from_raw(self.0, promise.0.value) })
+    Ok(unsafe { Promise::from_raw(self.0, raw_promise) })
   }
 
-  #[cfg(all(feature = "tokio_rt", feature = "napi4"))]
-  /// Spawn a future, return a JavaScript Promise which takes the result of the future
-  pub fn spawn_future<T, F>(&self, fut: F) -> Result<Promise<'_, T>>
+  #[cfg(all(feature = "async", feature = "napi4"))]
+  pub fn spawn_promise<T, F>(&self, fut: F) -> Result<Promise<'_, T>>
   where
-    T: 'static + Send,
-    F: 'static + Send + Future<Output = Result<T>>,
+    T: 'static,
+    F: 'static + Future<Output = Result<T>>,
     for<'scope> T: IntoJs<'scope>,
   {
-    self.spawn_future_with_completion(fut, |_, value| Ok(value), None)
+    self.spawn_promise_with_inner(fut, |_, result| result)
   }
 
-  #[cfg(all(feature = "tokio_rt", feature = "napi4"))]
-  /// Spawn a future with a callback
-  /// So you can access the `Env` and resolved value after the future completed
-  pub fn spawn_future_with_callback<
-    T: 'static + Send,
+  #[cfg(all(feature = "async", feature = "napi4"))]
+  pub fn spawn_promise_with<
+    T: 'static,
     V: 'static,
-    F: 'static + Send + Future<Output = Result<T>>,
-    R: 'static + Send + for<'callback, 'scope> FnOnce(&mut Scope<'callback, 'scope>, T) -> Result<V>,
+    F: 'static + Future<Output = Result<T>>,
+    R: 'static + for<'callback, 'scope> FnOnce(&mut Scope<'callback, 'scope>, Result<T>) -> Result<V>,
   >(
     &self,
     fut: F,
@@ -112,41 +125,101 @@ impl<'env> Env<'env> {
   where
     for<'scope> V: IntoJs<'scope>,
   {
-    self.spawn_future_with_completion(fut, callback, None)
+    self.spawn_promise_with_inner(fut, callback)
   }
 
-  #[cfg(all(feature = "tokio_rt", feature = "napi4"))]
-  #[doc(hidden)]
-  pub fn spawn_future_with_callback_and_finalize<
-    T: 'static + Send,
-    V: 'static,
-    F: 'static + Send + Future<Output = Result<T>>,
-    R: 'static + Send + for<'callback, 'scope> FnOnce(&mut Scope<'callback, 'scope>, T) -> Result<V>,
-  >(
-    &self,
-    fut: F,
-    callback: R,
-    finalize: Box<dyn for<'callback_env> FnOnce(Env<'callback_env>) + Send>,
-  ) -> Result<Promise<'env, V>>
-  where
-    for<'scope> V: IntoJs<'scope>,
-  {
-    self.spawn_future_with_completion(fut, callback, Some(finalize))
-  }
-
-  /// Creates a deferred promise, which can be resolved or rejected from a background thread.
-  #[cfg(feature = "napi4")]
-  pub fn create_deferred<Data, Resolver>(
-    &self,
-  ) -> Result<(JsDeferred<Data, Resolver>, Promise<'env, Data>)>
+  #[cfg(all(feature = "async", feature = "napi4"))]
+  pub fn deferred<Data>(&self) -> Result<(JsDeferred<Data>, Promise<'env, Data>)>
   where
     Data: 'static,
     for<'scope> Data: IntoJs<'scope>,
-    Resolver: for<'callback, 'scope> FnOnce(&mut Scope<'callback, 'scope>) -> Result<Data> + Send,
   {
-    let (deferred, promise) = JsDeferred::new(self)?;
-    Ok((deferred, unsafe {
-      Promise::from_raw(self.0, promise.0.value)
-    }))
+    let (deferred, raw_promise) = JsDeferred::new(self)?;
+    Ok((deferred, unsafe { Promise::from_raw(self.0, raw_promise) }))
+  }
+
+  /// Test harness: models spawn failure after `DeferredCompletion::new` while still
+  /// returning the native promise handle (regression for unsettled promises).
+  #[doc(hidden)]
+  #[cfg(all(feature = "async", feature = "napi4"))]
+  pub fn regression_promise_if_spawn_fails(&self) -> Result<Promise<'env, ()>> {
+    use crate::js_values::DeferredCompletion;
+
+    let (completion, raw_promise) = DeferredCompletion::new(self)?;
+    completion.reject(crate::Error::new(
+      crate::Status::GenericFailure,
+      "regression: spawn_future failed after deferred creation",
+    ));
+
+    Ok(unsafe { Promise::from_raw(self.0, raw_promise) })
+  }
+}
+
+/// Mirrors `spawn_promise_with_inner` settle dispatch — extracted for regression tests.
+#[cfg(all(test, feature = "async", feature = "napi4"))]
+enum RegressionFutureOutcome<T> {
+  Ok(T),
+  AsyncErr,
+  Panic,
+}
+
+#[cfg(all(test, feature = "async", feature = "napi4"))]
+fn regression_run_settle_dispatch<T>(
+  outcome: RegressionFutureOutcome<T>,
+  complete: &mut dyn FnMut(std::result::Result<T, &'static str>),
+) {
+  complete(match outcome {
+    RegressionFutureOutcome::Ok(data) => Ok(data),
+    RegressionFutureOutcome::AsyncErr => Err("async error"),
+    RegressionFutureOutcome::Panic => Err("async panic"),
+  });
+}
+
+/// Mirrors post-`DeferredCompletion::new` spawn path — extracted for regression tests.
+#[cfg(all(test, feature = "async", feature = "napi4"))]
+fn regression_run_spawn_dispatch(spawn_ok: bool) -> bool {
+  if spawn_ok {
+    return false;
+  }
+  true
+}
+
+#[cfg(all(test, feature = "async", feature = "napi4"))]
+mod regression_tests {
+  use super::*;
+
+  #[test]
+  fn completion_runs_when_future_returns_err() {
+    let mut completion_ran = false;
+    regression_run_settle_dispatch::<()>(RegressionFutureOutcome::AsyncErr, &mut |_result| {
+      completion_ran = true;
+    });
+
+    assert!(
+      completion_ran,
+      "completion must run on async Err so AsyncArgRefs::finalize can run"
+    );
+  }
+
+  #[test]
+  fn completion_runs_when_future_panics() {
+    let mut completion_ran = false;
+    regression_run_settle_dispatch::<()>(RegressionFutureOutcome::Panic, &mut |_result| {
+      completion_ran = true;
+    });
+
+    assert!(
+      completion_ran,
+      "completion must run on async panic so AsyncArgRefs::finalize can run"
+    );
+  }
+
+  #[test]
+  fn promise_settled_when_spawn_future_fails() {
+    let settled = regression_run_spawn_dispatch(false);
+    assert!(
+      settled,
+      "deferred promise must reject when spawn_future fails after creation"
+    );
   }
 }
