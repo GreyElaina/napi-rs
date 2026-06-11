@@ -439,7 +439,6 @@ pub fn napi_fn_from_decl(
       ret,
       is_ret_result,
       is_async: asyncness.is_some(),
-      within_async_runtime: opts.async_runtime.is_present(),
       vis,
       kind,
       fn_self,

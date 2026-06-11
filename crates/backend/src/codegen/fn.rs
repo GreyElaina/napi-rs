@@ -238,22 +238,11 @@ impl TryToTokens for NapiFn {
       quote! {}
     };
     let native_call = if !self.is_async {
-      if self.within_async_runtime {
-        quote! {
-          napi::bindgen_prelude::within_runtime_if_available(move || {
-            let #receiver_ret_name = {
-              #receiver(#(#arg_names),*)
-            };
-            #ret
-          })
-        }
-      } else {
-        quote! {
-          let #receiver_ret_name = {
-            #receiver(#(#arg_names),*)
-          };
-          #ret
-        }
+      quote! {
+        let #receiver_ret_name = {
+          #receiver(#(#arg_names),*)
+        };
+        #ret
       }
     } else {
       let call = if self.is_ret_result {
@@ -281,10 +270,12 @@ impl TryToTokens for NapiFn {
       quote! {
         unsafe {
           let async_env = napi::bindgen_prelude::Env::from_raw(env);
-          let promise = async_env.spawn_future_with_callback_and_finalize(
+          let promise = async_env.spawn_promise_with(
             async move { #call },
-            move |_, #receiver_ret_name| #async_completion,
-            Box::new(move |env| napi_args_ref.finalize(env)),
+            move |scope, result| {
+              napi_args_ref.finalize(*scope.env());
+              result.and_then(|#receiver_ret_name| #async_completion)
+            },
           )?;
           Ok(napi::bindgen_prelude::JsValue::raw(&promise))
         }
@@ -431,15 +422,17 @@ impl NapiFn {
           crate::InjectKind::Env => {
             self.resolve_env_arg(&ident, path, needs_class_context, scope_arg.as_ref())
           }
-          crate::InjectKind::This => {
-            self.resolve_this_arg(&ident, path, &cb_this)?
-          }
-          crate::InjectKind::Rest => {
-            self.resolve_rest_arg(&ident, path, js_arg_index, scope_arg.as_ref())?
-          }
+          crate::InjectKind::This => self.resolve_this_arg(&ident, path, &cb_this)?,
+          crate::InjectKind::Rest => self.resolve_rest_arg(&ident, path, js_arg_index, scope_arg.as_ref())?
         }
       } else {
-        self.resolve_regular_arg(&ident, js_arg_index, arg, needs_class_context, scope_arg.as_ref())?
+        self.resolve_regular_arg(
+          &ident,
+          js_arg_index,
+          arg,
+          needs_class_context,
+          scope_arg.as_ref(),
+        )?
       };
       if !r.is_injected {
         js_arg_index += 1;
@@ -657,9 +650,7 @@ impl NapiFn {
       return Ok(r);
     }
 
-    let mut r = ResolvedArg::injected(
-      quote! { frame.this::<napi::bindgen_prelude::This>()? },
-    );
+    let mut r = ResolvedArg::injected(quote! { frame.this::<napi::bindgen_prelude::This>()? });
     r.reference = Some(make_ref(quote! { #cb_this }));
     Ok(r)
   }

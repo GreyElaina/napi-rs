@@ -247,7 +247,6 @@ pub struct FnAttrs {
   pub strict: Flag,
   pub return_if_invalid: Flag,
   pub catch_unwind: Flag,
-  pub async_runtime: Flag,
   pub module_exports: Flag,
 
   pub ts_type: Option<FlexibleString>,

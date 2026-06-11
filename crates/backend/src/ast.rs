@@ -28,7 +28,6 @@ pub struct NapiFn {
   pub ret: Option<syn::Type>,
   pub is_ret_result: bool,
   pub is_async: bool,
-  pub within_async_runtime: bool,
   pub fn_self: Option<FnSelf>,
   pub kind: FnKind,
   pub vis: syn::Visibility,
