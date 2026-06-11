@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
+use futures::stream::TryStreamExt;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use reqwest::{header::HeaderMap, Method};
-use tokio_stream::StreamExt;
 
 #[napi(object)]
 pub struct RequestInit {
@@ -18,19 +18,14 @@ impl<'scope> IntoJs<'scope> for FetchResponse {
 
   fn into_js(self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
     let reqwest_stream = self.0.bytes_stream();
-    let napi_stream = reqwest_stream.filter_map(|chunk| match chunk {
-      Ok(bytes) => {
-        if bytes.is_empty() {
-          return None;
-        }
-
-        Some(Ok(bytes))
-      }
-      Err(e) => Some(Err(napi::Error::new(
-        napi::Status::Unknown,
-        format!("Error reading response stream: {e:?}"),
-      ))),
-    });
+    let napi_stream = reqwest_stream
+      .map_err(|e| {
+        napi::Error::new(
+          napi::Status::Unknown,
+          format!("Error reading response stream: {e:?}"),
+        )
+      })
+      .try_filter(|bytes| futures::future::ready(!bytes.is_empty()));
     let js_stream = ReadableStream::create_with_stream_bytes(scope.env(), napi_stream)?;
     let global = scope.env().get_global()?;
     let response_constructor: Function<ReadableStream<BufferSlice>, ()> =
@@ -48,7 +43,7 @@ pub fn fetch<'env>(
   url: String,
   request_init: Option<RequestInit>,
 ) -> Result<Promise<'env, FetchResponse>> {
-  env.spawn_future(async move {
+  env.spawn_promise(async move {
     let headers: HeaderMap =
       if let Some(headers) = request_init.as_ref().and_then(|init| init.headers.as_ref()) {
         headers

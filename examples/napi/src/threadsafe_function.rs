@@ -154,7 +154,7 @@ pub fn tsfn_async_call<'env>(
 ) -> napi::Result<Promise<'env, ()>> {
   let tsfn = func.build_threadsafe_function().build()?;
 
-  env.spawn_future(async move {
+  env.spawn_promise(async move {
     let msg = tsfn.call_async((0, 1, 2).into()).await?;
     assert_eq!(msg, "ReturnFromJavaScriptRawCallback".to_owned());
     Ok(())
@@ -207,17 +207,12 @@ pub async fn tsfn_return_promise(func: ThreadsafeFunction<u32, PromiseFuture<u32
 pub async fn tsfn_return_promise_timeout(
   func: ThreadsafeFunction<u32, PromiseFuture<u32>>,
 ) -> Result<u32> {
-  use tokio::time::{self, Duration};
-  let promise = func.call_async(Ok(1)).await?;
-  let sleep = time::sleep(Duration::from_nanos(1));
-  tokio::select! {
-    _ = sleep => {
-      Err(Error::new(Status::GenericFailure, "Timeout".to_owned()))
-    }
-    value = promise => {
-      Ok(value? + 2)
-    }
-  }
+  let val = tokio::time::timeout(std::time::Duration::from_millis(100), async {
+    func.call_async(Ok(1)).await?.await
+  })
+  .await
+  .map_err(|_| Error::new(Status::GenericFailure, "Timeout"))??;
+  Ok(val + 2)
 }
 
 #[napi]
@@ -225,7 +220,7 @@ pub fn call_async_with_unknown_return_value<'env>(
   #[napi(env)] env: &'env Env,
   tsfn: ThreadsafeFunction<u32, UnknownRef>,
 ) -> Result<Promise<'env, u32>> {
-  let (deferred, promise) = env.create_deferred::<u32, _>()?;
+  let (deferred, promise) = env.deferred::<u32>()?;
   let status = tsfn.call_with_return_value(
     Ok(42),
     ThreadsafeFunctionCallMode::NonBlocking,
@@ -295,7 +290,7 @@ pub async fn tsfn_throw_from_js_callback_contains_tsfn(
   tsfn: ThreadsafeFunction<u32, PromiseFuture<u32>>,
 ) {
   std::thread::spawn(move || {
-    if let Err(e) = napi::bindgen_prelude::block_on(async move {
+    if let Err(e) = futures::executor::block_on(async move {
       tsfn.call_async(Ok(42)).await?.await?;
       Ok::<(), Error>(())
     }) {

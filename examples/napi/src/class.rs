@@ -157,7 +157,7 @@ impl Bird {
     #[napi(env)] env: &'env Env<'env>,
   ) -> Result<Promise<'env, String>> {
     let name = self.name.clone();
-    env.spawn_future(async move {
+    env.spawn_promise(async move {
       tokio::time::sleep(std::time::Duration::new(1, 0)).await;
       Ok(name)
     })

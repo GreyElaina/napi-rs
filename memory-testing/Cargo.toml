@@ -11,7 +11,7 @@ crate-type = ["cdylib"]
 [dependencies]
 futures = "0.3"
 napi = { path = "../crates/napi", features = [
-  "tokio_rt",
+  "async",
   "serde-json",
   "latin1",
 ] }

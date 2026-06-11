@@ -66,9 +66,9 @@ pub fn test_async<'env>(
           "room": { "id": "ckovh15xa104955sj6r2tqaw1c", "name": "38683b87f2664" }
       }
   });
-  env.spawn_future_with_callback(
+  env.spawn_promise_with(
     async move { Ok(serde_json::to_string(&data).unwrap()) },
-    |_, res| Ok(res),
+    |_, res| res,
   )
 }
 

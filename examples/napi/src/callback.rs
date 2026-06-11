@@ -1,6 +1,6 @@
 use std::{env, format};
 
-use napi::{bindgen_prelude::*, threadsafe_function::ThreadsafeFunctionCallMode, JsValue, Unknown};
+use napi::{bindgen_prelude::*, JsValue, Unknown};
 
 #[napi]
 fn get_cwd<T: Fn(String) -> Result<()>>(callback: T) {
@@ -50,23 +50,21 @@ fn read_file_content() -> Result<String> {
 fn callback_return_promise<'env, 'scope>(
   #[napi(scope)] scope: &mut Scope<'env, 'scope>,
   fn_in: Function<'scope, (), Unknown<'scope>>,
-  fn_out: Function<String, ()>,
+  fn_out: Function<FnArgs<(Null, String)>, ()>,
 ) -> Result<Unknown<'scope>> {
   let ret = scope.call(&fn_in, ())?;
   if ret.is_promise()? {
     let ret = ret.into_js(scope)?;
     let p = PromiseFuture::<String>::from_js(scope, ret)?;
-    let fn_out_tsfn = fn_out
-      .build_threadsafe_function()
-      .callee_handled::<true>()
-      .build()?;
+    let fn_out = scope.create_ref(&fn_out)?;
     scope
-      .spawn_future(async move {
-        let s = p.await;
-        fn_out_tsfn.call(s, ThreadsafeFunctionCallMode::NonBlocking);
-        Ok::<(), Error>(())
+      .env()
+      .spawn_promise_with(p, move |scope, value| {
+        let value = value?;
+        let fn_out = scope.borrow_function(&fn_out)?;
+        scope.call(&fn_out, FnArgs::from((Null, value)))
       })
-      .map(|v| v.to_unknown())
+      .map(|promise| promise.to_unknown())
   } else {
     Ok(ret)
   }
@@ -78,7 +76,7 @@ pub fn callback_return_promise_and_spawn<'env, F: Fn(String) -> Result<PromiseFu
   js_func: F,
 ) -> napi::Result<Promise<'env, String>> {
   let promise = js_func("Hello".to_owned())?;
-  env.spawn_future(async move {
+  env.spawn_promise(async move {
     let resolved = promise.await?;
     Ok::<String, napi::Error>(format!("{} 😼", resolved))
   })

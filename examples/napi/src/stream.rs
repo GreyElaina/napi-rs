@@ -1,8 +1,7 @@
 use bytes::BytesMut;
+use futures::channel::mpsc;
+use futures::stream::StreamExt;
 use napi::bindgen_prelude::*;
-use tokio::sync::mpsc::error::TrySendError;
-use tokio_stream::{wrappers::ReceiverStream, StreamExt};
-use tokio_util::io::{read_buf, StreamReader};
 
 pub struct AcceptedStream(BytesMut);
 
@@ -26,18 +25,12 @@ pub fn accept_stream<'env>(
   stream: ReadableStream<Uint8Array>,
 ) -> Result<Promise<'env, AcceptedStream>> {
   let web_readable_stream = stream.read()?;
-  let mut input = StreamReader::new(web_readable_stream.map(|chunk| {
-    chunk
-      .map(|chunk| bytes::Bytes::copy_from_slice(&chunk))
-      .map_err(|e| std::io::Error::other(e.reason.clone()))
-  }));
-  env.spawn_future(async move {
+  env.spawn_promise(async move {
     let mut bytes_mut = BytesMut::new();
-    loop {
-      let n = read_buf(&mut input, &mut bytes_mut).await?;
-      if n == 0 {
-        break;
-      }
+    futures::pin_mut!(web_readable_stream);
+    while let Some(chunk) = web_readable_stream.next().await {
+      let chunk = chunk?;
+      bytes_mut.extend_from_slice(&chunk);
     }
     Ok(AcceptedStream(bytes_mut))
   })
@@ -47,31 +40,23 @@ pub fn accept_stream<'env>(
 pub fn create_readable_stream<'env>(
   #[napi(env)] env: &'env Env<'env>,
 ) -> Result<ReadableStream<'env, BufferSlice<'env>>> {
-  let (tx, rx) = tokio::sync::mpsc::channel(100);
+  let (mut tx, rx) = mpsc::channel(100);
   std::thread::spawn(move || {
     for _ in 0..100 {
-      match tx.try_send(Ok(b"hello".to_vec())) {
-        Err(TrySendError::Closed(_)) => {
-          panic!("closed");
-        }
-        Err(TrySendError::Full(_)) => {
-          panic!("queue is full");
-        }
-        Ok(_) => {}
+      if tx.try_send(Ok(b"hello".to_vec())).is_err() {
+        break;
       }
     }
   });
-  ReadableStream::create_with_stream_bytes(env, ReceiverStream::new(rx))
+  ReadableStream::create_with_stream_bytes(env, rx)
 }
 
-/// Nested metadata for demonstrating object streaming with complex types
 #[napi(object)]
 #[derive(Default)]
 pub struct NestedMetadata {
   pub hello: String,
 }
 
-/// Example struct demonstrating object streaming with nested types
 #[napi(object)]
 #[derive(Default)]
 pub struct StreamItem {
@@ -80,13 +65,11 @@ pub struct StreamItem {
   pub size: i32,
 }
 
-/// Creates a ReadableStream that emits StreamItem objects.
-/// This demonstrates streaming custom Rust structs to JavaScript.
 #[napi]
 pub fn create_readable_stream_with_object<'env>(
   #[napi(env)] env: &'env Env<'env>,
 ) -> Result<ReadableStream<'env, StreamItem>> {
-  let (tx, rx) = tokio::sync::mpsc::channel(100);
+  let (mut tx, rx) = mpsc::channel(100);
   std::thread::spawn(move || {
     for i in 0..100 {
       let item = StreamItem {
@@ -94,18 +77,12 @@ pub fn create_readable_stream_with_object<'env>(
         name: Default::default(),
         size: i,
       };
-      match tx.try_send(Ok(item)) {
-        Err(TrySendError::Closed(_)) => {
-          panic!("closed");
-        }
-        Err(TrySendError::Full(_)) => {
-          panic!("queue is full");
-        }
-        Ok(_) => {}
+      if tx.try_send(Ok(item)).is_err() {
+        break;
       }
     }
   });
-  ReadableStream::new(env, ReceiverStream::new(rx))
+  ReadableStream::new(env, rx)
 }
 
 #[napi(ts_args_type = "readableStreamClass: typeof ReadableStream")]
@@ -113,23 +90,13 @@ pub fn create_readable_stream_from_class<'env>(
   #[napi(env)] env: &Env,
   readable_stream_class: Unknown<'env>,
 ) -> Result<ReadableStream<'env, BufferSlice<'env>>> {
-  let (tx, rx) = tokio::sync::mpsc::channel(100);
+  let (mut tx, rx) = mpsc::channel(100);
   std::thread::spawn(move || {
     for _ in 0..100 {
-      match tx.try_send(Ok(b"hello".to_vec())) {
-        Err(TrySendError::Closed(_)) => {
-          panic!("closed");
-        }
-        Err(TrySendError::Full(_)) => {
-          panic!("queue is full");
-        }
-        Ok(_) => {}
+      if tx.try_send(Ok(b"hello".to_vec())).is_err() {
+        break;
       }
     }
   });
-  ReadableStream::with_stream_bytes_and_readable_stream_class(
-    env,
-    &readable_stream_class,
-    ReceiverStream::new(rx),
-  )
+  ReadableStream::with_stream_bytes_and_readable_stream_class(env, &readable_stream_class, rx)
 }

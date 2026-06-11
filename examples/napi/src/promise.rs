@@ -41,7 +41,7 @@ pub fn spawn_future_lifetime<'env>(
   #[napi(env)] env: &'env Env,
   input: u32,
 ) -> Result<Promise<'env, String>> {
-  env.spawn_future(async move { Ok(format!("{}", input)) })
+  env.spawn_promise(async move { Ok(format!("{}", input)) })
 }
 
 #[napi]
@@ -51,7 +51,7 @@ pub struct ClassReturnInPromise {}
 pub fn promise_return_class_instance<'env>(
   #[napi(env)] env: &'env Env,
 ) -> Result<Promise<'env, ClassInitializer<ClassReturnInPromise>>> {
-  env.spawn_future(async move { Ok(ClassInitializer::from(ClassReturnInPromise {})) })
+  env.spawn_promise(async move { Ok(ClassInitializer::from(ClassReturnInPromise {})) })
 }
 
 #[napi]

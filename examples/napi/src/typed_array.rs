@@ -85,7 +85,7 @@ fn buffer_with_async_block<'env>(
   buf: Arc<Buffer>,
 ) -> Result<Promise<'env, u32>> {
   let buf_to_dispose = buf.clone();
-  env.spawn_future(async move {
+  env.spawn_promise(async move {
     let len = buf.len() as u32;
     drop(buf_to_dispose);
     Ok(len)

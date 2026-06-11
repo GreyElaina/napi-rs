@@ -10,7 +10,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 napi = { path = "../crates/napi", features = [
-  "tokio_rt",
+  "async",
   "serde-json",
 ] }
 napi-derive = { path = "../crates/macro" }

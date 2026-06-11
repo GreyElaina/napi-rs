@@ -6,8 +6,7 @@
 #![allow(non_snake_case)]
 #![allow(deprecated)]
 
-use napi::bindgen_prelude::create_custom_tokio_runtime;
-use napi::bindgen_prelude::{JsObjectValue, Object, Result, Symbol};
+use napi::bindgen_prelude::{Env, JsObjectValue, Object, Result, Symbol};
 pub use napi_shared::*;
 
 #[macro_use]
@@ -23,19 +22,6 @@ static ALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
 #[global_allocator]
 static ALLOC: mimalloc_safe::MiMalloc = mimalloc_safe::MiMalloc;
 
-#[napi_derive::module_init]
-fn init() {
-  let rt = tokio::runtime::Builder::new_multi_thread()
-    .enable_all()
-    .on_thread_start(|| {
-      let thread = std::thread::current();
-      println!("tokio thread started {:?}", thread.name());
-    })
-    .build()
-    .unwrap();
-  create_custom_tokio_runtime(rt);
-}
-
 #[napi]
 /// This is a const
 pub const DEFAULT_COST: u32 = 12;
@@ -47,7 +33,14 @@ pub const TYPE_SKIPPED_CONST: u32 = 12;
 pub fn shutdown_runtime() {}
 
 #[napi(module_exports)]
-pub fn exports(mut export: Object) -> Result<()> {
+pub fn exports(#[napi(env)] env: Env, mut export: Object) -> Result<()> {
+  napi_runtime_tokio::install_factory(&env, || {
+    tokio::runtime::Builder::new_multi_thread()
+      .enable_all()
+      .build()
+      .expect("Create Tokio runtime failed")
+  })?;
+
   let symbol = Symbol::for_desc("NAPI_RS_SYMBOL");
   export.set_named_property("NAPI_RS_SYMBOL", symbol)?;
   Ok(())
@@ -56,6 +49,7 @@ pub fn exports(mut export: Object) -> Result<()> {
 mod array;
 mod r#async;
 mod async_generator_repro;
+mod async_regression;
 mod bigint;
 mod callback;
 mod class;

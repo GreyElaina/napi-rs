@@ -107,7 +107,7 @@ pub fn bench_tokio_future<'env>(
   buffer: Buffer,
 ) -> Result<Promise<'env, u32>> {
   let len = buffer.len() as u32;
-  env.spawn_future(async move { Ok(len + 1) })
+  env.spawn_promise(async move { Ok(len + 1) })
 }
 
 pub struct QueryEngine {

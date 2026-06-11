@@ -171,7 +171,7 @@ impl AsyncGenerator for AsyncFib {
   fn next(
     &mut self,
     value: Option<Self::Next>,
-  ) -> impl Future<Output = Result<Option<Self::Yield>>> + Send + 'static + use<> {
+  ) -> impl Future<Output = Result<Option<Self::Yield>>> + 'static + use<> {
     // The returned Future must be 'static, so we cannot borrow `self` in the async block.
     // Instead, we compute the result synchronously here, update `self`, and capture
     // only the computed value in the async block. This is safe because:
@@ -224,7 +224,7 @@ impl AsyncGenerator for DelayedCounter {
   fn next(
     &mut self,
     _value: Option<Self::Next>,
-  ) -> impl Future<Output = Result<Option<Self::Yield>>> + Send + 'static + use<> {
+  ) -> impl Future<Output = Result<Option<Self::Yield>>> + 'static + use<> {
     let current = self.current;
     let max = self.max;
     let delay_ms = self.delay_ms;
@@ -273,7 +273,7 @@ impl AsyncGenerator for AsyncDataSource {
   fn next(
     &mut self,
     _value: Option<Self::Next>,
-  ) -> impl Future<Output = Result<Option<Self::Yield>>> + Send + 'static + use<> {
+  ) -> impl Future<Output = Result<Option<Self::Yield>>> + 'static + use<> {
     let item = if self.index < self.data.len() {
       Some(self.data[self.index].clone())
     } else {

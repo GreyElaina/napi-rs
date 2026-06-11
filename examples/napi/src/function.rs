@@ -90,7 +90,7 @@ pub fn create_reference_on_function<'env>(
   cb: Function<'env, (), ()>,
 ) -> Result<Promise<'env, ()>> {
   let tsfn = cb.build_threadsafe_function().build()?;
-  env.spawn_future(async move {
+  env.spawn_promise(async move {
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     tsfn.call((), ThreadsafeFunctionCallMode::NonBlocking);
     Ok(())
