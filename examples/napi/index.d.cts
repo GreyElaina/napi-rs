@@ -580,6 +580,8 @@ export declare function asyncMultiTwo(arg: number): Promise<number>
 
 export declare function asyncPlus100(p: Promise<number>): Promise<number>
 
+export declare function asyncReadFile(path: string): Promise<Buffer>
+
 export declare function asyncReduceBuffer(buf: Buffer): Promise<number>
 
 export declare function asyncResolveArray(inner: number): Promise<Array<number>>
@@ -800,10 +802,6 @@ export declare function createReadableStream(): ReadableStream<Buffer>
 
 export declare function createReadableStreamFromClass(readableStreamClass: typeof ReadableStream): ReadableStream<Buffer>
 
-/**
- * Creates a ReadableStream that emits StreamItem objects.
- * This demonstrates streaming custom Rust structs to JavaScript.
- */
 export declare function createReadableStreamWithObject(): ReadableStream<StreamItem>
 
 export declare function createReferenceOnFunction(cb: () => void): Promise<void>
@@ -1068,7 +1066,6 @@ export type MyPromise =
 export type MyVec =
   Array<number | string>
 
-/** Nested metadata for demonstrating object streaming with complex types */
 export interface NestedMetadata {
   hello: string
 }
@@ -1219,6 +1216,9 @@ export declare function referenceAsCallback(callback: (arg0: number, arg1: numbe
 
 export declare function referenceWithTupleArg(callback: (arg: [number, number]) => number, arg0: number, arg1: number): number
 
+/** Returns a promise created before a forced `spawn_future` failure. */
+export declare function regressionPromiseIfSpawnFails(): Promise<undefined>
+
 export interface RequestInit {
   method?: string
   headers?: Record<string, string>
@@ -1287,7 +1287,6 @@ export declare const enum StatusInValidate {
   Done = 'Done'
 }
 
-/** Example struct demonstrating object streaming with nested types */
 export interface StreamItem {
   something: NestedMetadata
   name: string
@@ -1485,8 +1484,6 @@ export type VoidNullable<T = void> =
 export declare function withAbortController(a: number, b: number, signal: AbortSignal): Promise<number>
 
 export declare function withAbortSignalHandle(signal: AbortSignal): Promise<number>
-
-export declare function withinAsyncRuntimeIfAvailable(): void
 
 export declare function withoutAbortController(a: number, b: number): Promise<number>
 

@@ -2,6 +2,8 @@ import { parentPort } from 'node:worker_threads'
 
 import native from '../index.cjs'
 
+const isWasiTest = !!process.env.WASI_TEST
+
 parentPort.on('message', ({ type }) => {
   switch (type) {
     case 'require':

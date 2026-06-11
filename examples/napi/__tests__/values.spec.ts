@@ -241,7 +241,7 @@ import {
   createExternalBufferSlice,
   createBufferSliceFromCopiedData,
   Reader,
-  withinAsyncRuntimeIfAvailable,
+
   errorMessageContainsNullByte,
   returnCString,
   receiveBufferSliceWithLifetime,
@@ -1426,10 +1426,6 @@ test('async', async (t) => {
   t.is(name, '@examples/napi')
 
   await t.throwsAsync(() => readFileAsync('some_nonexist_path.file'))
-})
-
-test('within async runtime', (t) => {
-  t.notThrows(() => withinAsyncRuntimeIfAvailable())
 })
 
 test('panic in async fn', async (t) => {
