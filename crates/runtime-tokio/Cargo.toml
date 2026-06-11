@@ -1,0 +1,20 @@
+[package]
+authors = ["Akashina <Akashina0103@outlook.com>"]
+description = "Tokio context adapter for napi async exports"
+edition = "2021"
+keywords = ["NodeJS", "Node", "FFI", "NAPI", "n-api"]
+license = "MIT"
+name = "napi-runtime-tokio"
+repository = "https://github.com/napi-rs/napi-rs"
+rust-version.workspace = true
+version = "0.1.0"
+
+[package.metadata.workspaces]
+independent = true
+
+[dependencies]
+napi = { version = "3.9.0", path = "../napi", default-features = false, features = ["async"] }
+tokio = { version = "1.52.3", features = ["rt"] }
+
+[lints]
+workspace = true
