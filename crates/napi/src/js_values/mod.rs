@@ -2,7 +2,7 @@
 mod date;
 #[cfg(feature = "serde-json")]
 mod de;
-#[cfg(feature = "napi4")]
+#[cfg(feature = "async")]
 mod deferred;
 mod either;
 mod external;
@@ -23,7 +23,7 @@ pub use crate::bindgen_prelude::{KeyCollectionMode, KeyConversion, KeyFilter};
 pub use date::*;
 #[cfg(feature = "serde-json")]
 pub use de::De;
-#[cfg(feature = "napi4")]
+#[cfg(feature = "async")]
 pub use deferred::*;
 pub use either::Either;
 pub use external::JsExternal;

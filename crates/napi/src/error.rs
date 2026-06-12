@@ -35,16 +35,6 @@ impl<S: AsRef<str>> Error<S> {
     self.cause = Some(Box::new(cause));
   }
 
-  #[cfg(feature = "napi4")]
-  pub(crate) fn with_status<T: AsRef<str>>(self, status: T) -> Error<T> {
-    Error {
-      status,
-      reason: self.reason,
-      cause: self.cause,
-      js_code: self.js_code,
-      js_name: self.js_name,
-    }
-  }
 }
 
 impl<S: AsRef<str>> std::fmt::Debug for Error<S> {

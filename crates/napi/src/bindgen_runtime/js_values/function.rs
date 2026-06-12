@@ -66,9 +66,6 @@ impl<'scope> JsArgs<'scope> {
     self.values.len()
   }
 
-  pub(crate) fn insert_front(&mut self, value: sys::napi_value) {
-    self.values.insert(0, value);
-  }
 }
 
 impl<'scope, T> IntoJsArgs<'scope> for T

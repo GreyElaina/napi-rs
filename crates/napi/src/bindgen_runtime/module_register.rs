@@ -28,7 +28,9 @@ use crate::bindgen_runtime::{ClassInfo, ClassKey, ClassStorageRef, EnvRecord, Er
 #[cfg(all(not(feature = "noop"), feature = "node_version_detect"))]
 use crate::NodeVersion;
 #[cfg(not(feature = "noop"))]
-use crate::{check_status, check_status_or_throw, JsError};
+use crate::{check_status, JsError};
+#[cfg(all(not(feature = "noop"), feature = "node_version_detect"))]
+use crate::check_status_or_throw;
 use crate::{sys, Property, Result};
 #[cfg(not(feature = "noop"))]
 use crate::{Error, Status};
