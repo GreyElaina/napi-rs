@@ -34,7 +34,7 @@ pub(crate) static EMPTY_VEC: Vec<u8> = vec![];
 mod cleanup;
 mod error;
 mod finalizer;
-mod promise;
+pub(crate) mod promise;
 #[cfg(feature = "async")]
 mod runtime;
 #[cfg(feature = "napi3")]

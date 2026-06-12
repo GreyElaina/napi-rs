@@ -34,6 +34,7 @@ mod set;
 mod stream;
 mod string;
 mod symbol;
+#[cfg(all(feature = "async", feature = "napi4"))]
 mod task;
 mod this;
 pub(crate) mod value_ref;
@@ -59,6 +60,7 @@ pub use scope::*;
 pub use stream::*;
 pub use string::*;
 pub use symbol::*;
+#[cfg(all(feature = "async", feature = "napi4"))]
 pub use task::*;
 pub use this::*;
 pub use value_ref::*;

@@ -63,7 +63,6 @@
 //!
 
 mod bindgen_runtime;
-mod blocking_work;
 mod env;
 mod error;
 mod js_values;
@@ -137,6 +136,9 @@ pub mod bindgen_prelude {
   pub use ::tracing;
   #[cfg(feature = "async")]
   pub use async_task::Task;
+  #[doc(hidden)]
+  #[cfg(all(feature = "async", feature = "napi4"))]
+  pub use crate::env::promise::CancelHandle;
 }
 
 fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {

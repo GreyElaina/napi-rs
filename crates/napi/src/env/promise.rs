@@ -1,5 +1,9 @@
 #[cfg(all(feature = "async", feature = "napi4"))]
+use std::cell::Cell;
+#[cfg(all(feature = "async", feature = "napi4"))]
 use std::future::Future;
+#[cfg(all(feature = "async", feature = "napi4"))]
+use std::rc::Rc;
 
 #[cfg(all(feature = "async", feature = "napi4"))]
 use crate::bindgen_runtime::IntoJs;
@@ -14,13 +18,61 @@ use crate::Result;
 
 use super::Env;
 
+// ---------------------------------------------------------------------------
+// CancelHandle — type-erased cancellation for spawned promises
+// ---------------------------------------------------------------------------
+
+#[doc(hidden)]
+#[cfg(all(feature = "async", feature = "napi4"))]
+pub struct CancelHandle {
+  inner: Rc<Cell<Option<async_task::Task<()>>>>,
+}
+
+#[cfg(all(feature = "async", feature = "napi4"))]
+impl CancelHandle {
+  fn new() -> (Self, CancelSlot) {
+    let inner = Rc::new(Cell::new(None));
+    let slot = CancelSlot {
+      inner: Rc::clone(&inner),
+    };
+    (Self { inner }, slot)
+  }
+
+  pub fn cancel(&self) {
+    if let Some(task) = self.inner.take() {
+      drop(task);
+    }
+  }
+}
+
+#[cfg(all(feature = "async", feature = "napi4"))]
+impl Drop for CancelHandle {
+  fn drop(&mut self) {
+    if let Some(task) = self.inner.take() {
+      task.detach();
+    }
+  }
+}
+
+#[cfg(all(feature = "async", feature = "napi4"))]
+struct CancelSlot {
+  inner: Rc<Cell<Option<async_task::Task<()>>>>,
+}
+
+#[cfg(all(feature = "async", feature = "napi4"))]
+impl CancelSlot {
+  fn arm(self, task: async_task::Task<()>) {
+    self.inner.set(Some(task));
+  }
+}
+
 impl<'env> Env<'env> {
   #[cfg(all(feature = "async", feature = "napi4", feature = "noop"))]
   fn spawn_promise_with_inner<Data, PromiseValue, Fut, Complete>(
     &self,
     _future: Fut,
     _complete: Complete,
-  ) -> Result<Promise<'env, PromiseValue>>
+  ) -> Result<(Promise<'env, PromiseValue>, CancelHandle)>
   where
     Data: 'static,
     PromiseValue: 'static,
@@ -32,7 +84,8 @@ impl<'env> Env<'env> {
         Result<Data>,
       ) -> Result<PromiseValue>,
   {
-    Ok(unsafe { Promise::from_raw(self.0, std::ptr::null_mut()) })
+    let (handle, _slot) = CancelHandle::new();
+    Ok((unsafe { Promise::from_raw(self.0, std::ptr::null_mut()) }, handle))
   }
 
   #[cfg(all(feature = "async", feature = "napi4", not(feature = "noop")))]
@@ -40,7 +93,7 @@ impl<'env> Env<'env> {
     &self,
     future: Fut,
     complete: Complete,
-  ) -> Result<Promise<'env, PromiseValue>>
+  ) -> Result<(Promise<'env, PromiseValue>, CancelHandle)>
   where
     Data: 'static,
     PromiseValue: 'static,
@@ -53,7 +106,6 @@ impl<'env> Env<'env> {
       ) -> Result<PromiseValue>,
   {
     use std::cell::RefCell;
-    use std::rc::Rc;
 
     use futures::FutureExt;
 
@@ -61,6 +113,7 @@ impl<'env> Env<'env> {
 
     let (completion, raw_promise) = DeferredCompletion::new(self)?;
     let completion = Rc::new(RefCell::new(Some(completion)));
+    let (handle, slot) = CancelHandle::new();
 
     let inner = {
       let completion = Rc::clone(&completion);
@@ -85,7 +138,7 @@ impl<'env> Env<'env> {
 
     match self.spawn_future(inner) {
       Ok(task) => {
-        task.detach();
+        slot.arm(task);
       }
       Err(error) => {
         if let Some(completion) = completion.borrow_mut().take() {
@@ -98,7 +151,7 @@ impl<'env> Env<'env> {
       }
     }
 
-    Ok(unsafe { Promise::from_raw(self.0, raw_promise) })
+    Ok((unsafe { Promise::from_raw(self.0, raw_promise) }, handle))
   }
 
   #[cfg(all(feature = "async", feature = "napi4"))]
@@ -108,7 +161,8 @@ impl<'env> Env<'env> {
     F: 'static + Future<Output = Result<T>>,
     for<'scope> T: IntoJs<'scope>,
   {
-    self.spawn_promise_with_inner(fut, |_, result| result)
+    let (promise, _) = self.spawn_promise_with_inner(fut, |_, result| result)?;
+    Ok(promise)
   }
 
   #[cfg(all(feature = "async", feature = "napi4"))]
@@ -122,6 +176,25 @@ impl<'env> Env<'env> {
     fut: F,
     callback: R,
   ) -> Result<Promise<'env, V>>
+  where
+    for<'scope> V: IntoJs<'scope>,
+  {
+    let (promise, _) = self.spawn_promise_with_inner(fut, callback)?;
+    Ok(promise)
+  }
+
+  #[doc(hidden)]
+  #[cfg(all(feature = "async", feature = "napi4"))]
+  pub fn spawn_promise_cancellable<
+    T: 'static,
+    V: 'static,
+    F: 'static + Future<Output = Result<T>>,
+    R: 'static + for<'callback, 'scope> FnOnce(&mut Scope<'callback, 'scope>, Result<T>) -> Result<V>,
+  >(
+    &self,
+    fut: F,
+    callback: R,
+  ) -> Result<(Promise<'env, V>, CancelHandle)>
   where
     for<'scope> V: IntoJs<'scope>,
   {

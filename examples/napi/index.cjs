@@ -704,7 +704,6 @@ module.exports.bigintFromI128 = nativeBinding.bigintFromI128
 module.exports.bigintFromI64 = nativeBinding.bigintFromI64
 module.exports.bigintGetU64AsString = nativeBinding.bigintGetU64AsString
 module.exports.blockingArraybuffer = nativeBinding.blockingArraybuffer
-module.exports.blockingFinally = nativeBinding.blockingFinally
 module.exports.blockingOptionalReturn = nativeBinding.blockingOptionalReturn
 module.exports.blockingReadFile = nativeBinding.blockingReadFile
 module.exports.blockingVoidReturn = nativeBinding.blockingVoidReturn

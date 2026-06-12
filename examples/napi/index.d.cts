@@ -596,13 +596,11 @@ export interface BindingVitePluginMeta {
 
 export declare function blockingArraybuffer(data: Array<number>): Promise<ArrayBuffer>
 
-export declare function blockingFinally(inner: object): Promise<undefined>
-
-export declare function blockingOptionalReturn(): Promise<number | undefined | null>
+export declare function blockingOptionalReturn(): Promise<number | null>
 
 export declare function blockingReadFile(path: string): Promise<Buffer>
 
-export declare function blockingVoidReturn(): Promise<undefined>
+export declare function blockingVoidReturn(): Promise<void>
 
 export type Brush =
   string | Gradient

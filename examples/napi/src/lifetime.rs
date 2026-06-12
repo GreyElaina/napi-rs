@@ -65,8 +65,8 @@ pub fn callback_in_spawn<'env>(
   env.with_scope(|scope| {
     let callback_ref = scope.create_ref(&callback)?;
     scope
-      .blocking(|| Ok(()))
-      .promise(|_, ()| Ok(()))?
+      .env()
+      .spawn_promise(async { Ok(()) })?
       .then(move |scope, ctx| {
         let mut obj = Object::new(scope.env())?;
         obj.set("foo", "bar")?;

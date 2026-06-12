@@ -9,6 +9,17 @@ use crate::{
   TYPEDARRAY_SLICE_TYPES,
 };
 
+fn is_abort_signal_type(ty: &Type) -> bool {
+  match ty {
+    Type::Path(TypePath { path, .. }) => path
+      .segments
+      .last()
+      .map_or(false, |seg| seg.ident == "AbortSignal"),
+    Type::Reference(r) => is_abort_signal_type(&r.elem),
+    _ => false,
+  }
+}
+
 fn callback_this_expr() -> TokenStream {
   quote! { napi::__private::callback_frame_this(&frame) }
 }
@@ -267,17 +278,43 @@ impl TryToTokens for NapiFn {
       } else {
         quote! { Ok(#receiver_ret_name) }
       };
-      quote! {
-        unsafe {
-          let async_env = napi::bindgen_prelude::Env::from_raw(env);
-          let promise = async_env.spawn_promise_with(
-            async move { #call },
-            move |scope, result| {
-              napi_args_ref.finalize(*scope.env());
-              result.and_then(|#receiver_ret_name| #async_completion)
-            },
-          )?;
-          Ok(napi::bindgen_prelude::JsValue::raw(&promise))
+      let abort_signal_arg = self.args.iter().enumerate().find_map(|(i, arg)| {
+        match &arg.kind {
+          NapiFnArgKind::PatType(p) if arg.inject.is_none() => {
+            is_abort_signal_type(&p.ty).then(|| Ident::new(&format!("arg{i}"), Span::call_site()))
+          }
+          _ => None,
+        }
+      });
+      if let Some(signal_ident) = abort_signal_arg {
+        quote! {
+          unsafe {
+            let async_env = napi::bindgen_prelude::Env::from_raw(env);
+            let __napi_abort_cancel_cell = #signal_ident.cancel_cell().clone();
+            let (promise, cancel_handle) = async_env.spawn_promise_cancellable(
+              async move { #call },
+              move |scope, result| {
+                napi_args_ref.finalize(*scope.env());
+                result.and_then(|#receiver_ret_name| #async_completion)
+              },
+            )?;
+            __napi_abort_cancel_cell.set(Some(cancel_handle));
+            Ok(napi::bindgen_prelude::JsValue::raw(&promise))
+          }
+        }
+      } else {
+        quote! {
+          unsafe {
+            let async_env = napi::bindgen_prelude::Env::from_raw(env);
+            let promise = async_env.spawn_promise_with(
+              async move { #call },
+              move |scope, result| {
+                napi_args_ref.finalize(*scope.env());
+                result.and_then(|#receiver_ret_name| #async_completion)
+              },
+            )?;
+            Ok(napi::bindgen_prelude::JsValue::raw(&promise))
+          }
         }
       }
     };

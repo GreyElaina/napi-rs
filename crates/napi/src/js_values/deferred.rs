@@ -232,11 +232,10 @@ impl DeferredCompletion {
 #[cfg(feature = "async")]
 impl Drop for DeferredCompletion {
   fn drop(&mut self) {
-    if self.state.is_some() {
-      #[cfg(debug_assertions)]
-      eprintln!(
-        "napi-rs: DeferredCompletion dropped without being settled — promise will never resolve"
-      );
+    if let Some(state) = self.state.take() {
+      let error = Error::new(crate::Status::Cancelled, "AbortError".to_owned());
+      Self::reject_with(state.env, state.deferred, state.creation_frames.as_deref(), error);
+      drop(state.keep_alive);
     }
   }
 }

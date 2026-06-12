@@ -74,15 +74,8 @@ pub fn get_array_with_for_loop<'env>(
 }
 
 #[napi]
-pub fn bench_blocking<'env>(
-  #[napi(env)] env: &mut Env<'env>,
-  buffer: Buffer,
-) -> Result<Promise<'env, u32>> {
-  env.with_scope(|scope| {
-    scope
-      .blocking(move || Ok(buffer.len() as u32 + 1))
-      .promise(|_, output| Ok(output))
-  })
+pub async fn bench_blocking(buffer: Buffer) -> Result<u32> {
+  Ok(buffer.len() as u32 + 1)
 }
 
 

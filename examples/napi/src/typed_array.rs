@@ -174,15 +174,8 @@ fn accept_uint8_clamped_slice_and_buffer_slice(a: BufferSlice, b: Uint8ClampedSl
 }
 
 #[napi]
-fn async_reduce_buffer<'env>(
-  #[napi(env)] env: &mut Env<'env>,
-  buf: Buffer,
-) -> Result<Promise<'env, u32>> {
-  env.with_scope(|scope| {
-    scope
-      .blocking(move || Ok(buf.iter().fold(0u32, |a, b| a + *b as u32)))
-      .promise(|_, output| Ok(output))
-  })
+async fn async_reduce_buffer(buf: Buffer) -> Result<u32> {
+  Ok(buf.iter().fold(0u32, |a, b| a + *b as u32))
 }
 
 #[napi]

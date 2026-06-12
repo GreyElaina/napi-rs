@@ -1,91 +1,34 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::ffi::c_void;
 use std::marker::PhantomData;
+use std::panic::UnwindSafe;
 use std::ptr;
 use std::rc::Rc;
-use std::{cell::Cell, panic::UnwindSafe};
 
+use crate::env::promise::CancelHandle;
 use crate::{
-  bindgen_prelude::{CallbackDecoder, EnvRecord, FromJs, IntoJs, Local, Scope, Unknown},
-  blocking_work,
-  blocking_work::{BlockingWorkCancelHandle, BlockingWorkStatus},
+  bindgen_prelude::{CallbackDecoder, EnvRecord, FromJs, Local, Scope, Unknown},
   check_status, sys, Env, JsError, Result, Value, ValueType,
 };
 
 use super::Object;
 
-pub struct BlockingWork<'env, 'scope, Execute> {
-  scope: &'scope mut Scope<'env, 'scope>,
-  execute: Execute,
-  abort_signal: Option<AbortSignal>,
-}
-
-impl<'env, 'scope> Scope<'env, 'scope> {
-  pub fn blocking<Execute>(
-    &'scope mut self,
-    execute: Execute,
-  ) -> BlockingWork<'env, 'scope, Execute> {
-    BlockingWork {
-      scope: self,
-      execute,
-      abort_signal: None,
-    }
-  }
-}
-
-impl<'env, 'scope, Execute> BlockingWork<'env, 'scope, Execute> {
-  pub fn signal(mut self, signal: AbortSignal) -> Self {
-    self.abort_signal = Some(signal);
-    self
-  }
-
-  pub fn optional_signal(mut self, signal: Option<AbortSignal>) -> Self {
-    self.abort_signal = signal;
-    self
-  }
-
-  pub fn promise<Output, Complete, JsValue: 'static>(
-    self,
-    complete: Complete,
-  ) -> Result<super::Promise<'env, JsValue>>
-  where
-    Execute: FnOnce() -> Result<Output> + Send + 'static,
-    Output: Send + Sized + 'static,
-    for<'js_scope> JsValue: IntoJs<'js_scope>,
-    Complete: for<'callback, 'complete_scope> FnOnce(
-        &mut Scope<'callback, 'complete_scope>,
-        Output,
-      ) -> Result<JsValue>
-      + 'static,
-  {
-    let abort_status = self
-      .abort_signal
-      .as_ref()
-      .map(|signal| signal.status.clone());
-    let raw_env = self.scope.env().raw();
-    let async_promise =
-      blocking_work::run(self.scope.env_mut(), self.execute, complete, abort_status)?;
-
-    if let Some(signal) = self.abort_signal {
-      signal.blocking_work.set(Some(async_promise.cancel_handle));
-    }
-
-    Ok(unsafe { super::Promise::from_raw(raw_env, async_promise.raw_promise()) })
-  }
-}
-
 type AbortCallback = Rc<RefCell<Vec<Box<dyn Fn()>>>>;
 
 /// <https://developer.mozilla.org/zh-CN/docs/Web/API/AbortController>
 pub struct AbortSignal {
-  blocking_work: Rc<Cell<Option<BlockingWorkCancelHandle>>>,
-  status: Rc<Cell<BlockingWorkStatus>>,
+  cancel: Rc<Cell<Option<CancelHandle>>>,
   abort: AbortCallback,
 }
 
 impl AbortSignal {
   pub fn on_abort<F: Fn() + 'static>(&self, cb: F) {
     self.abort.borrow_mut().push(Box::new(cb));
+  }
+
+  #[doc(hidden)]
+  pub fn cancel_cell(&self) -> &Rc<Cell<Option<CancelHandle>>> {
+    &self.cancel
   }
 }
 
@@ -109,12 +52,10 @@ impl<'env, 'scope> FromJs<'env, 'scope> for AbortSignal {
       },
       PhantomData,
     );
-    let blocking_work_inner: Rc<Cell<Option<BlockingWorkCancelHandle>>> = Rc::new(Cell::new(None));
-    let task_status = Rc::new(Cell::new(BlockingWorkStatus::Pending));
+    let cancel_inner: Rc<Cell<Option<CancelHandle>>> = Rc::new(Cell::new(None));
     let abort_cbs = Rc::new(RefCell::new(vec![]));
     let abort_signal = AbortSignal {
-      blocking_work: blocking_work_inner.clone(),
-      status: task_status.clone(),
+      cancel: cancel_inner.clone(),
       abort: abort_cbs.clone(),
     };
 
@@ -134,7 +75,7 @@ impl<'env, 'scope> FromJs<'env, 'scope> for AbortSignal {
           env,
           signal.0.value,
           Box::into_raw(stack).cast(),
-          Some(blocking_abort_signal_finalize),
+          Some(abort_signal_finalize),
           ptr::null_mut(),
           &mut signal_ref,
         )
@@ -145,8 +86,7 @@ impl<'env, 'scope> FromJs<'env, 'scope> for AbortSignal {
     unsafe { signal.set_inner("onabort", on_abort.value)? };
 
     Ok(AbortSignal {
-      blocking_work: blocking_work_inner,
-      status: task_status,
+      cancel: cancel_inner,
       abort: abort_cbs,
     })
   }
@@ -177,35 +117,23 @@ fn on_abort_impl(
     let mut abort_stack = ptr::null_mut();
     check_status!(
       unsafe { sys::napi_unwrap(env, this, &mut abort_stack) },
-      "Unwrap blocking work abort stack from AbortSignal failed"
+      "Unwrap abort signal stack from AbortSignal failed"
     )?;
-    let abort_controller_stack =
+    let abort_signal_stack =
       unsafe { Box::leak(Box::from_raw(abort_stack as *mut AbortSignalStack)) };
-    for abort_controller in abort_controller_stack.0.iter() {
-      // call abort callback
-      for cb in abort_controller.abort.borrow().iter() {
+    for signal in abort_signal_stack.0.iter() {
+      for cb in signal.abort.borrow().iter() {
         cb();
       }
-
-      // Work completed, return now.
-      if abort_controller.status.get() == BlockingWorkStatus::Completed {
-        return Ok(ptr::null_mut());
-      }
-      if let Some(blocking_work) = abort_controller.blocking_work.get() {
-        // The work is already completed, so there may be nothing left to cancel.
-        if blocking_work.cancel(&env_wrapper).is_err() {
-          abort_controller.status.set(BlockingWorkStatus::Pending);
-        } else {
-          // abort function must be called from JavaScript main thread, so Relaxed Ordering is ok.
-          abort_controller.status.set(BlockingWorkStatus::Cancelled);
-        }
+      if let Some(handle) = signal.cancel.take() {
+        handle.cancel();
       }
     }
     frame.return_value(())
   })
 }
 
-unsafe extern "C" fn blocking_abort_signal_finalize(
+unsafe extern "C" fn abort_signal_finalize(
   _env: sys::napi_env,
   finalize_data: *mut c_void,
   _finalize_hint: *mut c_void,

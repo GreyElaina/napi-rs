@@ -91,7 +91,6 @@ import {
   withAbortController,
   blockingReadFile,
   blockingOptionalReturn,
-  blockingFinally,
   asyncResolveArray,
   blockingArraybuffer,
   asyncMultiTwo,
@@ -1653,16 +1652,6 @@ test('abort signal should be able to reuse with different tasks', async (t) => {
       t.is((err as Error).message, 'AbortError')
     }
   })
-})
-
-test('async task finally must be called', async (t) => {
-  const obj = {
-    finally: false,
-    resolve: false,
-  }
-  await blockingFinally(obj)
-  t.is(obj.finally, true)
-  t.is(obj.resolve, true)
 })
 
 const BigIntTest = typeof BigInt !== 'undefined' ? test : test.skip
