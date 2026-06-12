@@ -1,7 +1,9 @@
 use std::marker::PhantomData;
 use std::ptr;
 use std::ptr::NonNull;
-use std::rc::{Rc, Weak};
+use std::sync::Arc;
+
+use crossbeam_queue::SegQueue;
 
 use crate::iterator::ScopedGenerator;
 use crate::{bindgen_prelude::*, check_status};
@@ -9,7 +11,7 @@ use crate::{bindgen_prelude::*, check_status};
 pub struct ConstructorReceiver<'env, 'scope, 'frame, T: NapiClass> {
   raw: sys::napi_value,
   env: sys::napi_env,
-  record: Weak<EnvRecord>,
+  deferred: Arc<SegQueue<sys::napi_ref>>,
   class: &'static ClassInfo,
   marker: PhantomData<(&'env (), &'scope (), &'frame CallbackValues, T)>,
 }
@@ -20,7 +22,7 @@ impl<'env, 'scope, T: NapiClass> ConstructorReceiver<'env, 'scope, 'scope, T> {
     Ok(Self {
       raw: unsafe { frame.values().as_ref().this() },
       env: scope.env().raw(),
-      record: Rc::downgrade(scope.record()),
+      deferred: Arc::clone(scope.deferred_queue()),
       class: T::CLASS.info(),
       marker: PhantomData,
     })
@@ -34,8 +36,8 @@ impl<'env, 'scope, T: NapiClass> ConstructorReceiver<'env, 'scope, 'scope, T> {
     self.env
   }
 
-  pub(crate) fn record(&self) -> Weak<EnvRecord> {
-    self.record.clone()
+  pub(crate) fn deferred_queue(&self) -> Arc<SegQueue<sys::napi_ref>> {
+    Arc::clone(&self.deferred)
   }
 
   pub(crate) fn class(&self) -> &'static ClassInfo {

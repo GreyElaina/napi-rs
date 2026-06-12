@@ -1,14 +1,14 @@
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::marker::PhantomData;
 use std::ptr::{self, NonNull};
-use std::rc::{Rc, Weak};
+use std::sync::Arc;
 
-use std::cell::RefCell;
+use crossbeam_queue::SegQueue;
 
 use crate::{
   bindgen_runtime::{
     ClassAccess, ClassBorrow, ClassBorrowMut, ClassChain, ClassStorageHeader, ClassStorageRef,
-    EnvRecord, FrameObject, FrameScope, FromJs, IntoClassInitializer, IntoJs, Local, NapiClass,
+    FrameObject, FrameScope, FromJs, IntoClassInitializer, IntoJs, Local, NapiClass,
     NapiReceiver, Object, Result, Scope, TypeName, Unknown,
   },
   check_status, sys, Error, Status, ValueType,
@@ -60,24 +60,25 @@ impl<T: 'static> JsRefKind for Ext<T> {
 
 pub(crate) struct RefState {
   raw: Cell<sys::napi_ref>,
-  record: Weak<EnvRecord>,
+  deferred: Arc<SegQueue<sys::napi_ref>>,
 }
 
+// Safety: napi_ref is a GC root handle managed by the JS engine.
+// The handle value has no thread affinity — it is safe to move between
+// threads. All operations that dereference the handle require a Scope
+// (which is !Send), ensuring they happen on the owning thread.
+unsafe impl Send for RefState {}
+
 impl RefState {
-  pub(crate) fn new(raw: sys::napi_ref, record: Weak<EnvRecord>) -> Self {
+  pub(crate) fn new(raw: sys::napi_ref, deferred: Arc<SegQueue<sys::napi_ref>>) -> Self {
     Self {
       raw: Cell::new(raw),
-      record,
+      deferred,
     }
   }
 
-  pub(crate) fn owner_record(&self) -> Result<Rc<EnvRecord>> {
-    self.record.upgrade().ok_or_else(|| {
-      Error::new(
-        Status::InvalidArg,
-        "Ref owner environment is no longer available".to_owned(),
-      )
-    })
+  pub(crate) fn deferred_queue(&self) -> &Arc<SegQueue<sys::napi_ref>> {
+    &self.deferred
   }
 
   pub(crate) fn raw_ref(&self) -> Result<sys::napi_ref> {
@@ -111,9 +112,7 @@ impl Drop for RefState {
     if raw.is_null() {
       return;
     }
-    if let Some(record) = self.record.upgrade() {
-      record.deferred_refs().push(raw);
-    }
+    self.deferred.push(raw);
   }
 }
 
@@ -131,6 +130,12 @@ pub struct WeakRef<K: JsRefKind> {
   marker: PhantomData<fn() -> K>,
 }
 
+// Safety: Ref<K> is a GC root handle. Send-safety is inherited from
+// RefState (see its unsafe impl Send). The K::Access bound ensures
+// marker types don't accidentally block Send.
+unsafe impl<K: JsRefKind> Send for Ref<K> where K::Access: Send {}
+unsafe impl<K: JsRefKind> Send for WeakRef<K> where K::Access: Send {}
+
 impl<K: JsRefKind> Ref<K> {
   pub(crate) fn new(state: RefState, access: K::Access) -> Self {
     Self {
@@ -144,10 +149,11 @@ impl<K: JsRefKind> Ref<K> {
     &self,
     f: impl for<'env, 'scope> FnOnce(&'scope mut Scope<'env, 'scope>) -> Result<R>,
   ) -> Result<R> {
-    let owner = self.state.owner_record()?;
-    let (raw_env, current) = EnvRecord::current()?;
-    ensure_record_match(&owner, &current)?;
-    unsafe { EnvRecord::enter_external_scope(raw_env, f) }
+    let (raw_env, record) = crate::bindgen_runtime::EnvRecord::current()?;
+    if !Arc::ptr_eq(self.state.deferred_queue(), record.deferred_queue()) {
+      return Err(owner_mismatch());
+    }
+    unsafe { crate::bindgen_runtime::EnvRecord::enter_external_scope(raw_env, f) }
   }
 }
 
@@ -163,15 +169,14 @@ impl<K: JsRefKind> WeakRef<K> {
   pub(crate) fn upgrade_raw(
     &self,
     scope: &mut Scope<'_, '_>,
-  ) -> Result<Option<(sys::napi_value, Rc<EnvRecord>)>> {
-    let record = self.state.owner_record()?;
-    ensure_same_record(&record, scope)?;
+  ) -> Result<Option<sys::napi_value>> {
+    ensure_same_deferred(&self.state, scope)?;
     let raw = self.state.raw_ref()?;
     let object = reference_value(scope.env().raw(), raw)?;
     if object.is_null() {
       return Ok(None);
     }
-    Ok(Some((object, record)))
+    Ok(Some(object))
   }
 }
 
@@ -203,8 +208,8 @@ impl<'env, 'scope, T: NapiReceiver> ClassLocal<'env, 'scope, T> {
 
   pub fn to_weak_ref(&self, scope: &mut Scope<'env, 'scope>) -> Result<WeakRef<Class<T>>> {
     let raw = create_reference(scope.env().raw(), self.object.raw(), 0)?;
-    let record = Rc::downgrade(scope.record());
-    Ok(WeakRef::new(RefState::new(raw, record), self.access))
+    let deferred = Arc::clone(scope.deferred_queue());
+    Ok(WeakRef::new(RefState::new(raw, deferred), self.access))
   }
 }
 
@@ -221,28 +226,23 @@ impl<T: NapiReceiver> Ref<Class<T>> {
   }
 
   pub fn close(self, scope: &mut Scope<'_, '_>) -> Result<()> {
-    let record = self.state.owner_record()?;
-    ensure_same_record(&record, scope)?;
+    ensure_same_deferred(&self.state, scope)?;
     delete_reference(scope.env().raw(), self.state.take_raw()?)
   }
 
   pub fn downgrade(&self, scope: &mut Scope<'_, '_>) -> Result<WeakRef<Class<T>>> {
-    let record = self.state.owner_record()?;
-    ensure_same_record(&record, scope)?;
+    ensure_same_deferred(&self.state, scope)?;
     let object = reference_value(scope.env().raw(), self.state.raw_ref()?)?;
     let raw = create_reference(scope.env().raw(), object, 0)?;
-    Ok(WeakRef::new(
-      RefState::new(raw, Rc::downgrade(&record)),
-      self.access,
-    ))
+    let deferred = Arc::clone(scope.deferred_queue());
+    Ok(WeakRef::new(RefState::new(raw, deferred), self.access))
   }
 
   pub fn as_class_local<'env, 'scope>(
     &self,
     scope: &mut Scope<'env, 'scope>,
   ) -> Result<ClassLocal<'env, 'scope, T>> {
-    let record = self.state.owner_record()?;
-    ensure_same_record(&record, scope)?;
+    ensure_same_deferred(&self.state, scope)?;
     let object = reference_value(scope.env().raw(), self.state.raw_ref()?)?;
     let (access, storage) = unsafe { T::validate_raw_object(scope, object) }?;
     ensure_same_access(self.access, access)?;
@@ -256,8 +256,7 @@ impl<T: NapiReceiver> Ref<Class<T>> {
   }
 
   pub fn clone(&self, scope: &mut Scope<'_, '_>) -> Result<Self> {
-    let record = self.state.owner_record()?;
-    ensure_same_record(&record, scope)?;
+    ensure_same_deferred(&self.state, scope)?;
     let object = reference_value(scope.env().raw(), self.state.raw_ref()?)?;
     unsafe { Self::from_object_unchecked(scope, object) }
   }
@@ -269,13 +268,12 @@ impl<T: NapiReceiver> Ref<Class<T>> {
     let raw_object = object.raw_for(context)?;
     let (access, _) = T::validate_object(context, object)?;
     let raw = create_reference(context.scope_mut().env().raw(), raw_object, 1)?;
-    let record = Rc::downgrade(context.scope_mut().record());
-    Ok(Self::new(RefState::new(raw, record), access))
+    let deferred = Arc::clone(context.scope_mut().deferred_queue());
+    Ok(Self::new(RefState::new(raw, deferred), access))
   }
 
   pub fn cast<U: NapiReceiver>(&self, scope: &mut Scope<'_, '_>) -> Result<Ref<Class<U>>> {
-    let record = self.state.owner_record()?;
-    ensure_same_record(&record, scope)?;
+    ensure_same_deferred(&self.state, scope)?;
     let object = reference_value(scope.env().raw(), self.state.raw_ref()?)?;
     unsafe { Ref::<Class<U>>::from_object_unchecked(scope, object) }
   }
@@ -287,8 +285,8 @@ impl<T: NapiReceiver> Ref<Class<T>> {
   ) -> Result<Self> {
     let (access, _) = unsafe { T::validate_raw_object(scope, object) }?;
     let raw = create_reference(scope.env().raw(), object, 1)?;
-    let record = Rc::downgrade(scope.record());
-    Ok(Self::new(RefState::new(raw, record), access))
+    let deferred = Arc::clone(scope.deferred_queue());
+    Ok(Self::new(RefState::new(raw, deferred), access))
   }
 
   fn from_class_local<'env, 'scope>(
@@ -297,8 +295,8 @@ impl<T: NapiReceiver> Ref<Class<T>> {
     initial_refcount: u32,
   ) -> Result<Self> {
     let raw = create_reference(scope.env().raw(), local.object.raw(), initial_refcount)?;
-    let record = Rc::downgrade(scope.record());
-    Ok(Self::new(RefState::new(raw, record), local.access))
+    let deferred = Arc::clone(scope.deferred_queue());
+    Ok(Self::new(RefState::new(raw, deferred), local.access))
   }
 }
 
@@ -306,8 +304,7 @@ impl<'scope, T: NapiReceiver> IntoJs<'scope> for Ref<Class<T>> {
   type Output = Object<'scope>;
 
   fn into_js(self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
-    let record = self.state.owner_record()?;
-    ensure_same_record(&record, scope)?;
+    ensure_same_deferred(&self.state, scope)?;
     let raw = reference_value(scope.env().raw(), self.state.raw_ref()?)?;
     Ok(unsafe { Local::from_raw(raw) })
   }
@@ -334,20 +331,20 @@ impl<T: NapiClass> TypeName for Ref<Class<T>> {
 
 impl<T: NapiReceiver> WeakRef<Class<T>> {
   pub fn close(self, scope: &mut Scope<'_, '_>) -> Result<()> {
-    let record = self.state.owner_record()?;
-    ensure_same_record(&record, scope)?;
+    ensure_same_deferred(&self.state, scope)?;
     delete_reference(scope.env().raw(), self.state.take_raw()?)
   }
 
   pub fn upgrade(&self, scope: &mut Scope<'_, '_>) -> Result<Option<Ref<Class<T>>>> {
-    let Some((object, record)) = self.upgrade_raw(scope)? else {
+    let Some(object) = self.upgrade_raw(scope)? else {
       return Ok(None);
     };
     let (access, _) = unsafe { T::validate_raw_object(scope, object) }?;
     ensure_same_access(self.access, access)?;
     let raw = create_reference(scope.env().raw(), object, 1)?;
+    let deferred = Arc::clone(scope.deferred_queue());
     Ok(Some(Ref::new(
-      RefState::new(raw, Rc::downgrade(&record)),
+      RefState::new(raw, deferred),
       self.access,
     )))
   }
@@ -389,8 +386,7 @@ impl<T: NapiClass> ClassRef<T> {
   }
 
   pub fn close(self, scope: &mut Scope<'_, '_>) -> Result<()> {
-    let record = self.state.owner_record()?;
-    ensure_same_record(&record, scope)?;
+    ensure_same_deferred(&self.state, scope)?;
     delete_reference(scope.env().raw(), self.state.take_raw()?)
   }
 
@@ -398,31 +394,30 @@ impl<T: NapiClass> ClassRef<T> {
     &self,
     scope: &mut Scope<'_, 'scope>,
   ) -> Result<Local<'scope, Object<'scope>>> {
-    let record = self.state.owner_record()?;
-    ensure_same_record(&record, scope)?;
+    ensure_same_deferred(&self.state, scope)?;
     let raw = reference_value(scope.env().raw(), self.state.raw_ref()?)?;
     Ok(unsafe { Local::from_raw(raw) })
   }
 
   pub fn clone(&self, scope: &mut Scope<'_, '_>) -> Result<ClassRef<T>> {
-    let record = self.state.owner_record()?;
-    ensure_same_record(&record, scope)?;
+    ensure_same_deferred(&self.state, scope)?;
     let object = reference_value(scope.env().raw(), self.state.raw_ref()?)?;
     let raw = create_reference(scope.env().raw(), object, 1)?;
+    let deferred = Arc::clone(scope.deferred_queue());
     Ok(ClassRef::new(
-      RefState::new(raw, Rc::downgrade(&record)),
+      RefState::new(raw, deferred),
       self.storage_header,
       self.access,
     ))
   }
 
   pub fn downgrade(&self, scope: &mut Scope<'_, '_>) -> Result<WeakRef<Class<T>>> {
-    let record = self.state.owner_record()?;
-    ensure_same_record(&record, scope)?;
+    ensure_same_deferred(&self.state, scope)?;
     let object = reference_value(scope.env().raw(), self.state.raw_ref()?)?;
     let raw = create_reference(scope.env().raw(), object, 0)?;
+    let deferred = Arc::clone(scope.deferred_queue());
     Ok(WeakRef::new(
-      RefState::new(raw, Rc::downgrade(&record)),
+      RefState::new(raw, deferred),
       self.access,
     ))
   }
@@ -480,9 +475,9 @@ impl<T: NapiClass> ClassRef<T> {
     let raw_object = object.raw_for(context)?;
     let (access, storage) = T::validate_object(context, object)?;
     let raw = create_reference(context.scope_mut().env().raw(), raw_object, 1)?;
-    let record = Rc::downgrade(context.scope_mut().record());
+    let deferred = Arc::clone(context.scope_mut().deferred_queue());
     Ok(Self::new(
-      RefState::new(raw, record),
+      RefState::new(raw, deferred),
       storage.header_ptr(),
       access,
     ))
@@ -491,8 +486,7 @@ impl<T: NapiClass> ClassRef<T> {
 
 impl<T: NapiClass> Ref<Class<T>> {
   pub fn into_class_ref(self, scope: &mut Scope<'_, '_>) -> Result<ClassRef<T>> {
-    let record = self.state.owner_record()?;
-    ensure_same_record(&record, scope)?;
+    ensure_same_deferred(&self.state, scope)?;
     let object = reference_value(scope.env().raw(), self.state.raw_ref()?)?;
     let (access, storage) = unsafe { T::validate_raw_object(scope, object) }?;
     ensure_same_access(self.access, access)?;
@@ -516,9 +510,9 @@ impl<'env, 'scope, T: NapiClass> FromJs<'env, 'scope> for ClassRef<T> {
     let object = value.raw();
     let (access, storage) = unsafe { T::validate_raw_object(scope, object) }?;
     let raw = create_reference(scope.env().raw(), object, 1)?;
-    let record = Rc::downgrade(scope.record());
+    let deferred = Arc::clone(scope.deferred_queue());
     Ok(Self::new(
-      RefState::new(raw, record),
+      RefState::new(raw, deferred),
       storage.header_ptr(),
       access,
     ))
@@ -593,17 +587,17 @@ impl<'env, 'scope> Scope<'env, 'scope> {
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
-pub(crate) fn ensure_same_record(record: &Rc<EnvRecord>, scope: &Scope<'_, '_>) -> Result<()> {
-  let current = scope.record();
-  if Rc::ptr_eq(record, current) {
+pub(crate) fn ensure_same_deferred(state: &RefState, scope: &Scope<'_, '_>) -> Result<()> {
+  if Arc::ptr_eq(state.deferred_queue(), scope.deferred_queue()) {
     Ok(())
   } else {
     Err(owner_mismatch())
   }
 }
 
-pub(crate) fn ensure_record_match(expected: &Rc<EnvRecord>, actual: &Rc<EnvRecord>) -> Result<()> {
-  if Rc::ptr_eq(expected, actual) {
+pub(crate) fn ensure_deferred_match_env(state: &RefState, env: &crate::Env<'_>) -> Result<()> {
+  let record = crate::bindgen_runtime::EnvRecord::acquire(env.raw());
+  if Arc::ptr_eq(state.deferred_queue(), record.deferred_queue()) {
     Ok(())
   } else {
     Err(owner_mismatch())

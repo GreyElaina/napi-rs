@@ -17,8 +17,8 @@ use futures_core::Stream;
 
 use crate::{
   bindgen_prelude::{
-    BufferSlice, FnArgs, FromJs, Function, IntoJsArgs, JsObjectValue, Local, Object, Promise,
-    PromiseFuture, Scope, TypeName, Unknown, ValidateNapiValue, NAPI_AUTO_LENGTH,
+    BufferSlice, FnArgs, FromJs, Func, Function, IntoJsArgs, JsObjectValue, Local, Object,
+    Promise, PromiseFuture, Ref, Scope, TypeName, Unknown, ValidateNapiValue, NAPI_AUTO_LENGTH,
   },
   bindgen_runtime::{CallbackDecoder, EnvRecord, IntoJs},
   check_status,
@@ -138,7 +138,7 @@ impl<T: Send + Sync + 'static + for<'env, 'scope> FromJs<'env, 'scope>> Readable
       let read: Function<'_, (), PromiseFuture<IteratorValue<T>>> =
         scope.get_named_property(&reader, "read")?;
       let bound = scope.bind_function(&read, reader)?;
-      let read_ref = ControllerFunctionRef::new(scope, &bound)?;
+      let read_ref = scope.create_ref(&bound)?;
       let channel = scope
         .record()
         .gc_channel()
@@ -467,7 +467,7 @@ where
 }
 
 pub struct Reader<T: Send + Sync + 'static + for<'env, 'scope> FromJs<'env, 'scope>> {
-  read_ref: ControllerFunctionRef<(), PromiseFuture<IteratorValue<T>>>,
+  read_ref: Ref<Func<(), PromiseFuture<IteratorValue<T>>>>,
   channel: Arc<AsyncChannel>,
   state: Arc<(RwLock<Result<Option<T>>>, AtomicBool)>,
 }
@@ -497,21 +497,22 @@ impl<T: Send + Sync + 'static + for<'env, 'scope> FromJs<'env, 'scope>> futures_
     let waker_for_spawn_error = waker.clone();
     let state_for_spawn_error = state.clone();
 
-    let read_ref_ptr = self.read_ref.raw as usize;
+    let read_ref_raw = self.read_ref.state.raw_ref()? as usize;
 
     self.channel.push(Box::new(move |env_wrapper| {
       let raw_env = env_wrapper.raw();
-      let ref_ = read_ref_ptr as sys::napi_ref;
+      let ref_ = read_ref_raw as sys::napi_ref;
 
       let call_result: Result<()> = unsafe {
         EnvRecord::enter_scope(raw_env, |scope| {
-          let read_fn = ControllerFunctionRef::<(), PromiseFuture<IteratorValue<T>>> {
-            raw: ref_,
-            marker: PhantomData,
-          };
-          let read_fn_local = read_fn.borrow(scope)?;
+          let mut value = ptr::null_mut();
+          check_status!(
+            unsafe { sys::napi_get_reference_value(scope.env().raw(), ref_, &mut value) },
+            "Get reader function reference failed"
+          )?;
+          let read_fn_local: Function<'_, (), PromiseFuture<IteratorValue<T>>> =
+            Function::from_js(scope, unsafe { Local::from_raw(value) })?;
           let iterator = scope.call(&read_fn_local, ())?;
-          mem::forget(read_fn);
 
           let task = env_wrapper.spawn_future(async move {
             let result = iterator.await;
@@ -643,51 +644,9 @@ fn register_invoke<S>(
   )
 }
 
-/// Helper struct to extract and bind controller methods from callback info.
 struct PullController<T: for<'scope> IntoJs<'scope>> {
-  enqueue: ControllerFunctionRef<T, ()>,
-  close: ControllerFunctionRef<(), ()>,
-}
-
-struct ControllerFunctionRef<Args, Return> {
-  raw: sys::napi_ref,
-  marker: PhantomData<fn(Args) -> Return>,
-}
-
-unsafe impl<Args, Return> Send for ControllerFunctionRef<Args, Return> {}
-
-impl<Args, Return> ControllerFunctionRef<Args, Return> {
-  fn new(scope: &mut Scope<'_, '_>, function: &Function<'_, Args, Return>) -> Result<Self> {
-    let mut raw = ptr::null_mut();
-    check_status!(
-      unsafe { sys::napi_create_reference(scope.env().raw(), function.value, 1, &mut raw) },
-      "Create stream controller function reference failed"
-    )?;
-    Ok(Self {
-      raw,
-      marker: PhantomData,
-    })
-  }
-
-  fn borrow<'env, 'scope>(
-    &self,
-    scope: &mut Scope<'env, 'scope>,
-  ) -> Result<Function<'scope, Args, Return>> {
-    let mut value = ptr::null_mut();
-    check_status!(
-      unsafe { sys::napi_get_reference_value(scope.env().raw(), self.raw, &mut value) },
-      "Get stream controller function reference failed"
-    )?;
-    Function::from_js(scope, unsafe { Local::from_raw(value) })
-  }
-
-  fn close(mut self, env: &Env) -> Result<()> {
-    let raw = std::mem::replace(&mut self.raw, ptr::null_mut());
-    check_status!(
-      unsafe { sys::napi_delete_reference(env.raw(), raw) },
-      "Delete stream controller function reference failed"
-    )
-  }
+  enqueue: Ref<Func<T, ()>>,
+  close: Ref<Func<(), ()>>,
 }
 
 impl<T: for<'scope> IntoJs<'scope>> PullController<T> {
@@ -703,18 +662,12 @@ impl<T: for<'scope> IntoJs<'scope>> PullController<T> {
       let enqueue_function: Function<'_, T, ()> =
         scope.get_named_property(&controller, "enqueue")?;
       let enqueue_function = scope.bind_function(&enqueue_function, controller)?;
-      let enqueue = ControllerFunctionRef::new(scope, &enqueue_function)?;
+      let enqueue = scope.create_ref(&enqueue_function)?;
       let close_function: Function<'_, (), ()> = scope.get_named_property(&controller, "close")?;
       let close_function = scope.bind_function(&close_function, controller)?;
-      let close = ControllerFunctionRef::new(scope, &close_function)?;
+      let close = scope.create_ref(&close_function)?;
       Ok((Self { enqueue, close }, data))
     })
-  }
-
-  fn close(self, env: &Env) -> Result<()> {
-    let close_enqueue = self.enqueue.close(env);
-    let close_close = self.close.close(env);
-    close_enqueue.and(close_close)
   }
 }
 
@@ -799,7 +752,7 @@ fn pull_callback_impl<
 
   // Check if stream was cancelled
   if state.cancelled.load(Ordering::SeqCst) {
-    controller.close(&env_wrapper)?;
+    drop(controller);
     return Ok(ptr::null_mut());
   }
 
@@ -836,8 +789,8 @@ fn pull_callback_impl<
         }
         Ok::<(), Error>(())
       };
-      let close_result = controller.close(scope.env());
-      result.and(close_result)?;
+      drop(controller);
+      result?;
       Ok(())
     },
   )?;
@@ -885,7 +838,7 @@ fn pull_callback_impl_bytes<
 
   // Check if stream was cancelled
   if state.cancelled.load(Ordering::SeqCst) {
-    controller.close(&env_wrapper)?;
+    drop(controller);
     return Ok(ptr::null_mut());
   }
 
@@ -928,8 +881,8 @@ fn pull_callback_impl_bytes<
         }
         Ok::<(), Error>(())
       };
-      let close_result = controller.close(scope.env());
-      result.and(close_result)?;
+      drop(controller);
+      result?;
       Ok(())
     },
   )?;

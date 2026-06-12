@@ -1,7 +1,7 @@
-use std::{marker::PhantomData, ptr, rc::Rc};
+use std::{marker::PhantomData, ptr, sync::Arc};
 
 use super::{
-  value_ref::{create_reference, ensure_same_record, reference_value, RefState},
+  value_ref::{create_reference, ensure_same_deferred, reference_value, RefState},
   Either, FromJs, Func, IntoJs, JsRefTarget, Local, Ref, Scope, TypeName, Unknown,
   ValidateNapiValue,
 };
@@ -352,7 +352,7 @@ impl<'scope, Args, Return> JsRefTarget<'scope, Ref<Func<Args, Return>>>
     scope.ensure_value_env(self.env, "Function")?;
     let raw = create_reference(scope.env().raw(), self.value, 1)?;
     Ok(Ref::new(
-      RefState::new(raw, Rc::downgrade(scope.record())),
+      RefState::new(raw, Arc::clone(scope.deferred_queue())),
       (),
     ))
   }
@@ -517,8 +517,7 @@ impl<Args, Return> Ref<Func<Args, Return>> {
     &self,
     scope: &mut Scope<'env, 'scope>,
   ) -> Result<Function<'scope, Args, Return>> {
-    let record = self.state.owner_record()?;
-    ensure_same_record(&record, scope)?;
+    ensure_same_deferred(&self.state, scope)?;
     let value = reference_value(scope.env().raw(), self.state.raw_ref()?)?;
     Ok(Function {
       env: scope.env().raw(),

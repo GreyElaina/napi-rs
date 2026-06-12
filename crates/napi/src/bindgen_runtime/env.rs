@@ -1,12 +1,15 @@
 use std::{
   any::Any,
-  cell::{Cell, RefCell},
+  cell::RefCell,
   collections::HashMap,
   ffi::{c_void, CStr, CString},
   marker::PhantomData,
   ptr,
   rc::Rc,
+  sync::Arc,
 };
+
+use crossbeam_queue::SegQueue;
 
 use crate::{
   catch_unwind_boundary, catch_unwind_result, check_status, run_unwind_boundary, sys, Error,
@@ -33,7 +36,7 @@ pub struct UserInstanceData {
 #[doc(hidden)]
 pub struct EnvRecord {
   data: RefCell<EnvData>,
-  deferred_refs: DeferredRefs,
+  deferred_refs: Arc<SegQueue<sys::napi_ref>>,
 }
 
 #[doc(hidden)]
@@ -42,12 +45,6 @@ pub struct EnvData {
   user_instance_data: UserInstanceData,
   #[cfg(feature = "async")]
   async_driver: Option<crate::env::AsyncDriver>,
-}
-
-#[doc(hidden)]
-pub struct DeferredRefs {
-  refs: Cell<Vec<sys::napi_ref>>,
-  len: Cell<usize>,
 }
 
 pub struct Scope<'env, 'scope> {
@@ -127,7 +124,7 @@ impl EnvRecord {
       let Some(record) = records.get(&(raw as usize)) else {
         return false;
       };
-      record.deferred_refs().push(reference);
+      record.deferred_refs.push(reference);
       true
     })
   }
@@ -338,15 +335,11 @@ impl EnvRecord {
         #[cfg(feature = "async")]
         async_driver,
       }),
-      deferred_refs: DeferredRefs {
-        refs: Cell::new(Vec::new()),
-        len: Cell::new(0),
-      },
+      deferred_refs: Arc::new(SegQueue::new()),
     }
   }
 
-  #[doc(hidden)]
-  pub fn deferred_refs(&self) -> &DeferredRefs {
+  pub(crate) fn deferred_queue(&self) -> &Arc<SegQueue<sys::napi_ref>> {
     &self.deferred_refs
   }
 
@@ -367,7 +360,11 @@ impl EnvRecord {
     if self.deferred_refs.is_empty() {
       return Ok(());
     }
-    Self::delete_refs(env, self.deferred_refs.take())
+    let mut refs = Vec::new();
+    while let Some(raw) = self.deferred_refs.pop() {
+      refs.push(raw);
+    }
+    Self::delete_refs(env, refs)
   }
 
   fn take_constructor_refs(&self) -> Result<Vec<sys::napi_ref>> {
@@ -531,26 +528,6 @@ fn drop_user_instance_data(value: Box<dyn Any>) -> Result<()> {
   }
 }
 
-impl DeferredRefs {
-  #[doc(hidden)]
-  pub fn push(&self, raw: sys::napi_ref) {
-    let mut refs = self.refs.take();
-    refs.push(raw);
-    self.len.set(refs.len());
-    self.refs.set(refs);
-  }
-
-  #[doc(hidden)]
-  pub fn is_empty(&self) -> bool {
-    self.len.get() == 0
-  }
-
-  #[doc(hidden)]
-  pub fn take(&self) -> Vec<sys::napi_ref> {
-    self.len.set(0);
-    self.refs.take()
-  }
-}
 
 impl<'env, 'scope> Scope<'env, 'scope> {
   pub fn env(&self) -> &Env<'env> {
@@ -827,6 +804,10 @@ impl<'env, 'scope> Scope<'env, 'scope> {
   #[doc(hidden)]
   pub fn record(&self) -> &'scope Rc<EnvRecord> {
     self.record
+  }
+
+  pub(crate) fn deferred_queue(&self) -> &Arc<SegQueue<sys::napi_ref>> {
+    self.record.deferred_queue()
   }
 
   pub(crate) fn ensure_value_env(&self, value_env: sys::napi_env, value_name: &str) -> Result<()> {

@@ -3,11 +3,11 @@ use std::{
   ffi::c_void,
   ops::{Deref, DerefMut},
   ptr,
-  rc::Rc,
+  sync::Arc,
 };
 
 use super::value_ref::{
-  create_reference, ensure_record_match, ensure_same_record, reference_value, RefState,
+  create_reference, ensure_deferred_match_env, ensure_same_deferred, reference_value, RefState,
 };
 use crate::{
   bindgen_runtime::{
@@ -270,14 +270,13 @@ impl<T: 'static> Ref<Ext<T>> {
     let napi_val = external_value.0;
     let raw = create_reference(env.0, napi_val, 1)?;
     Ok(Ref::new(
-      RefState::new(raw, Rc::downgrade(&env.record())),
+      RefState::new(raw, Arc::clone(env.record().deferred_queue())),
       (),
     ))
   }
 
   pub fn to_local<'env>(&self, env: &'env Env<'env>) -> Result<JsExternal<'env>> {
-    let record = self.state.owner_record()?;
-    ensure_record_match(&record, &env.record())?;
+    ensure_deferred_match_env(&self.state, env)?;
     let result = reference_value(env.0, self.state.raw_ref()?)?;
     Ok(unsafe { JsExternal::from_raw(env.0, result) })
   }
@@ -309,8 +308,7 @@ impl<'scope, T: 'static> IntoJs<'scope> for Ref<Ext<T>> {
   type Output = JsExternal<'scope>;
 
   fn into_js(self, scope: &mut Scope<'_, 'scope>) -> crate::Result<Local<'scope, Self::Output>> {
-    let record = self.state.owner_record()?;
-    ensure_same_record(&record, scope)?;
+    ensure_same_deferred(&self.state, scope)?;
     let result = reference_value(scope.env().raw(), self.state.raw_ref()?)?;
     Ok(unsafe { Local::from_raw(result) })
   }
@@ -320,8 +318,7 @@ impl<'scope, T: 'static> IntoJs<'scope> for &Ref<Ext<T>> {
   type Output = JsExternal<'scope>;
 
   fn into_js(self, scope: &mut Scope<'_, 'scope>) -> crate::Result<Local<'scope, Self::Output>> {
-    let record = self.state.owner_record()?;
-    ensure_same_record(&record, scope)?;
+    ensure_same_deferred(&self.state, scope)?;
     let result = reference_value(scope.env().raw(), self.state.raw_ref()?)?;
     Ok(unsafe { Local::from_raw(result) })
   }

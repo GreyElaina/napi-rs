@@ -1,4 +1,4 @@
-use std::{marker::PhantomData, ptr, rc::Rc};
+use std::{marker::PhantomData, ptr, sync::Arc};
 
 use crate::{
   bindgen_prelude::{
@@ -118,7 +118,7 @@ impl<'scope, T: 'static> crate::bindgen_runtime::JsRefTarget<'scope, Ref<Ext<T>>
     self.validate_type::<T>()?;
     let raw = create_reference(scope.env().raw(), self.0.value, 1)?;
     Ok(Ref::new(
-      RefState::new(raw, Rc::downgrade(scope.record())),
+      RefState::new(raw, Arc::clone(scope.deferred_queue())),
       (),
     ))
   }
@@ -129,7 +129,7 @@ impl<'scope, T: 'static> crate::bindgen_runtime::JsRefTarget<'scope, Ref<Ext<T>>
     let value = self.into_js(scope)?;
     let raw = create_reference(scope.env().raw(), value.raw(), 1)?;
     Ok(Ref::new(
-      RefState::new(raw, Rc::downgrade(scope.record())),
+      RefState::new(raw, Arc::clone(scope.deferred_queue())),
       (),
     ))
   }

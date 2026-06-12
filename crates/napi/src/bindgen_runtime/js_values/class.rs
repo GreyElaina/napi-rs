@@ -5,11 +5,13 @@ use std::marker::PhantomData;
 use std::mem::{self, ManuallyDrop};
 use std::ops::{Deref, DerefMut};
 use std::ptr::{self, NonNull};
-use std::rc::{Rc, Weak};
+use std::sync::Arc;
+
+use crossbeam_queue::SegQueue;
 
 use crate::{
   bindgen_runtime::{
-    ConstructorReceiver, EnvRecord, FrameObject, FrameScope, IntoJs, Local, Object, Result, Scope,
+    ConstructorReceiver, FrameObject, FrameScope, IntoJs, Local, Object, Result, Scope,
   },
   catch_unwind_boundary, check_status, run_unwind_boundary, sys, Error, Status,
 };
@@ -287,8 +289,8 @@ impl<T: NapiClass> ClassDef<T> {
   {
     self.ensure_receiver_class(&receiver)?;
 
-    let record = receiver.record();
-    let storage = unsafe { PendingClassStorage::new(record, init) }?;
+    let deferred = receiver.deferred_queue();
+    let storage = unsafe { PendingClassStorage::new(deferred, init) }?;
     let value = storage.segment::<T>(self.info())?;
     unsafe { storage.wrap(receiver.env(), receiver.raw()) }?;
     Ok((receiver.raw(), value.as_ptr()))
@@ -331,8 +333,8 @@ impl<T: NapiClass> ClassDef<T> {
   where
     T: ClassChain,
   {
-    let record = Rc::downgrade(scope.record());
-    let storage = unsafe { PendingClassStorage::new(record, init) }?;
+    let deferred = Arc::clone(scope.deferred_queue());
+    let storage = unsafe { PendingClassStorage::new(deferred, init) }?;
     let value = storage.segment::<T>(self.info())?;
     let guard = PendingClassStorageGuard::push(storage);
 
@@ -561,21 +563,21 @@ fn class_storage_abi_matches(abi_magic: u64, abi_version: u32, header_size: u32)
 }
 
 pub struct ClassStorageState {
-  record: Weak<EnvRecord>,
+  deferred: Arc<SegQueue<sys::napi_ref>>,
   borrow_cell: RefCell<()>,
 }
 
 impl ClassStorageState {
   #[doc(hidden)]
-  pub fn new(record: Weak<EnvRecord>) -> Self {
+  pub fn new(deferred: Arc<SegQueue<sys::napi_ref>>) -> Self {
     Self {
-      record,
+      deferred,
       borrow_cell: RefCell::new(()),
     }
   }
 
-  pub fn record(&self) -> &Weak<EnvRecord> {
-    &self.record
+  pub fn deferred_queue(&self) -> &Arc<SegQueue<sys::napi_ref>> {
+    &self.deferred
   }
 
   pub fn borrow_cell(&self) -> &RefCell<()> {
@@ -660,14 +662,7 @@ impl<'scope> ClassStorageRef<'scope> {
     })?;
 
     let state_ref = unsafe { header_ref.state().as_ref() };
-    let record = state_ref.record().upgrade().ok_or_else(|| {
-      Error::new(
-        Status::InvalidArg,
-        "Class storage owner environment is no longer available".to_owned(),
-      )
-    })?;
-    let scope_record = scope.record();
-    if !Rc::ptr_eq(&record, scope_record) {
+    if !Arc::ptr_eq(state_ref.deferred_queue(), scope.deferred_queue()) {
       return Err(Error::new(
         Status::InvalidArg,
         "Class storage owner environment does not match the current environment".to_owned(),
@@ -896,7 +891,7 @@ struct PendingClassStorageAllocation {
 impl PendingClassStorageAllocation {
   fn new(
     layout: &'static ClassLayout,
-    record: Weak<EnvRecord>,
+    deferred: Arc<SegQueue<sys::napi_ref>>,
     data_layout: alloc::Layout,
   ) -> Result<Self> {
     let (combined_layout, state_offset, data_offset) = combined_class_storage_layout(data_layout)
@@ -919,7 +914,7 @@ impl PendingClassStorageAllocation {
     };
     let data_ptr = unsafe { NonNull::new_unchecked(base.as_ptr().add(data_offset)) };
 
-    unsafe { state_ptr.as_ptr().write(ClassStorageState::new(record)) };
+    unsafe { state_ptr.as_ptr().write(ClassStorageState::new(deferred)) };
     let header_ptr = base.cast::<ClassStorageHeader>();
     unsafe {
       header_ptr
@@ -965,7 +960,7 @@ thread_local! {
 }
 
 impl PendingClassStorage {
-  unsafe fn new<T>(record: Weak<EnvRecord>, init: ClassInitializer<T>) -> Result<Self>
+  unsafe fn new<T>(deferred: Arc<SegQueue<sys::napi_ref>>, init: ClassInitializer<T>) -> Result<Self>
   where
     T: ClassChain,
   {

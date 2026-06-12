@@ -1,11 +1,11 @@
 use std::ptr;
-use std::rc::Rc;
+use std::sync::Arc;
 
 use crate::{
   bindgen_runtime::{
     js_values::value_ref::{
-      create_reference, delete_reference, ensure_record_match, ensure_same_record, reference_value,
-      RefState,
+      create_reference, delete_reference, ensure_deferred_match_env, ensure_same_deferred,
+      reference_value, RefState,
     },
     Env, FromJs, IntoJs, JsRefTarget, Local, Ref, Scope, TypeName, Unk, ValidateNapiValue,
   },
@@ -80,7 +80,7 @@ impl<'scope> JsRefTarget<'scope, Ref<Unk>> for &Unknown<'_> {
     scope.ensure_value_env(self.0.env, "Unknown")?;
     let raw = create_reference(scope.env().raw(), self.0.value, 1)?;
     Ok(Ref::new(
-      RefState::new(raw, Rc::downgrade(scope.record())),
+      RefState::new(raw, Arc::clone(scope.deferred_queue())),
       (),
     ))
   }
@@ -88,15 +88,13 @@ impl<'scope> JsRefTarget<'scope, Ref<Unk>> for &Unknown<'_> {
 
 impl Ref<Unk> {
   pub fn to_local<'env>(&self, env: &'env Env) -> Result<Unknown<'env>> {
-    let record = self.state.owner_record()?;
-    ensure_record_match(&record, &env.record())?;
+    ensure_deferred_match_env(&self.state, env)?;
     let result = reference_value(env.0, self.state.raw_ref()?)?;
     Ok(unsafe { Unknown::from_raw_unchecked(env.0, result) })
   }
 
   pub fn close(self, env: &Env) -> Result<()> {
-    let record = self.state.owner_record()?;
-    ensure_record_match(&record, &env.record())?;
+    ensure_deferred_match_env(&self.state, env)?;
     delete_reference(env.0, self.state.take_raw()?)
   }
 }
@@ -115,8 +113,7 @@ impl<'scope> IntoJs<'scope> for &Ref<Unk> {
   type Output = Unknown<'scope>;
 
   fn into_js(self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
-    let record = self.state.owner_record()?;
-    ensure_same_record(&record, scope)?;
+    ensure_same_deferred(&self.state, scope)?;
     let result = reference_value(scope.env().raw(), self.state.raw_ref()?)?;
     Ok(unsafe { Local::from_raw(result) })
   }
@@ -126,8 +123,7 @@ impl<'scope> IntoJs<'scope> for Ref<Unk> {
   type Output = Unknown<'scope>;
 
   fn into_js(self, scope: &mut Scope<'_, 'scope>) -> Result<Local<'scope, Self::Output>> {
-    let record = self.state.owner_record()?;
-    ensure_same_record(&record, scope)?;
+    ensure_same_deferred(&self.state, scope)?;
     let raw_ref = self.state.raw_ref()?;
     let result = reference_value(scope.env().raw(), raw_ref)?;
     delete_reference(scope.env().raw(), self.state.take_raw()?)?;
