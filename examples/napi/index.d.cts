@@ -564,8 +564,6 @@ export declare function arrayBufferFromExternal(): ArrayBuffer
 
 export declare function arrayBufferPassThrough(buf: Uint8Array): Promise<Uint8Array>
 
-export declare function arrayParams(arr: Array<number>): number
-
 export declare function asyncBufferToArray(buf: ArrayBuffer): Array<number>
 
 export declare function asyncMultiTwo(arg: number): Promise<number>
@@ -990,16 +988,6 @@ export declare const enum Kind {
   Duck = 2
 }
 
-/** default enum values are continuos i32s start from 0 */
-export declare const enum KindInValidate {
-  /** Barks */
-  Dog = 0,
-  /** Kills birds */
-  Cat = 1,
-  /** Tasty */
-  Duck = 2
-}
-
 export interface Latin1MethodsResult {
   length: number
   isEmpty: boolean
@@ -1201,10 +1189,6 @@ export declare function returnObjectOnlyToJs(): ObjectOnlyToJs
 
 export declare function returnUndefined(): void
 
-export declare function returnUndefinedIfInvalid(input: boolean): boolean
-
-export declare function returnUndefinedIfInvalidPromise(input: Promise<boolean>): Promise<boolean>
-
 export declare function roundtripStr(s: string): string
 
 export interface Rule {
@@ -1236,12 +1220,6 @@ export declare const enum Status {
   Pristine = 'Pristine',
   Loading = 'Loading',
   Ready = 'Ready'
-}
-
-export declare const enum StatusInValidate {
-  Poll = 'Poll',
-  Ready = 'Ready',
-  Done = 'Done'
 }
 
 export interface StreamItem {
@@ -1347,53 +1325,9 @@ export interface UtcDates {
   end?: Date
 }
 
-export declare function validateArray(arr: Array<number>): number
-
-export declare function validateBigint(input: bigint): bigint
-
-export declare function validateBoolean(i: boolean): boolean
-
-export declare function validateBuffer(b: Buffer): number
-
-export declare function validateBufferSlice(input: Buffer): number
-
-export declare function validateDate(d: Date): number
-
-export declare function validateDateTime(d: Date): number
-
-export declare function validateEnum(input: KindInValidate): number
-
-export declare function validateExternal(e: ExternalObject<number>): number
-
-export declare function validateFunction(cb: () => number): number
-
-export declare function validateHashMap(input: Record<string, number>): number
-
-export declare function validateNull(i: null): boolean
-
-export declare function validateNumber(i: number): number
-
-export declare function validateOptional(input1?: string | undefined | null, input2?: boolean | undefined | null): boolean
-
-export declare function validatePromise(p: Promise<number>): Promise<number>
-
-export declare function validateString(s: string): string
-
-export declare function validateStringEnum(input: StatusInValidate): string
-
 export declare function validateStructuredEnum(kind: StructuredKind): StructuredKind
 
 export declare function validateStructuredEnumLowercase(kind: StructuredKindLowercase): StructuredKindLowercase
-
-export declare function validateSymbol(s: symbol): boolean
-
-export declare function validateTypedArray(input: Uint8Array): number
-
-export declare function validateTypedArraySlice(input: Uint8Array): number
-
-export declare function validateUint8ClampedSlice(input: Uint8ClampedArray): number
-
-export declare function validateUndefined(i: undefined): boolean
 
 export declare function verifyEnvRecordCurrent(): boolean
 

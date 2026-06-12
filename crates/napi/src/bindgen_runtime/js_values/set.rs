@@ -17,7 +17,6 @@ impl<V, S> TypeName for HashSet<V, S> {
   }
 }
 
-impl<V, S> ValidateNapiValue for HashSet<V, S> {}
 
 impl<'scope, V, S> IntoJs<'scope> for HashSet<V, S>
 where
@@ -53,7 +52,6 @@ impl<V> TypeName for BTreeSet<V> {
   }
 }
 
-impl<V> ValidateNapiValue for BTreeSet<V> {}
 
 impl<'scope, V> IntoJs<'scope> for BTreeSet<V>
 where
@@ -89,7 +87,6 @@ impl<V, S> TypeName for IndexSet<V, S> {
   }
 }
 #[cfg(feature = "object_indexmap")]
-impl<V, S> ValidateNapiValue for IndexSet<V, S> {}
 #[cfg(feature = "object_indexmap")]
 impl<'scope, V, S> IntoJs<'scope> for IndexSet<V, S>
 where

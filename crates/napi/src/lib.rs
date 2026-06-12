@@ -195,15 +195,6 @@ pub mod __private {
   use crate::{bindgen_runtime::CallbackFrame, sys, Result};
 
   #[doc(hidden)]
-  pub unsafe fn validate_raw_value_type(
-    env: sys::napi_env,
-    raw: sys::napi_value,
-    expected: crate::ValueType,
-  ) -> Result<sys::napi_value> {
-    unsafe { crate::bindgen_runtime::validate_raw_value_type(env, raw, expected) }
-  }
-
-  #[doc(hidden)]
   pub fn callback_frame_this(frame: &CallbackFrame<'_, '_>) -> sys::napi_value {
     frame.raw_this()
   }
@@ -228,14 +219,6 @@ pub mod __private {
     raw: sys::napi_value,
   ) -> Result<()> {
     frame.retain_value(refs, raw)
-  }
-
-  #[doc(hidden)]
-  pub fn callback_frame_validate_value<T: crate::bindgen_runtime::ValidateNapiValue>(
-    frame: &CallbackFrame<'_, '_>,
-    raw: sys::napi_value,
-  ) -> Result<sys::napi_value> {
-    frame.validate_value::<T>(raw)
   }
 
   #[doc(hidden)]

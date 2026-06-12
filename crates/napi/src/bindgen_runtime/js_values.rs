@@ -121,45 +121,11 @@ pub trait FromJs<'env, 'scope>: Sized {
   ) -> Result<Self>;
 }
 
-pub trait ValidateNapiValue: TypeName {
-  /// This function called to validate whether napi value passed to rust is valid type.
-  ///
-  /// The reason why this function return `napi_value` is that if a `Promise<T>` passed in
-  /// we need to return `Promise.reject(T)`, not the `T`.
-  /// So we need to create `Promise.reject(T)` in this function.
-  ///
-  /// # Safety
-  ///
-  /// The caller must ensure that:
-  /// - The `env` is a valid napi env pointer
-  /// - The `napi_val` is a valid js value pointer
-  unsafe fn validate(env: sys::napi_env, napi_val: sys::napi_value) -> Result<sys::napi_value> {
-    let value_type = Self::value_type();
-
-    let mut result = -1;
-    check_status!(
-      unsafe { sys::napi_typeof(env, napi_val, &mut result) },
-      "Failed to detect napi value type",
-    )?;
-
-    let received_type = ValueType::from(result);
-    if value_type == received_type {
-      Ok(ptr::null_mut())
-    } else {
-      Err(Error::new(
-        Status::InvalidArg,
-        format!("Expect value to be {value_type}, but received {received_type}"),
-      ))
-    }
-  }
-}
-
-#[doc(hidden)]
-pub unsafe fn validate_raw_value_type(
+pub(crate) fn ensure_value_type(
   env: sys::napi_env,
   raw: sys::napi_value,
   expected: ValueType,
-) -> Result<sys::napi_value> {
+) -> Result<()> {
   let mut value_type = -1;
   check_status!(
     unsafe { sys::napi_typeof(env, raw, &mut value_type) },
@@ -168,11 +134,59 @@ pub unsafe fn validate_raw_value_type(
 
   let received = ValueType::from(value_type);
   if received == expected {
-    Ok(ptr::null_mut())
+    Ok(())
   } else {
     Err(Error::new(
       Status::InvalidArg,
       format!("Expect value to be {expected}, but received {received}"),
+    ))
+  }
+}
+
+pub(crate) fn ensure_is_promise(env: sys::napi_env, raw: sys::napi_value) -> Result<()> {
+  let mut is_promise = false;
+  check_status!(
+    unsafe { sys::napi_is_promise(env, raw, &mut is_promise) },
+    "Failed to check if value is promise",
+  )?;
+  if is_promise {
+    Ok(())
+  } else {
+    Err(Error::new(
+      Status::InvalidArg,
+      "Expected Promise object".to_owned(),
+    ))
+  }
+}
+
+pub(crate) fn ensure_is_buffer(env: sys::napi_env, raw: sys::napi_value) -> Result<()> {
+  let mut is_buffer = false;
+  check_status!(
+    unsafe { sys::napi_is_buffer(env, raw, &mut is_buffer) },
+    "Failed to validate napi buffer",
+  )?;
+  if is_buffer {
+    Ok(())
+  } else {
+    Err(Error::new(
+      Status::InvalidArg,
+      "Expected a Buffer value".to_owned(),
+    ))
+  }
+}
+
+pub(crate) fn ensure_is_array(env: sys::napi_env, raw: sys::napi_value) -> Result<()> {
+  let mut is_array = false;
+  check_status!(
+    unsafe { sys::napi_is_array(env, raw, &mut is_array) },
+    "Failed to check given napi value is array",
+  )?;
+  if is_array {
+    Ok(())
+  } else {
+    Err(Error::new(
+      Status::InvalidArg,
+      "Expected an array".to_owned(),
     ))
   }
 }
@@ -184,32 +198,6 @@ impl<T: TypeName> TypeName for Option<T> {
 
   fn value_type() -> ValueType {
     T::value_type()
-  }
-}
-
-impl<T: ValidateNapiValue> ValidateNapiValue for Option<T> {
-  unsafe fn validate(env: sys::napi_env, napi_val: sys::napi_value) -> Result<sys::napi_value> {
-    let mut result = -1;
-    check_status!(
-      unsafe { sys::napi_typeof(env, napi_val, &mut result) },
-      "Failed to detect napi value type",
-    )?;
-
-    let received_type = ValueType::from(result);
-    if received_type == ValueType::Null || received_type == ValueType::Undefined {
-      Ok(ptr::null_mut())
-    } else if let Ok(validate_ret) = unsafe { T::validate(env, napi_val) } {
-      Ok(validate_ret)
-    } else {
-      Err(Error::new(
-        Status::InvalidArg,
-        format!(
-          "Expect value to be Option<{}>, but received {}",
-          T::value_type(),
-          received_type
-        ),
-      ))
-    }
   }
 }
 
@@ -337,30 +325,6 @@ impl<T: TypeName> TypeName for Rc<T> {
   }
 }
 
-impl<T: ValidateNapiValue> ValidateNapiValue for Rc<T> {
-  unsafe fn validate(env: sys::napi_env, napi_val: sys::napi_value) -> Result<sys::napi_value> {
-    let mut result = -1;
-    check_status!(
-      unsafe { sys::napi_typeof(env, napi_val, &mut result) },
-      "Failed to detect napi value type",
-    )?;
-
-    let received_type = ValueType::from(result);
-    if let Ok(validate_ret) = unsafe { T::validate(env, napi_val) } {
-      Ok(validate_ret)
-    } else {
-      Err(Error::new(
-        Status::InvalidArg,
-        format!(
-          "Expect value to be Rc<{}>, but received {}",
-          T::value_type(),
-          received_type
-        ),
-      ))
-    }
-  }
-}
-
 impl<'scope, T> IntoJs<'scope> for Rc<T>
 where
   T: IntoJs<'scope> + Clone + 'scope,
@@ -404,30 +368,6 @@ impl<T: TypeName> TypeName for Arc<T> {
   }
 }
 
-impl<T: ValidateNapiValue> ValidateNapiValue for Arc<T> {
-  unsafe fn validate(env: sys::napi_env, napi_val: sys::napi_value) -> Result<sys::napi_value> {
-    let mut result = -1;
-    check_status!(
-      unsafe { sys::napi_typeof(env, napi_val, &mut result) },
-      "Failed to detect napi value type",
-    )?;
-
-    let received_type = ValueType::from(result);
-    if let Ok(validate_ret) = unsafe { T::validate(env, napi_val) } {
-      Ok(validate_ret)
-    } else {
-      Err(Error::new(
-        Status::InvalidArg,
-        format!(
-          "Expect value to be Arc<{}>, but received {}",
-          T::value_type(),
-          received_type
-        ),
-      ))
-    }
-  }
-}
-
 impl<'scope, T> IntoJs<'scope> for Arc<T>
 where
   T: IntoJs<'scope> + Clone + 'scope,
@@ -468,30 +408,6 @@ impl<T: TypeName> TypeName for Mutex<T> {
 
   fn value_type() -> ValueType {
     T::value_type()
-  }
-}
-
-impl<T: ValidateNapiValue> ValidateNapiValue for Mutex<T> {
-  unsafe fn validate(env: sys::napi_env, napi_val: sys::napi_value) -> Result<sys::napi_value> {
-    let mut result = -1;
-    check_status!(
-      unsafe { sys::napi_typeof(env, napi_val, &mut result) },
-      "Failed to detect napi value type",
-    )?;
-
-    let received_type = ValueType::from(result);
-    if let Ok(validate_ret) = unsafe { T::validate(env, napi_val) } {
-      Ok(validate_ret)
-    } else {
-      Err(Error::new(
-        Status::InvalidArg,
-        format!(
-          "Expect value to be Mutex<{}>, but received {}",
-          T::value_type(),
-          received_type
-        ),
-      ))
-    }
   }
 }
 

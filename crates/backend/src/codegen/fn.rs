@@ -784,31 +784,6 @@ impl NapiFn {
     } else {
       cb_arg.clone()
     };
-    let validate_value = if let Some(scope_arg) = scope_arg {
-      quote! { #scope_arg.validate_value::<#ty>(#scoped_cb_arg) }
-    } else {
-      quote! { napi::__private::callback_frame_validate_value::<#ty>(&frame, #scoped_cb_arg) }
-    };
-    let type_check = if self.return_if_invalid {
-      quote! {
-        if let Ok(maybe_promise) = #validate_value {
-          if !maybe_promise.is_null() {
-            return Ok(maybe_promise);
-          }
-        } else {
-          return Ok(std::ptr::null_mut());
-        }
-      }
-    } else if self.strict {
-      quote! {
-        let maybe_promise = #validate_value?;
-        if !maybe_promise.is_null() {
-          return Ok(maybe_promise);
-        }
-      }
-    } else {
-      quote! {}
-    };
 
     let arg_conversion = if self.module_exports {
       quote! { _napi_module_exports_ }
@@ -826,10 +801,7 @@ impl NapiFn {
             if let Some(syn::PathSegment { ident, .. }) = ele.path.segments.first() {
               if TYPEDARRAY_SLICE_TYPES.contains_key(&&*ident.to_string()) {
                 let q = quote! {
-                  let #arg_name = {
-                    #type_check
-                    frame.arg::<&mut #elem>(#index)?
-                  };
+                  let #arg_name = frame.arg::<&mut #elem>(#index)?;
                 };
                 refs.push(make_ref(quote! { #cb_arg }));
                 return Ok((q, false));
@@ -875,17 +847,11 @@ impl NapiFn {
         } else if is_external_type(&elem) {
           if mutability.is_some() {
             quote! {
-              let #arg_name = {
-                #type_check
-                frame.arg::<&mut #elem>(#index)?
-              };
+              let #arg_name = frame.arg::<&mut #elem>(#index)?;
             }
           } else {
             quote! {
-              let #arg_name = {
-                #type_check
-                frame.arg::<&#elem>(#index)?
-              };
+              let #arg_name = frame.arg::<&#elem>(#index)?;
             }
           }
         } else {
@@ -941,20 +907,14 @@ impl NapiFn {
             return Ok((q, false));
           }
         }
-        let mut is_array = false;
         if let syn::Type::Path(path) = &ty {
-          // Detect cases where the type is `Vec<&S>`.
-          // For example, in `async fn foo(v: Vec<&S>) {}`, we need to keep `v` alive by reference.
           if let Some(syn::PathSegment { ident, arguments }) = path.path.segments.first() {
-            // Check if the type is a `Vec`.
             if ident == "Vec" {
-              is_array = true;
               if let syn::PathArguments::AngleBracketed(syn::AngleBracketedGenericArguments {
                 args: angle_bracketed_args,
                 ..
               }) = &arguments
               {
-                // Check if the generic argument of `Vec` is a reference type (e.g., `&S`).
                 if let Some(syn::GenericArgument::Type(syn::Type::Reference(
                   syn::TypeReference { .. },
                 ))) = angle_bracketed_args.first()
@@ -965,8 +925,6 @@ impl NapiFn {
             }
           }
         }
-        // Array::validate only validates by the `Array.isArray`
-        // For the elements of the Array, we need to return rather than throw if they are invalid when `return_if_invalid` is true
         let from_js = if self.module_exports {
           quote! {
             {
@@ -974,20 +932,6 @@ impl NapiFn {
                 napi::bindgen_prelude::Local::from_raw(#arg_conversion)
               };
               <#ty as napi::bindgen_prelude::FromJs>::from_js(scope, value)?
-            }
-          }
-        } else if is_array && self.return_if_invalid {
-          quote! {
-            match frame.arg::<#ty>(#index) {
-              Ok(value) => value,
-              Err(err) => {
-                // InvalidArg, ObjectExpected, StringExpected ...
-                if err.status < napi::bindgen_prelude::Status::GenericFailure {
-                  return Ok(std::ptr::null_mut());
-                } else {
-                  return Err(err);
-                }
-              }
             }
           }
         } else if let Some(scope_arg) = scope_arg {
@@ -1005,10 +949,7 @@ impl NapiFn {
           }
         };
         let q = quote! {
-          let #arg_name = {
-            #type_check
-            #from_js
-          };
+          let #arg_name = #from_js;
         };
         Ok((q, scope_arg.is_some()))
       }

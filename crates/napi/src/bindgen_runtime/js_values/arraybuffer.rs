@@ -6,7 +6,6 @@ use std::ptr::{self, NonNull};
 use crate::{
   bindgen_prelude::{
     FromJs, IntoJs, JsObjectValue, JsValue, Local, Scope, This, TypeName, Unknown,
-    ValidateNapiValue,
   },
   check_status, sys, Env, Error, Result, Status, Value, ValueType,
 };
@@ -370,22 +369,6 @@ impl TypeName for TypedArray<'_> {
   }
 }
 
-impl ValidateNapiValue for TypedArray<'_> {
-  unsafe fn validate(env: sys::napi_env, napi_val: sys::napi_value) -> Result<sys::napi_value> {
-    let mut is_typedarray = false;
-    check_status!(
-      unsafe { sys::napi_is_typedarray(env, napi_val, &mut is_typedarray) },
-      "Failed to validate TypedArray"
-    )?;
-    if !is_typedarray {
-      return Err(Error::new(
-        Status::InvalidArg,
-        "Value is not a TypedArray".to_owned(),
-      ));
-    }
-    Ok(ptr::null_mut())
-  }
-}
 
 impl<'env> JsValue<'env> for TypedArray<'env> {
   fn value(&self) -> Value {
@@ -684,25 +667,6 @@ macro_rules! impl_typed_array {
       }
     }
 
-    impl ValidateNapiValue for $name {
-      unsafe fn validate(
-        env: sys::napi_env,
-        napi_val: sys::napi_value,
-      ) -> Result<crate::sys::napi_value> {
-        let mut is_typed_array = false;
-        check_status!(
-          unsafe { sys::napi_is_typedarray(env, napi_val, &mut is_typed_array) },
-          "Failed to check if value is typed array"
-        )?;
-        if !is_typed_array {
-          return Err(Error::new(
-            Status::InvalidArg,
-            "Expected a TypedArray value".to_owned(),
-          ));
-        }
-        Ok(ptr::null_mut())
-      }
-    }
 
     impl<'env, 'scope> FromJs<'env, 'scope> for $name {
       fn from_js(
@@ -1371,22 +1335,6 @@ macro_rules! impl_from_slice {
       }
     }
 
-    impl ValidateNapiValue for $slice_type<'_> {
-      unsafe fn validate(env: sys::napi_env, napi_val: sys::napi_value) -> Result<sys::napi_value> {
-        let mut is_typed_array = false;
-        check_status!(
-          unsafe { sys::napi_is_typedarray(env, napi_val, &mut is_typed_array) },
-          "Failed to validate napi typed array"
-        )?;
-        if !is_typed_array {
-          return Err(Error::new(
-            Status::InvalidArg,
-            "Expected a TypedArray value".to_owned(),
-          ));
-        }
-        Ok(ptr::null_mut())
-      }
-    }
 
     impl AsRef<[$rust_type]> for $slice_type<'_> {
       fn as_ref(&self) -> &[$rust_type] {
@@ -1500,39 +1448,7 @@ macro_rules! impl_from_slice {
       }
     }
 
-    impl ValidateNapiValue for &[$rust_type] {
-      unsafe fn validate(env: sys::napi_env, napi_val: sys::napi_value) -> Result<sys::napi_value> {
-        let mut is_typed_array = false;
-        check_status!(
-          unsafe { sys::napi_is_typedarray(env, napi_val, &mut is_typed_array) },
-          "Failed to validate napi typed array"
-        )?;
-        if !is_typed_array {
-          return Err(Error::new(
-            Status::InvalidArg,
-            "Expected a TypedArray value".to_owned(),
-          ));
-        }
-        Ok(ptr::null_mut())
-      }
-    }
 
-    impl ValidateNapiValue for &mut [$rust_type] {
-      unsafe fn validate(env: sys::napi_env, napi_val: sys::napi_value) -> Result<sys::napi_value> {
-        let mut is_typed_array = false;
-        check_status!(
-          unsafe { sys::napi_is_typedarray(env, napi_val, &mut is_typed_array) },
-          "Failed to validate napi typed array"
-        )?;
-        if !is_typed_array {
-          return Err(Error::new(
-            Status::InvalidArg,
-            "Expected a TypedArray value".to_owned(),
-          ));
-        }
-        Ok(ptr::null_mut())
-      }
-    }
   };
 }
 
@@ -1710,22 +1626,6 @@ impl TypeName for Uint8ClampedSlice<'_> {
   }
 }
 
-impl ValidateNapiValue for Uint8ClampedSlice<'_> {
-  unsafe fn validate(env: sys::napi_env, napi_val: sys::napi_value) -> Result<sys::napi_value> {
-    let mut is_typedarray = false;
-    check_status!(
-      unsafe { sys::napi_is_typedarray(env, napi_val, &mut is_typedarray) },
-      "Failed to validate typed buffer"
-    )?;
-    if !is_typedarray {
-      return Err(Error::new(
-        Status::InvalidArg,
-        "Expected a TypedArray value".to_owned(),
-      ));
-    }
-    Ok(ptr::null_mut())
-  }
-}
 
 impl AsRef<[u8]> for Uint8ClampedSlice<'_> {
   fn as_ref(&self) -> &[u8] {

@@ -1,7 +1,7 @@
 use std::convert::TryFrom;
 
 use crate::{
-  bindgen_runtime::{TypeName, ValidateNapiValue},
+  bindgen_runtime::{TypeName},
   check_status, sys, Error, JsValue, Result, Value, ValueType,
 };
 
@@ -21,7 +21,6 @@ impl TypeName for JsNumber<'_> {
   }
 }
 
-impl ValidateNapiValue for JsNumber<'_> {}
 
 impl<'env> JsValue<'env> for JsNumber<'env> {
   fn value(&self) -> Value {

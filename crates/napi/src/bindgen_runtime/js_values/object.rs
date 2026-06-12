@@ -523,7 +523,6 @@ impl TypeName for Object<'_> {
   }
 }
 
-impl ValidateNapiValue for Object<'_> {}
 
 impl<'env, 'scope> FromJs<'env, 'scope> for Object<'scope> {
   fn from_js(

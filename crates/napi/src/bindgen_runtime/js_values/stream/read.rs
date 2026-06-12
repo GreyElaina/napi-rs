@@ -18,7 +18,7 @@ use futures_core::Stream;
 use crate::{
   bindgen_prelude::{
     BufferSlice, FnArgs, FromJs, Func, Function, IntoJsArgs, JsObjectValue, Local, Object,
-    Promise, PromiseFuture, Ref, Scope, TypeName, Unknown, ValidateNapiValue, NAPI_AUTO_LENGTH,
+    Promise, PromiseFuture, Ref, Scope, TypeName, Unknown, NAPI_AUTO_LENGTH,
   },
   bindgen_runtime::{CallbackDecoder, EnvRecord, IntoJs},
   check_status,
@@ -54,32 +54,6 @@ impl<T> TypeName for ReadableStream<'_, T> {
   }
 }
 
-impl<T> ValidateNapiValue for ReadableStream<'_, T> {
-  unsafe fn validate(
-    env: napi_sys::napi_env,
-    napi_val: napi_sys::napi_value,
-  ) -> Result<napi_sys::napi_value> {
-    unsafe {
-      EnvRecord::enter_scope(env, |scope| {
-        let global = scope.env().get_global()?;
-        let constructor: Function<'_, (), ()> =
-          scope.get_named_property(&global, "ReadableStream")?;
-        let mut is_instance = false;
-        check_status!(
-          sys::napi_instanceof(env, napi_val, constructor.value, &mut is_instance),
-          "Check ReadableStream instance failed"
-        )?;
-        if !is_instance {
-          return Err(Error::new(
-            Status::InvalidArg,
-            "Value is not a ReadableStream",
-          ));
-        }
-        Ok(ptr::null_mut())
-      })
-    }
-  }
-}
 
 impl<'env, 'scope, T> FromJs<'env, 'scope> for ReadableStream<'scope, T> {
   fn from_js(
@@ -507,11 +481,11 @@ impl<T: Send + Sync + 'static + for<'env, 'scope> FromJs<'env, 'scope>> futures_
         EnvRecord::enter_scope(raw_env, |scope| {
           let mut value = ptr::null_mut();
           check_status!(
-            unsafe { sys::napi_get_reference_value(scope.env().raw(), ref_, &mut value) },
+            sys::napi_get_reference_value(scope.env().raw(), ref_, &mut value),
             "Get reader function reference failed"
           )?;
           let read_fn_local: Function<'_, (), PromiseFuture<IteratorValue<T>>> =
-            Function::from_js(scope, unsafe { Local::from_raw(value) })?;
+            Function::from_js(scope, Local::from_raw(value))?;
           let iterator = scope.call(&read_fn_local, ())?;
 
           let task = env_wrapper.spawn_future(async move {

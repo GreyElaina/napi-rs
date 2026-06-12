@@ -16,7 +16,6 @@ impl<K, V, S> TypeName for HashMap<K, V, S> {
   }
 }
 
-impl<K, V, S> ValidateNapiValue for HashMap<K, V, S> {}
 
 #[cfg(not(feature = "noop"))]
 impl<'scope, K, V, S> IntoJs<'scope> for HashMap<K, V, S>
@@ -105,7 +104,6 @@ impl<K, V> TypeName for BTreeMap<K, V> {
   }
 }
 
-impl<K, V> ValidateNapiValue for BTreeMap<K, V> {}
 
 #[cfg(not(feature = "noop"))]
 impl<'scope, K, V> IntoJs<'scope> for BTreeMap<K, V>
@@ -195,7 +193,6 @@ impl<K, V, S> TypeName for IndexMap<K, V, S> {
 }
 
 #[cfg(feature = "object_indexmap")]
-impl<K, V, S> ValidateNapiValue for IndexMap<K, V, S> {}
 
 #[cfg(all(feature = "object_indexmap", not(feature = "noop")))]
 impl<'scope, K, V, S> IntoJs<'scope> for IndexMap<K, V, S>

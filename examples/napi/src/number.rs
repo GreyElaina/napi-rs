@@ -3,7 +3,7 @@ fn add(a: u32, b: u32) -> u32 {
   a + b
 }
 
-#[napi(strict)]
+#[napi]
 fn fibonacci(n: u32) -> u32 {
   match n {
     1 | 2 => 1,

@@ -11,6 +11,7 @@ pub async fn without_abort_controller(a: u32, b: u32) -> Result<u32> {
 
 #[napi]
 pub async fn with_abort_controller(a: u32, b: u32, signal: AbortSignal) -> Result<u32> {
+  signal.on_abort(|| {});
   sleep(Duration::from_millis(100));
   Ok(a + b)
 }

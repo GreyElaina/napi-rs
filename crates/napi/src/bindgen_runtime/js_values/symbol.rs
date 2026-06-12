@@ -2,7 +2,7 @@ use std::ptr;
 
 use crate::{
   bindgen_runtime::{
-    Env, FromJs, IntoJs, Local, Result, Scope, TypeName, Unknown, ValidateNapiValue,
+    Env, FromJs, IntoJs, Local, Result, Scope, TypeName, Unknown,
   },
   check_status, sys, JsSymbol,
 };
@@ -23,7 +23,6 @@ impl TypeName for Symbol {
   }
 }
 
-impl ValidateNapiValue for Symbol {}
 
 impl Symbol {
   pub fn new<S: ToString>(desc: S) -> Self {

@@ -1,9 +1,8 @@
 use std::marker::PhantomData;
-use std::ptr;
 
 use crate::{
-  bindgen_runtime::{JsObjectValue, TypeName, ValidateNapiValue},
-  check_status, sys, Error, JsValue, Result, Status, Value, ValueType,
+  bindgen_runtime::{JsObjectValue, TypeName},
+  check_status, sys, JsValue, Result, Value, ValueType,
 };
 
 #[derive(Clone, Copy)]
@@ -19,20 +18,6 @@ impl TypeName for JsDate<'_> {
   }
 }
 
-impl ValidateNapiValue for JsDate<'_> {
-  unsafe fn validate(env: sys::napi_env, napi_val: sys::napi_value) -> Result<sys::napi_value> {
-    let mut is_date = false;
-    check_status!(unsafe { sys::napi_is_date(env, napi_val, &mut is_date) })?;
-    if !is_date {
-      return Err(Error::new(
-        Status::InvalidArg,
-        "Expected a Date object".to_owned(),
-      ));
-    }
-
-    Ok(ptr::null_mut())
-  }
-}
 
 impl<'env> JsValue<'env> for JsDate<'env> {
   fn value(&self) -> Value {

@@ -267,7 +267,6 @@ import {
   acceptUntypedTypedArray,
   defineClass,
   callbackInSpawn,
-  arrayParams,
   indexSetToRust,
   indexSetToJs,
   intoUtf8,
@@ -1999,17 +1998,4 @@ test('callback in spawn async task', async (t) => {
   })
   const obj = await promise
   t.deepEqual(obj, { foo: 'bar' })
-})
-
-test('return if invalid params', (t) => {
-  t.notThrows(() => {
-    // @ts-expect-error
-    arrayParams(['1', '2'])
-    arrayParams([
-      // @ts-expect-error
-      { foo: 'bar' },
-      // @ts-expect-error
-      Symbol.for('foo'),
-    ])
-  })
 })

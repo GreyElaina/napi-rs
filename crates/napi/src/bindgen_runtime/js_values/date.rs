@@ -14,18 +14,16 @@ impl<Tz: TimeZone> TypeName for DateTime<Tz> {
   }
 }
 
-impl<Tz: TimeZone> ValidateNapiValue for DateTime<Tz> {
-  unsafe fn validate(env: sys::napi_env, napi_val: sys::napi_value) -> Result<sys::napi_value> {
-    let mut is_date = false;
-    check_status!(unsafe { sys::napi_is_date(env, napi_val, &mut is_date) })?;
-    if !is_date {
-      return Err(Error::new(
-        Status::InvalidArg,
-        "Expected a Date object".to_owned(),
-      ));
-    }
-
-    Ok(ptr::null_mut())
+fn ensure_is_date(env: sys::napi_env, raw: sys::napi_value) -> Result<()> {
+  let mut is_date = false;
+  check_status!(unsafe { sys::napi_is_date(env, raw, &mut is_date) })?;
+  if is_date {
+    Ok(())
+  } else {
+    Err(Error::new(
+      Status::InvalidArg,
+      "Expected a Date object".to_owned(),
+    ))
   }
 }
 
@@ -72,6 +70,7 @@ where
     scope: &mut Scope<'env, 'scope>,
     value: Local<'scope, Unknown<'scope>>,
   ) -> Result<Self> {
+    ensure_is_date(scope.env().raw(), value.raw())?;
     let mut milliseconds_since_epoch_utc = 0.0;
 
     check_status!(
@@ -100,6 +99,7 @@ impl<'env, 'scope> FromJs<'env, 'scope> for crate::JsDate<'scope> {
     scope: &mut Scope<'env, 'scope>,
     value: Local<'scope, Unknown<'scope>>,
   ) -> Result<Self> {
+    ensure_is_date(scope.env().raw(), value.raw())?;
     Ok(crate::JsDate(
       crate::Value {
         env: scope.env().raw(),

@@ -13,7 +13,6 @@ macro_rules! impl_number_conversions {
         }
       }
 
-      impl $crate::bindgen_prelude::ValidateNapiValue for $t { }
 
       impl<'scope> IntoJs<'scope> for $t {
         type Output = crate::JsNumber<'scope>;

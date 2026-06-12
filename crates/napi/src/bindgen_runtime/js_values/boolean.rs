@@ -15,7 +15,6 @@ impl TypeName for bool {
   }
 }
 
-impl ValidateNapiValue for bool {}
 
 impl<'scope> IntoJs<'scope> for bool {
   type Output = Boolean<'scope>;

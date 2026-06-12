@@ -1,7 +1,7 @@
-use super::{FromJs, IntoJs, Local, Scope, TypeName, ValidateNapiValue};
+use super::{FromJs, IntoJs, Local, Scope, TypeName};
 use crate::{
   bindgen_runtime::{Null, Undefined, Unknown},
-  check_status, sys, JsValue, Status, ValueType,
+  JsValue, Status, ValueType,
 };
 
 impl<T> From<Option<T>> for Either<T, Undefined> {
@@ -79,37 +79,6 @@ macro_rules! either_n {
       }
     }
 
-    impl< $( $parameter ),+ > ValidateNapiValue for $either_name < $( $parameter ),+ >
-      where $( $parameter: ValidateNapiValue ),+
-    {
-      unsafe fn validate(
-        env: sys::napi_env,
-        napi_val: sys::napi_value,
-      ) -> crate::Result<sys::napi_value> {
-        let mut ret: crate::Result<sys::napi_value>;
-        $(
-          if unsafe {
-            ret = $parameter::validate(env, napi_val);
-            if let Ok(maybe_rejected_promise) = ret.as_ref() {
-              if maybe_rejected_promise.is_null() {
-                true
-              } else {
-                silence_rejected_promise(env, *maybe_rejected_promise)?;
-                false
-              }
-            } else {
-              false
-            }
-          } {
-            ret
-          } else
-        )+
-        {
-          ret
-        }
-      }
-    }
-
     impl<Data, $( $parameter: AsRef<Data> ),+ > AsRef<Data> for $either_name < $( $parameter ),+ >
       where Data: ?Sized,
     {
@@ -169,36 +138,3 @@ either_n!(Either23, A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, 
 either_n!(Either24, A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X);
 either_n!(Either25, A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y);
 either_n!(Either26, A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z);
-
-fn silence_rejected_promise(env: sys::napi_env, promise: sys::napi_value) -> crate::Result<()> {
-  let mut catch_method = std::ptr::null_mut();
-  check_status!(unsafe {
-    sys::napi_get_named_property(env, promise, c"catch".as_ptr().cast(), &mut catch_method)
-  })?;
-  let mut catch_noop_callback = std::ptr::null_mut();
-  check_status!(unsafe {
-    sys::napi_create_function(
-      env,
-      c"catch".as_ptr().cast(),
-      5,
-      Some(noop),
-      std::ptr::null_mut(),
-      &mut catch_noop_callback,
-    )
-  })?;
-  check_status!(unsafe {
-    sys::napi_call_function(
-      env,
-      promise,
-      catch_method,
-      1,
-      vec![catch_noop_callback].as_ptr().cast(),
-      std::ptr::null_mut(),
-    )
-  })?;
-  Ok(())
-}
-
-unsafe extern "C" fn noop(_: sys::napi_env, _: sys::napi_callback_info) -> sys::napi_value {
-  std::ptr::null_mut()
-}

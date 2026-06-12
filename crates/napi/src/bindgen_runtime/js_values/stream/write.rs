@@ -1,12 +1,11 @@
-use std::{marker::PhantomData, ptr};
+use std::marker::PhantomData;
 
 use crate::{
   bindgen_prelude::{
     FnArgs, FromJs, Function, JsObjectValue, Local, Object, Promise, Scope, TypeName, Unknown,
-    ValidateNapiValue,
   },
   bindgen_runtime::EnvRecord,
-  check_status, sys, Error, JsValue, Result, Status, Value, ValueType,
+  sys, JsValue, Result, Value, ValueType,
 };
 
 pub struct WriteableStream<'env> {
@@ -37,32 +36,6 @@ impl TypeName for WriteableStream<'_> {
   }
 }
 
-impl ValidateNapiValue for WriteableStream<'_> {
-  unsafe fn validate(
-    env: napi_sys::napi_env,
-    napi_val: napi_sys::napi_value,
-  ) -> Result<napi_sys::napi_value> {
-    unsafe {
-      EnvRecord::enter_scope(env, |scope| {
-        let global = scope.env().get_global()?;
-        let constructor: Function<'_, (), ()> =
-          scope.get_named_property(&global, "WritableStream")?;
-        let mut is_instance = false;
-        check_status!(
-          sys::napi_instanceof(env, napi_val, constructor.value, &mut is_instance),
-          "Check WritableStream instance failed"
-        )?;
-        if !is_instance {
-          return Err(Error::new(
-            Status::InvalidArg,
-            "Value is not a WritableStream",
-          ));
-        }
-        Ok(ptr::null_mut())
-      })
-    }
-  }
-}
 
 impl<'env, 'scope> FromJs<'env, 'scope> for WriteableStream<'scope> {
   fn from_js(

@@ -8,7 +8,6 @@ use crate::{
       reference_value, RefState,
     },
     Env, FromJs, IntoJs, JsRefTarget, Local, Ref, Scope, Sym, Symbol, TypeName, Unknown,
-    ValidateNapiValue,
   },
   JsValue, Result, Value, ValueType,
 };
@@ -52,7 +51,6 @@ impl<'env, 'scope> FromJs<'env, 'scope> for JsSymbol<'scope> {
   }
 }
 
-impl ValidateNapiValue for JsSymbol<'_> {}
 
 pub type SymbolRef = Ref<Sym>;
 

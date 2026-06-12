@@ -5,7 +5,7 @@ use std::ptr;
 use crate::{
   bindgen_prelude::{
     CallbackDecoder, EnvRecord, FromJs, IntoJs, JsObjectValue, Local, Result, Scope, TypeName,
-    Unknown, ValidateNapiValue,
+    Unknown,
   },
   check_status, sys, Env, Error, JsValue, Status, Value, ValueType,
 };
@@ -41,20 +41,12 @@ impl<T> TypeName for Promise<'_, T> {
   }
 }
 
-impl<T> ValidateNapiValue for Promise<'_, T> {
-  unsafe fn validate(
-    env: napi_sys::napi_env,
-    napi_val: napi_sys::napi_value,
-  ) -> Result<napi_sys::napi_value> {
-    validate_promise(env, napi_val)
-  }
-}
-
 impl<'env, 'scope, T> FromJs<'env, 'scope> for Promise<'scope, T> {
   fn from_js(
     scope: &mut Scope<'env, 'scope>,
     value: Local<'scope, Unknown<'scope>>,
   ) -> Result<Self> {
+    super::ensure_is_promise(scope.env().raw(), value.raw())?;
     Ok(unsafe { Promise::from_raw(scope.env().raw(), value.raw()) })
   }
 }
@@ -326,56 +318,6 @@ impl<Cb> Drop for PromiseCallbackStateGuard<Cb> {
       drop(unsafe { Box::from_raw(self.raw) });
     }
   }
-}
-
-pub(crate) fn validate_promise(
-  env: napi_sys::napi_env,
-  napi_val: napi_sys::napi_value,
-) -> Result<sys::napi_value> {
-  let mut is_promise = false;
-  check_status!(
-    unsafe { crate::sys::napi_is_promise(env, napi_val, &mut is_promise) },
-    "Failed to check if value is promise"
-  )?;
-  if !is_promise {
-    let mut deferred = ptr::null_mut();
-    let mut promise = ptr::null_mut();
-    check_status!(
-      unsafe { crate::sys::napi_create_promise(env, &mut deferred, &mut promise) },
-      "Failed to create promise"
-    )?;
-    const INVALID_ARG: &[u8; 11] = b"InvalidArg\0";
-    let mut err = ptr::null_mut();
-    let mut code = ptr::null_mut();
-    let mut message = ptr::null_mut();
-    check_status!(
-      unsafe {
-        crate::sys::napi_create_string_utf8(env, INVALID_ARG.as_ptr().cast(), 10, &mut code)
-      },
-      "Failed to create error message"
-    )?;
-    check_status!(
-      unsafe {
-        crate::sys::napi_create_string_utf8(
-          env,
-          c"Expected Promise object".as_ptr().cast(),
-          23,
-          &mut message,
-        )
-      },
-      "Failed to create error message"
-    )?;
-    check_status!(
-      unsafe { crate::sys::napi_create_error(env, code, message, &mut err) },
-      "Failed to create rejected error"
-    )?;
-    check_status!(
-      unsafe { crate::sys::napi_reject_deferred(env, deferred, err) },
-      "Failed to reject promise in validate"
-    )?;
-    return Ok(promise);
-  }
-  Ok(ptr::null_mut())
 }
 
 struct PromiseCallbackState<Cb> {

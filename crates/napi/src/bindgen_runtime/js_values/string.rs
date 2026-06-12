@@ -15,7 +15,6 @@ impl TypeName for String {
   }
 }
 
-impl ValidateNapiValue for String {}
 
 impl<'scope> IntoJs<'scope> for &String {
   type Output = crate::JsString<'scope>;
@@ -112,7 +111,6 @@ impl<'scope> IntoJs<'scope> for &str {
 #[derive(Debug)]
 pub struct Utf16String(Vec<u16>);
 
-impl ValidateNapiValue for Utf16String {}
 
 impl From<String> for Utf16String {
   fn from(s: String) -> Self {
@@ -189,7 +187,6 @@ impl<'scope> IntoJs<'scope> for Utf16String {
 #[derive(Debug)]
 pub struct Latin1String(Vec<u8>);
 
-impl ValidateNapiValue for Latin1String {}
 
 impl From<String> for Latin1String {
   fn from(s: String) -> Self {

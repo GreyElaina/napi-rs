@@ -3,7 +3,6 @@ use std::{marker::PhantomData, ptr, sync::Arc};
 use super::{
   value_ref::{create_reference, ensure_same_deferred, reference_value, RefState},
   Either, FromJs, Func, IntoJs, JsRefTarget, Local, Ref, Scope, TypeName, Unknown,
-  ValidateNapiValue,
 };
 
 use crate::{
@@ -298,7 +297,6 @@ impl<'env, 'scope, Args, Return> FromJs<'env, 'scope> for Function<'scope, Args,
   }
 }
 
-impl<Args, Return> ValidateNapiValue for Function<'_, Args, Return> {}
 
 impl<Args, Return> Function<'_, Args, Return> {
   /// Get the name of the JavaScript function.
@@ -359,6 +357,20 @@ impl<'scope, Args, Return> JsRefTarget<'scope, Ref<Func<Args, Return>>>
 }
 
 impl<Args, Return> Function<'_, Args, Return> {
+  fn convert_return<'env, 'scope>(
+    scope: &mut Scope<'env, 'scope>,
+    value: Local<'scope, Unknown<'scope>>,
+  ) -> Result<Return>
+  where
+    Return: FromJs<'env, 'scope>,
+  {
+    if std::mem::size_of::<Return>() == 0 {
+      Ok(unsafe { std::mem::MaybeUninit::<Return>::zeroed().assume_init() })
+    } else {
+      Return::from_js(scope, value)
+    }
+  }
+
   /// Call the JavaScript function.
   /// `this` in the JavaScript function will be `undefined`.
   /// If you want to specify `this`, you can use the `apply` method.
@@ -379,7 +391,7 @@ impl<Args, Return> Function<'_, Args, Return> {
     let args = args.into_js_args(scope)?;
     let raw_return = unsafe { call_function_raw(self.env, raw_this, self.value, args.as_slice()) }?;
     let value = unsafe { Local::from_raw(raw_return) };
-    Return::from_js(scope, value)
+    Self::convert_return(scope, value)
   }
 
   /// Call the JavaScript function.
@@ -399,7 +411,7 @@ impl<Args, Return> Function<'_, Args, Return> {
     let args = args.into_js_args(scope)?;
     let raw_return = unsafe { call_function_raw(self.env, raw_this, self.value, args.as_slice()) }?;
     let value = unsafe { Local::from_raw(raw_return) };
-    Return::from_js(scope, value)
+    Self::convert_return(scope, value)
   }
 
   /// Call `Function.bind`
@@ -549,7 +561,6 @@ impl<'env, 'scope, Args, Return> FromJs<'env, 'scope> for Ref<Func<Args, Return>
   }
 }
 
-impl<Args, Return> ValidateNapiValue for Ref<Func<Args, Return>> {}
 
 pub struct FunctionCallContext<'env, 'scope, 'context> {
   pub(crate) args: JsArgSlice<'scope>,

@@ -269,12 +269,6 @@ pub fn napi_fn_from_decl(
           "module_exports fn can't have factory or constructor"
         );
       }
-      if opts.strict.is_present() {
-        bail_span!(sig.ident, "module_exports fn can't have strict");
-      }
-      if opts.return_if_invalid.is_present() {
-        bail_span!(sig.ident, "module_exports fn can't have return_if_invalid");
-      }
 
       if parent.is_some() {
         bail_span!(sig.ident, "module_exports fn can't inside impl block");
@@ -446,8 +440,6 @@ pub fn napi_fn_from_decl(
       parent_js_name,
       comments: extract_doc_comments(&attrs),
       attrs,
-      strict: opts.strict.is_present(),
-      return_if_invalid: opts.return_if_invalid.is_present(),
       js_mod: namespace,
       ts: TsOverrides {
         ts_type: flex_string(&opts.ts_type),

@@ -242,6 +242,7 @@ impl<'env, 'scope> FromJs<'env, 'scope> for BufferSlice<'scope> {
     scope: &mut Scope<'env, 'scope>,
     value: Local<'scope, Unknown<'scope>>,
   ) -> Result<Self> {
+    super::ensure_is_buffer(scope.env().raw(), value.raw())?;
     unsafe { BufferSlice::from_raw(scope.env().raw(), value.raw()) }
   }
 }
@@ -264,22 +265,6 @@ impl TypeName for BufferSlice<'_> {
   }
 }
 
-impl ValidateNapiValue for BufferSlice<'_> {
-  unsafe fn validate(env: sys::napi_env, napi_val: sys::napi_value) -> Result<sys::napi_value> {
-    let mut is_buffer = false;
-    check_status!(
-      unsafe { sys::napi_is_buffer(env, napi_val, &mut is_buffer) },
-      "Failed to validate napi buffer"
-    )?;
-    if !is_buffer {
-      return Err(Error::new(
-        Status::InvalidArg,
-        "Expected a Buffer value".to_owned(),
-      ));
-    }
-    Ok(ptr::null_mut())
-  }
-}
 
 impl AsRef<[u8]> for BufferSlice<'_> {
   fn as_ref(&self) -> &[u8] {
@@ -506,6 +491,7 @@ impl<'env, 'scope> FromJs<'env, 'scope> for Buffer {
     scope: &mut Scope<'env, 'scope>,
     value: Local<'scope, Unknown<'scope>>,
   ) -> Result<Self> {
+    super::ensure_is_buffer(scope.env().raw(), value.raw())?;
     unsafe { Buffer::from_raw(scope.env().raw(), value.raw()) }
   }
 }
@@ -572,19 +558,3 @@ impl<'scope> IntoJs<'scope> for Buffer {
   }
 }
 
-impl ValidateNapiValue for Buffer {
-  unsafe fn validate(env: sys::napi_env, napi_val: sys::napi_value) -> Result<sys::napi_value> {
-    let mut is_buffer = false;
-    check_status!(
-      unsafe { sys::napi_is_buffer(env, napi_val, &mut is_buffer) },
-      "Failed to validate napi buffer"
-    )?;
-    if !is_buffer {
-      return Err(Error::new(
-        Status::InvalidArg,
-        "Expected a Buffer value".to_owned(),
-      ));
-    }
-    Ok(ptr::null_mut())
-  }
-}

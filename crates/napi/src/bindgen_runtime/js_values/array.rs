@@ -144,23 +144,6 @@ impl<'env, 'scope> FromJs<'env, 'scope> for Array<'scope> {
   }
 }
 
-impl<'env> ValidateNapiValue for Array<'env> {
-  unsafe fn validate(env: sys::napi_env, napi_val: sys::napi_value) -> Result<sys::napi_value> {
-    let mut is_array = false;
-    check_status!(
-      unsafe { sys::napi_is_array(env, napi_val, &mut is_array) },
-      "Failed to check given napi value is array"
-    )?;
-    if !is_array {
-      return Err(Error::new(
-        Status::InvalidArg,
-        "Expected an array".to_owned(),
-      ));
-    }
-    Ok(ptr::null_mut())
-  }
-}
-
 impl Array<'_> {
   /// Create `Array` from `Vec<T>`
   pub fn from_vec<T>(env: &Env, value: Vec<T>) -> Result<Self>
@@ -332,6 +315,7 @@ where
     scope: &mut Scope<'env, 'scope>,
     value: Local<'scope, Unknown<'scope>>,
   ) -> Result<Self> {
+    super::ensure_is_array(scope.env().raw(), value.raw())?;
     let mut len = 0;
     check_status!(
       unsafe { sys::napi_get_array_length(scope.env().raw(), value.raw(), &mut len) },
@@ -360,22 +344,6 @@ where
   }
 }
 
-impl<T> ValidateNapiValue for Vec<T> {
-  unsafe fn validate(env: sys::napi_env, napi_val: sys::napi_value) -> Result<sys::napi_value> {
-    let mut is_array = false;
-    check_status!(
-      unsafe { sys::napi_is_array(env, napi_val, &mut is_array) },
-      "Failed to check given napi value is array"
-    )?;
-    if !is_array {
-      return Err(Error::new(
-        Status::InvalidArg,
-        "Expected an array".to_owned(),
-      ));
-    }
-    Ok(ptr::null_mut())
-  }
-}
 
 macro_rules! arr_get_js {
   ($arr:expr, $scope:expr, $n:expr, $err:expr) => {
@@ -412,7 +380,6 @@ macro_rules! tuple_from_js {
 
 macro_rules! impl_tuple_validate_napi_value {
   ($($ident:ident),+) => {
-    impl<$($ident),*> ValidateNapiValue for ($($ident,)*) {}
     impl<$($ident),*> TypeName for ($($ident,)*) {
       fn type_name() -> &'static str {
         concat!("Tuple", "(", $(stringify!($ident), ","),*, ")")

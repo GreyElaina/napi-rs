@@ -16,10 +16,12 @@ impl TypeName for Null {
   }
 }
 
-impl ValidateNapiValue for Null {}
-
 impl<'env, 'scope> FromJs<'env, 'scope> for Null {
-  fn from_js(_: &mut Scope<'env, 'scope>, _: Local<'scope, Unknown<'scope>>) -> Result<Self> {
+  fn from_js(
+    scope: &mut Scope<'env, 'scope>,
+    value: Local<'scope, Unknown<'scope>>,
+  ) -> Result<Self> {
+    super::ensure_value_type(scope.env().raw(), value.raw(), ValueType::Null)?;
     Ok(Null)
   }
 }
@@ -66,10 +68,12 @@ impl TypeName for Undefined {
   }
 }
 
-impl ValidateNapiValue for Undefined {}
-
 impl<'env, 'scope> FromJs<'env, 'scope> for Undefined {
-  fn from_js(_: &mut Scope<'env, 'scope>, _: Local<'scope, Unknown<'scope>>) -> Result<Self> {
+  fn from_js(
+    scope: &mut Scope<'env, 'scope>,
+    value: Local<'scope, Unknown<'scope>>,
+  ) -> Result<Self> {
+    super::ensure_value_type(scope.env().raw(), value.raw(), ValueType::Undefined)?;
     Ok(())
   }
 }
@@ -154,32 +158,6 @@ impl<T: TypeName> TypeName for Nullable<T> {
 
   fn value_type() -> ValueType {
     ValueType::Unknown
-  }
-}
-
-impl<T: ValidateNapiValue> ValidateNapiValue for Nullable<T> {
-  unsafe fn validate(env: sys::napi_env, napi_val: sys::napi_value) -> Result<sys::napi_value> {
-    let mut result = -1;
-    check_status!(
-      unsafe { sys::napi_typeof(env, napi_val, &mut result) },
-      "Failed to detect napi value type",
-    )?;
-
-    let received_type = ValueType::from(result);
-    if received_type == ValueType::Null || received_type == ValueType::Undefined {
-      Ok(ptr::null_mut())
-    } else if let Ok(validate_ret) = unsafe { T::validate(env, napi_val) } {
-      Ok(validate_ret)
-    } else {
-      Err(crate::Error::new(
-        crate::Status::InvalidArg,
-        format!(
-          "Expect value to be Nullable<{}>, but received {}",
-          T::value_type(),
-          received_type
-        ),
-      ))
-    }
   }
 }
 

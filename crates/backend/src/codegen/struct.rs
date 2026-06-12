@@ -187,17 +187,6 @@ fn gen_napi_value_map_impl(
   } else {
     quote! { #name }
   };
-  let validate = quote! {
-    unsafe fn validate(env: napi::sys::napi_env, napi_val: napi::sys::napi_value) -> napi::Result<napi::sys::napi_value> {
-      let mut env_wrapper = unsafe { napi::bindgen_prelude::Env::from_raw(env) };
-      env_wrapper.with_scope(|scope| {
-        unsafe {
-          <#name as napi::bindgen_prelude::NapiReceiver>::validate_raw_object(scope, napi_val)?;
-        }
-        Ok(std::ptr::null_mut())
-      })
-    }
-  };
   quote! {
     #[automatically_derived]
     impl napi::bindgen_prelude::TypeName for #name {
@@ -233,16 +222,6 @@ fn gen_napi_value_map_impl(
     }
 
     #to_napi_val_impl
-
-    #[automatically_derived]
-    impl napi::bindgen_prelude::ValidateNapiValue for &#name {
-      #validate
-    }
-
-    #[automatically_derived]
-    impl napi::bindgen_prelude::ValidateNapiValue for &mut #name {
-      #validate
-    }
   }
 }
 
@@ -846,16 +825,14 @@ impl NapiStruct {
       }
     };
 
-    let (into_js_impl, validate_napi_value_impl, type_name_impl) = if self.has_lifetime {
+    let (into_js_impl, type_name_impl) = if self.has_lifetime {
       (
         quote! { impl <'scope, '_javascript_function_scope> napi::bindgen_prelude::IntoJs<'scope> for #name<'_javascript_function_scope> where '_javascript_function_scope: 'scope },
-        quote! { impl <'_javascript_function_scope> napi::bindgen_prelude::ValidateNapiValue for #name<'_javascript_function_scope> },
         quote! { impl <'_javascript_function_scope> napi::bindgen_prelude::TypeName for #name<'_javascript_function_scope> },
       )
     } else {
       (
         quote! { impl <'scope> napi::bindgen_prelude::IntoJs<'scope> for #name },
-        quote! { impl napi::bindgen_prelude::ValidateNapiValue for #name },
         quote! { impl napi::bindgen_prelude::TypeName for #name },
       )
     };
@@ -932,9 +909,6 @@ impl NapiStruct {
         }
       };
       quote! {
-        #[automatically_derived]
-        #validate_napi_value_impl {}
-
         #[automatically_derived]
         #from_js_impl {
           fn from_js(
@@ -1457,7 +1431,6 @@ impl NapiStruct {
 
     let from_js = if structured_enum.object_from_js {
       quote! {
-        impl napi::bindgen_prelude::ValidateNapiValue for #name {}
 
         impl<'env, 'scope> napi::bindgen_prelude::FromJs<'env, 'scope> for #name {
           fn from_js(
@@ -1563,16 +1536,6 @@ impl NapiStruct {
         }
       }
 
-      #[automatically_derived]
-      impl napi::bindgen_prelude::ValidateNapiValue for #name {
-        unsafe fn validate(
-          env: napi::bindgen_prelude::sys::napi_env,
-          napi_val: napi::bindgen_prelude::sys::napi_value
-        ) -> napi::bindgen_prelude::Result<napi::sys::napi_value> {
-          <#inner_type>::validate(env, napi_val)
-        }
-      }
-
       #into_js
 
       #from_js
@@ -1646,16 +1609,14 @@ impl NapiStruct {
       Self (#(#field_destructions),*)
     };
 
-    let (into_js_impl, validate_napi_value_impl, type_name_impl) = if self.has_lifetime {
+    let (into_js_impl, type_name_impl) = if self.has_lifetime {
       (
         quote! { impl <'scope, '_javascript_function_scope> napi::bindgen_prelude::IntoJs<'scope> for #name<'_javascript_function_scope> where '_javascript_function_scope: 'scope },
-        quote! { impl <'_javascript_function_scope> napi::bindgen_prelude::ValidateNapiValue for #name<'_javascript_function_scope> },
         quote! { impl <'_javascript_function_scope> napi::bindgen_prelude::TypeName for #name<'_javascript_function_scope> },
       )
     } else {
       (
         quote! { impl <'scope> napi::bindgen_prelude::IntoJs<'scope> for #name },
-        quote! { impl napi::bindgen_prelude::ValidateNapiValue for #name },
         quote! { impl napi::bindgen_prelude::TypeName for #name },
       )
     };
@@ -1693,9 +1654,6 @@ impl NapiStruct {
         quote! { impl<'env, 'scope> napi::bindgen_prelude::FromJs<'env, 'scope> for #name }
       };
       quote! {
-        #[automatically_derived]
-        #validate_napi_value_impl {}
-
         #[automatically_derived]
         #from_js_impl {
           fn from_js(

@@ -244,8 +244,6 @@ pub struct FnAttrs {
   pub setter: Option<OptionalIdent>,
   pub post_init: Flag,
 
-  pub strict: Flag,
-  pub return_if_invalid: Flag,
   pub catch_unwind: Flag,
   pub module_exports: Flag,
 

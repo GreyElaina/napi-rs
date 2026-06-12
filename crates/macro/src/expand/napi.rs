@@ -79,12 +79,6 @@ fn validate_fn_attrs(f: &syn::ItemFn, opts: &FnAttrs) -> BindgenResult<()> {
       "#[napi] with ts_type cannot be combined with ts_args_type, ts_return_type in function"
     );
   }
-  if opts.return_if_invalid.is_present() && opts.strict.is_present() {
-    bail_span!(
-      f,
-      "#[napi(return_if_invalid)] can't be used with #[napi(strict)]"
-    );
-  }
   Ok(())
 }
 

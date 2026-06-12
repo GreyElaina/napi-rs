@@ -1,4 +1,3 @@
-use std::ptr;
 use std::sync::Arc;
 
 use crate::{
@@ -7,7 +6,7 @@ use crate::{
       create_reference, delete_reference, ensure_deferred_match_env, ensure_same_deferred,
       reference_value, RefState,
     },
-    Env, FromJs, IntoJs, JsRefTarget, Local, Ref, Scope, TypeName, Unk, ValidateNapiValue,
+    Env, FromJs, IntoJs, JsRefTarget, Local, Ref, Scope, TypeName, Unk,
   },
   sys, type_of, JsValue, Result, Value, ValueType,
 };
@@ -35,14 +34,6 @@ impl TypeName for Unknown<'_> {
   }
 }
 
-impl ValidateNapiValue for Unknown<'_> {
-  unsafe fn validate(
-    _env: napi_sys::napi_env,
-    _napi_val: napi_sys::napi_value,
-  ) -> Result<sys::napi_value> {
-    Ok(ptr::null_mut())
-  }
-}
 
 impl Unknown<'_> {
   pub fn get_type(&self) -> Result<ValueType> {

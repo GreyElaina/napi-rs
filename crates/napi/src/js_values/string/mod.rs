@@ -3,7 +3,7 @@ use std::mem;
 use std::ptr;
 
 use crate::{
-  bindgen_runtime::{FromJs, IntoJs, Local, Scope, TypeName, Unknown, ValidateNapiValue},
+  bindgen_runtime::{FromJs, IntoJs, Local, Scope, TypeName, Unknown},
   check_status, sys, Result, Value, ValueType,
 };
 
@@ -30,7 +30,6 @@ impl TypeName for JsString<'_> {
   }
 }
 
-impl ValidateNapiValue for JsString<'_> {}
 
 impl<'env> JsValue<'env> for JsString<'env> {
   fn value(&self) -> Value {

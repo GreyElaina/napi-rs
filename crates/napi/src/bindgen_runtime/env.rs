@@ -20,7 +20,7 @@ use super::TypeName;
 
 use super::{
   create_object_with_properties, Array, ClassKey, FromJs, Function, IntoJs, JsRefTarget, Object,
-  Unknown, ValidateNapiValue,
+  Unknown,
 };
 
 pub use crate::Env;
@@ -630,13 +630,6 @@ impl<'env, 'scope> Scope<'env, 'scope> {
         format!("Expect value to be {expected}, but received {received}"),
       ))
     }
-  }
-
-  pub fn validate_value<T: ValidateNapiValue>(
-    &self,
-    raw: sys::napi_value,
-  ) -> Result<sys::napi_value> {
-    unsafe { T::validate(self.env.raw(), raw) }
   }
 
   pub fn create_error_value<C, R>(

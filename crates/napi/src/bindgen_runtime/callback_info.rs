@@ -373,13 +373,6 @@ impl<'env, 'scope> CallbackFrame<'env, 'scope> {
     refs.retain(self.context.scope.env(), raw)
   }
 
-  pub(crate) fn validate_value<T: ValidateNapiValue>(
-    &self,
-    raw: sys::napi_value,
-  ) -> Result<sys::napi_value> {
-    unsafe { T::validate(self.context.scope.env().raw(), raw) }
-  }
-
   pub(crate) fn assert_value_type(&self, raw: sys::napi_value, expected: ValueType) -> Result<()> {
     let mut value_type = 0;
     check_status!(

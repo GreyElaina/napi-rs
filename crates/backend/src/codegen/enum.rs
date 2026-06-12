@@ -31,12 +31,6 @@ impl NapiEnum {
       to_napi_branches.push(quote! { #name::#v_name => #val });
     });
 
-    let validate_type = if self.is_string_enum {
-      quote! { napi::bindgen_prelude::ValueType::String }
-    } else {
-      quote! { napi::bindgen_prelude::ValueType::Number }
-    };
-
     let from_js = self.gen_from_js(name);
     let into_js = self.gen_into_js(name, to_napi_branches);
     quote! {
@@ -50,14 +44,6 @@ impl NapiEnum {
         }
       }
 
-      impl napi::bindgen_prelude::ValidateNapiValue for #name {
-        unsafe fn validate(
-          env: napi::bindgen_prelude::sys::napi_env,
-          napi_val: napi::bindgen_prelude::sys::napi_value
-        ) -> napi::bindgen_prelude::Result<napi::sys::napi_value> {
-          napi::__private::validate_raw_value_type(env, napi_val, #validate_type)
-        }
-      }
 
       #from_js
 
@@ -87,6 +73,12 @@ impl NapiEnum {
         }
       };
     }
+
+    let validate_type = if self.is_string_enum {
+      quote! { napi::bindgen_prelude::ValueType::String }
+    } else {
+      quote! { napi::bindgen_prelude::ValueType::Number }
+    };
 
     let mut from_js_branches = vec![];
     self.variants.iter().for_each(|v| {
@@ -130,6 +122,7 @@ impl NapiEnum {
           scope: &mut napi::bindgen_prelude::Scope<'env, 'scope>,
           value: napi::bindgen_prelude::Local<'scope, napi::bindgen_prelude::Unknown<'scope>>
         ) -> napi::bindgen_prelude::Result<Self> {
+          scope.assert_value_type(value, #validate_type)?;
           #from_js_value
 
           match #match_val {

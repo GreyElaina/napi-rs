@@ -12,7 +12,7 @@ use std::{cmp::max, ptr};
 
 use crate::{check_status, sys};
 
-use super::{FromJs, IntoJs, Local, Scope, TypeName, Unknown, ValidateNapiValue};
+use super::{FromJs, IntoJs, Local, Scope, TypeName, Unknown};
 
 /// i64 is converted to `Number`
 #[repr(transparent)]
@@ -49,7 +49,6 @@ impl TypeName for BigInt {
   }
 }
 
-impl ValidateNapiValue for BigInt {}
 
 impl BigInt {
   unsafe fn from_raw(env: sys::napi_env, napi_val: sys::napi_value) -> crate::Result<Self> {

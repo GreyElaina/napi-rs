@@ -9,9 +9,9 @@ use std::{
 
 use futures::channel::oneshot::{channel, Receiver};
 
-use crate::{sys, Error, Result, Status};
+use crate::{Error, Result, Status};
 
-use super::{CallbackContext, FromJs, Local, Promise, Scope, TypeName, Unknown, ValidateNapiValue};
+use super::{CallbackContext, FromJs, Local, Promise, Scope, TypeName, Unknown};
 
 /// A Rust Future backed by a JavaScript Promise.
 ///
@@ -41,20 +41,6 @@ where
 
   fn value_type() -> crate::ValueType {
     crate::ValueType::Object
-  }
-}
-
-impl<T> ValidateNapiValue for PromiseFuture<T>
-where
-  T: 'static + for<'env, 'scope> FromJs<'env, 'scope>,
-{
-  unsafe fn validate(
-    env: crate::sys::napi_env,
-    napi_val: crate::sys::napi_value,
-  ) -> Result<sys::napi_value> {
-    use super::validate_promise;
-
-    validate_promise(env, napi_val)
   }
 }
 

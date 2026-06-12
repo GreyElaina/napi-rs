@@ -11,7 +11,7 @@ use super::value_ref::{
 };
 use crate::{
   bindgen_runtime::{
-    Env, Ext, FromJs, IntoJs, Local, Ref, Result, Scope, TypeName, Unknown, ValidateNapiValue,
+    Env, Ext, FromJs, IntoJs, Local, Ref, Result, Scope, TypeName, Unknown,
   },
   check_status, sys, Error, JsExternal, Status,
 };
@@ -50,9 +50,7 @@ impl<T: 'static> From<T> for External<T> {
   }
 }
 
-impl<T: 'static> ValidateNapiValue for &External<T> {}
 
-impl<T: 'static> ValidateNapiValue for &mut External<T> {}
 
 impl<T: 'static> External<T> {
   pub fn new(value: T) -> Self {
@@ -292,7 +290,6 @@ impl<T: 'static> TypeName for Ref<Ext<T>> {
   }
 }
 
-impl<T: 'static> ValidateNapiValue for Ref<Ext<T>> {}
 
 impl<'env, 'scope, T: 'static> FromJs<'env, 'scope> for Ref<Ext<T>> {
   fn from_js(

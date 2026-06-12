@@ -3,7 +3,6 @@ use std::{marker::PhantomData, ptr, sync::Arc};
 use crate::{
   bindgen_prelude::{
     sys, Ext, External, FromJs, IntoJs, Local, Ref, Result, Scope, Status, TypeName, Unknown,
-    ValidateNapiValue,
   },
   bindgen_runtime::js_values::value_ref::{create_reference, RefState},
   check_status, Error, JsValue, Value, ValueType,
@@ -25,7 +24,6 @@ impl<'env> TypeName for JsExternal<'env> {
   }
 }
 
-impl<'env> ValidateNapiValue for JsExternal<'env> {}
 
 impl<'env, 'scope> FromJs<'env, 'scope> for JsExternal<'scope> {
   fn from_js(
