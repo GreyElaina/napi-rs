@@ -954,9 +954,8 @@ impl Drop for PendingClassStorageAllocation {
 }
 
 struct PendingClassStorage {
-  header: NonNull<ClassStorageHeader>,
+  header: Option<NonNull<ClassStorageHeader>>,
   id: u64,
-  armed: bool,
 }
 
 thread_local! {
@@ -981,28 +980,33 @@ impl PendingClassStorage {
           ),
         )
       })?;
-    let allocation = PendingClassStorageAllocation::new(layout, record, data_layout)?;
+    let allocation = PendingClassStorageAllocation::new(layout, deferred, data_layout)?;
 
     unsafe { T::write_init(init, allocation.data().cast()) };
     let header = allocation.into_header();
 
     Ok(Self {
-      header,
+      header: Some(header),
       id: NEXT_PENDING_CLASS_STORAGE_ID.with(|next| {
         let id = next.get();
         next.set(id.wrapping_add(1));
         id
       }),
-      armed: true,
     })
   }
 
+  fn header(&self) -> NonNull<ClassStorageHeader> {
+    self
+      .header
+      .expect("PendingClassStorage accessed after wrap")
+  }
+
   fn layout(&self) -> &'static ClassLayout {
-    unsafe { self.header.as_ref().layout() }
+    unsafe { self.header().as_ref().layout() }
   }
 
   fn segment<T>(&self, class: &'static ClassInfo) -> Result<NonNull<T>> {
-    let header = unsafe { self.header.as_ref() };
+    let header = unsafe { self.header().as_ref() };
     let access = header.layout().find(class).ok_or_else(|| {
       Error::new(
         Status::InvalidArg,
@@ -1013,12 +1017,13 @@ impl PendingClassStorage {
   }
 
   unsafe fn wrap(mut self, env: sys::napi_env, object: sys::napi_value) -> Result<()> {
+    let header = self.header();
     check_status!(
       unsafe {
         sys::napi_wrap(
           env,
           object,
-          self.header.as_ptr().cast(),
+          header.as_ptr().cast(),
           Some(class_storage_finalize),
           ptr::null_mut(),
           ptr::null_mut(),
@@ -1027,7 +1032,7 @@ impl PendingClassStorage {
       "Wrap class storage failed"
     )?;
 
-    self.armed = false;
+    self.header = None;
     Ok(())
   }
 }
@@ -1073,8 +1078,8 @@ impl Drop for PendingClassStorageGuard {
 
 impl Drop for PendingClassStorage {
   fn drop(&mut self) {
-    if self.armed {
-      unsafe { drop_class_storage(self.header) };
+    if let Some(header) = self.header.take() {
+      unsafe { drop_class_storage(header) };
     }
   }
 }
