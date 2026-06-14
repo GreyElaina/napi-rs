@@ -553,8 +553,7 @@ export interface BindingVitePluginMeta {
   'vite:import-glob': ViteImportGlobMeta
 }
 
-export type Brush =
-  export type Brush = string | Gradient
+export type Brush = string | Gradient
 
 export interface C {
   baz: number
@@ -627,8 +626,7 @@ export declare const enum CustomStringEnum {
   Baz = 'Baz'
 }
 
-export type CustomU32 =
-  export type CustomU32 = number
+export type CustomU32 = number
 
 /** This is a const */
 export const DEFAULT_COST: number
@@ -673,8 +671,7 @@ export interface Latin1MethodsResult {
   asSlice: Array<number>
 }
 
-export type LifetimeOnlyHandler =
-  export type LifetimeOnlyHandler = (...args: any[]) => any
+export type LifetimeOnlyHandler = (...args: any[]) => any
 
 export interface LocalDates {
   start: Date
@@ -685,11 +682,9 @@ export interface Meta {
   merge: boolean
 }
 
-export type MyPromise =
-  export type MyPromise = string | Promise<string>
+export type MyPromise = string | Promise<string>
 
-export type MyVec =
-  Array<number | string>
+export type MyVec = Array<number | string>
 
 export interface NestedMetadata {
   hello: string
@@ -774,7 +769,6 @@ export interface Shared {
   value: number
 }
 
-export type SpanPos =
 export type SpanPos = { element: Element; index: number }
 
 export declare const enum Status {
@@ -799,17 +793,15 @@ export declare const enum StringEnum {
   VariantThree = 'variantthree'
 }
 
-export type StructuredKind =
-  | {  }
-  | {   name: string }
-  | {   name: string;   age: number }
-  | {   field0: number;   field1: number }
+export type StructuredKind = | {  }
+| {   name: string }
+| {   name: string;   age: number }
+| {   field0: number;   field1: number }
 
-export type StructuredKindLowercase =
-  | {  }
-  | {   name: string }
-  | {   name: string;   age: number }
-  | {   field0: number;   field1: number }
+export type StructuredKindLowercase = | {  }
+| {   name: string }
+| {   name: string;   age: number }
+| {   field0: number;   field1: number }
 
 export interface TsTypeChanged {
   typeOverride: object
@@ -821,10 +813,9 @@ export interface TupleObject {
   field1: number
 }
 
-export type TupleToArray =
-  field0: string
-  field1: number
-  field2?: Meta
+export type TupleToArray = field0: string
+field1: number
+field2?: Meta
 
 export interface UseNullableStruct {
   requiredNumberField: number

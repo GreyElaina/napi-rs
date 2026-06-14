@@ -120,7 +120,7 @@ impl NapiType {
       "type",
       js_name,
       Some(&self.name.to_string()),
-      quote! { format!("export type {} = {}", #js_name, #def_expr) },
+      def_expr,
       self.js_mod.as_ref(),
       &crate::typegen::JSDoc::new(&self.comments),
       None,

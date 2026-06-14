@@ -316,7 +316,7 @@ fn pretty_print(
       write!(s, "export interface {} {{\n{}\n}}", line.name, line.def).unwrap();
     }
     TypeDefKind::Type => {
-      write!(s, "export type {} = \n{}", line.name, line.def).unwrap();
+      write!(s, "export type {} = {}", line.name, line.def).unwrap();
     }
     TypeDefKind::Enum => {
       let kw = if const_enum { "const enum" } else { "enum" };
