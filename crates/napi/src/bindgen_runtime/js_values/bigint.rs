@@ -14,10 +14,80 @@ use crate::{check_status, sys};
 
 use super::{FromJs, IntoJs, Local, Scope, TypeName, Unknown};
 
+impl TypeName for usize {
+  fn type_name() -> &'static str {
+    "usize"
+  }
+
+  fn value_type() -> crate::ValueType {
+    crate::ValueType::Number
+  }
+
+  fn ts_type() -> String {
+    "bigint".to_owned()
+  }
+}
+
+impl TypeName for isize {
+  fn type_name() -> &'static str {
+    "isize"
+  }
+
+  fn value_type() -> crate::ValueType {
+    crate::ValueType::Number
+  }
+
+  fn ts_type() -> String {
+    "bigint".to_owned()
+  }
+}
+
+impl TypeName for u64 {
+  fn type_name() -> &'static str {
+    "u64"
+  }
+
+  fn value_type() -> crate::ValueType {
+    crate::ValueType::BigInt
+  }
+
+  fn ts_type() -> String {
+    "bigint".to_owned()
+  }
+}
+
+impl TypeName for u128 {
+  fn type_name() -> &'static str {
+    "u128"
+  }
+
+  fn value_type() -> crate::ValueType {
+    crate::ValueType::BigInt
+  }
+
+  fn ts_type() -> String {
+    "bigint".to_owned()
+  }
+}
+
 /// i64 is converted to `Number`
 #[repr(transparent)]
 #[allow(non_camel_case_types)]
 pub struct i64n(pub i64);
+
+impl TypeName for i64n {
+  fn type_name() -> &'static str {
+    "i64n"
+  }
+
+  fn value_type() -> crate::ValueType {
+    crate::ValueType::BigInt
+  }
+
+  fn ts_type() -> String {
+    "bigint".to_owned()
+  }
+}
 
 /// <https://nodejs.org/api/n-api.html#napi_create_bigint_words>
 /// The resulting BigInt is calculated as: (–1)^sign_bit (words\[0\] × (2^64)^0 + words\[1\] × (2^64)^1 + …)
@@ -44,11 +114,14 @@ impl TypeName for BigInt {
     "BigInt"
   }
 
+  fn ts_type() -> String {
+    "bigint".to_owned()
+  }
+
   fn value_type() -> crate::ValueType {
     crate::ValueType::BigInt
   }
 }
-
 
 impl BigInt {
   unsafe fn from_raw(env: sys::napi_env, napi_val: sys::napi_value) -> crate::Result<Self> {

@@ -67,6 +67,8 @@ mod env;
 mod error;
 mod js_values;
 mod status;
+#[cfg(feature = "type-def")]
+pub mod typegen;
 mod value_type;
 
 mod version;
@@ -127,6 +129,9 @@ macro_rules! napi_ts {
 }
 
 pub mod bindgen_prelude {
+  #[doc(hidden)]
+  #[cfg(all(feature = "async", feature = "napi4"))]
+  pub use crate::env::promise::CancelHandle;
   pub use crate::{
     assert_type_of, bindgen_runtime::*, check_pending_exception, check_status,
     check_status_or_throw, error, error::*, sys, type_of, JsError, JsValue, Property,
@@ -136,9 +141,6 @@ pub mod bindgen_prelude {
   pub use ::tracing;
   #[cfg(feature = "async")]
   pub use async_task::Task;
-  #[doc(hidden)]
-  #[cfg(all(feature = "async", feature = "napi4"))]
-  pub use crate::env::promise::CancelHandle;
 }
 
 fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
@@ -187,6 +189,11 @@ pub mod __private {
   };
   pub use linkme;
 
+  #[cfg(feature = "type-def")]
+  pub use crate::bindgen_runtime::{
+    IteratorExtendsInfo, TypeDefDescriptor, TypeDefKind, TYPE_DEF_DESCRIPTORS,
+  };
+
   #[cfg(feature = "async")]
   pub use crate::bindgen_runtime::async_iterator::create_async_iterator;
 
@@ -210,6 +217,17 @@ pub mod __private {
     index: usize,
   ) -> Result<sys::napi_value> {
     frame.raw_arg(index)
+  }
+
+  #[doc(hidden)]
+  pub fn callback_frame_arg_type(
+    frame: &CallbackFrame<'_, '_>,
+    index: usize,
+  ) -> Result<crate::ValueType> {
+    let raw = frame.raw_arg(index)?;
+    let mut value_type = 0;
+    crate::check_status!(unsafe { sys::napi_typeof(frame.raw_env(), raw, &mut value_type) })?;
+    Ok(crate::ValueType::from(value_type))
   }
 
   #[doc(hidden)]

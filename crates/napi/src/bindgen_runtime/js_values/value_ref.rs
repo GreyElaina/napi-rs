@@ -8,8 +8,8 @@ use crossbeam_queue::SegQueue;
 use crate::{
   bindgen_runtime::{
     ClassAccess, ClassBorrow, ClassBorrowMut, ClassChain, ClassStorageHeader, ClassStorageRef,
-    FrameObject, FrameScope, FromJs, IntoClassInitializer, IntoJs, Local, NapiClass,
-    NapiReceiver, Object, Result, Scope, TypeName, Unknown,
+    FrameObject, FrameScope, FromJs, IntoClassInitializer, IntoJs, Local, NapiClass, NapiReceiver,
+    Object, Result, Scope, TypeName, Unknown,
   },
   check_status, sys, Error, Status, ValueType,
 };
@@ -32,6 +32,18 @@ impl JsRefKind for Obj {
   type Access = ();
 }
 
+impl crate::bindgen_prelude::TypeName for Ref<Obj> {
+  fn type_name() -> &'static str {
+    "ObjectRef"
+  }
+  fn value_type() -> crate::ValueType {
+    crate::ValueType::Object
+  }
+  fn ts_type() -> String {
+    "object".to_owned()
+  }
+}
+
 pub struct Func<A, R>(PhantomData<fn(A) -> R>);
 
 impl<A, R> JsRefKind for Func<A, R> {
@@ -42,6 +54,18 @@ pub struct Sym;
 
 impl JsRefKind for Sym {
   type Access = ();
+}
+
+impl crate::bindgen_prelude::TypeName for Ref<Sym> {
+  fn type_name() -> &'static str {
+    "SymbolRef"
+  }
+  fn value_type() -> crate::ValueType {
+    crate::ValueType::Symbol
+  }
+  fn ts_type() -> String {
+    "symbol".to_owned()
+  }
 }
 
 pub struct Unk;
@@ -166,10 +190,7 @@ impl<K: JsRefKind> WeakRef<K> {
     }
   }
 
-  pub(crate) fn upgrade_raw(
-    &self,
-    scope: &mut Scope<'_, '_>,
-  ) -> Result<Option<sys::napi_value>> {
+  pub(crate) fn upgrade_raw(&self, scope: &mut Scope<'_, '_>) -> Result<Option<sys::napi_value>> {
     ensure_same_deferred(&self.state, scope)?;
     let raw = self.state.raw_ref()?;
     let object = reference_value(scope.env().raw(), raw)?;
@@ -343,10 +364,7 @@ impl<T: NapiReceiver> WeakRef<Class<T>> {
     ensure_same_access(self.access, access)?;
     let raw = create_reference(scope.env().raw(), object, 1)?;
     let deferred = Arc::clone(scope.deferred_queue());
-    Ok(Some(Ref::new(
-      RefState::new(raw, deferred),
-      self.access,
-    )))
+    Ok(Some(Ref::new(RefState::new(raw, deferred), self.access)))
   }
 }
 
@@ -416,10 +434,7 @@ impl<T: NapiClass> ClassRef<T> {
     let object = reference_value(scope.env().raw(), self.state.raw_ref()?)?;
     let raw = create_reference(scope.env().raw(), object, 0)?;
     let deferred = Arc::clone(scope.deferred_queue());
-    Ok(WeakRef::new(
-      RefState::new(raw, deferred),
-      self.access,
-    ))
+    Ok(WeakRef::new(RefState::new(raw, deferred), self.access))
   }
 
   pub fn borrow_cell(&self) -> &RefCell<()> {

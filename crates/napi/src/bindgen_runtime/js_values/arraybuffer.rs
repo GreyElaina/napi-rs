@@ -1,14 +1,14 @@
-use std::ffi::{c_void, CString};
-use std::marker::PhantomData;
-use std::mem;
-use std::ops::Deref;
-use std::ptr::{self, NonNull};
 use crate::{
   bindgen_prelude::{
     FromJs, IntoJs, JsObjectValue, JsValue, Local, Scope, This, TypeName, Unknown,
   },
   check_status, sys, Env, Error, Result, Status, Value, ValueType,
 };
+use std::ffi::{c_void, CString};
+use std::marker::PhantomData;
+use std::mem;
+use std::ops::Deref;
+use std::ptr::{self, NonNull};
 
 #[repr(i32)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
@@ -158,7 +158,9 @@ impl<'env> ArrayBuffer<'env> {
         buffer.contains(&inner_ptr)
       });
       if is_existed {
-        panic!("Share the same data between different buffers is not allowed, see: https://github.com/nodejs/node/issues/32463#issuecomment-631974747");
+        panic!(
+          "Share the same data between different buffers is not allowed, see: https://github.com/nodejs/node/issues/32463#issuecomment-631974747"
+        );
       }
     }
     let len = data.len();
@@ -245,7 +247,9 @@ impl<'env> ArrayBuffer<'env> {
         buffer.contains(&data)
       });
       if is_existed {
-        panic!("Share the same data between different buffers is not allowed, see: https://github.com/nodejs/node/issues/32463#issuecomment-631974747");
+        panic!(
+          "Share the same data between different buffers is not allowed, see: https://github.com/nodejs/node/issues/32463#issuecomment-631974747"
+        );
       }
     }
     let hint_ptr = Box::into_raw(Box::new((finalize_hint, finalize_callback)));
@@ -368,7 +372,6 @@ impl TypeName for TypedArray<'_> {
     ValueType::Object
   }
 }
-
 
 impl<'env> JsValue<'env> for TypedArray<'env> {
   fn value(&self) -> Value {
@@ -665,8 +668,11 @@ macro_rules! impl_typed_array {
       fn value_type() -> crate::ValueType {
         crate::ValueType::Object
       }
-    }
 
+      fn ts_type() -> String {
+        stringify!($name).to_owned()
+      }
+    }
 
     impl<'env, 'scope> FromJs<'env, 'scope> for $name {
       fn from_js(
@@ -1333,6 +1339,10 @@ macro_rules! impl_from_slice {
       fn value_type() -> crate::ValueType {
         crate::ValueType::Object
       }
+
+      fn ts_type() -> String {
+        stringify!($name).to_owned()
+      }
     }
 
 
@@ -1436,6 +1446,10 @@ macro_rules! impl_from_slice {
       fn value_type() -> crate::ValueType {
         crate::ValueType::Object
       }
+
+      fn ts_type() -> String {
+        stringify!($name).to_owned()
+      }
     }
 
     impl TypeName for &[$rust_type] {
@@ -1445,6 +1459,10 @@ macro_rules! impl_from_slice {
 
       fn value_type() -> crate::ValueType {
         crate::ValueType::Object
+      }
+
+      fn ts_type() -> String {
+        stringify!($name).to_owned()
       }
     }
 
@@ -1626,7 +1644,6 @@ impl TypeName for Uint8ClampedSlice<'_> {
   }
 }
 
-
 impl AsRef<[u8]> for Uint8ClampedSlice<'_> {
   fn as_ref(&self) -> &[u8] {
     unsafe { core::slice::from_raw_parts(self.inner.as_ptr(), self.length) }
@@ -1654,7 +1671,9 @@ impl<'env> Uint8ClampedSlice<'env> {
         buffer.contains(&inner_ptr)
       });
       if is_existed {
-        panic!("Share the same data between different buffers is not allowed, see: https://github.com/nodejs/node/issues/32463#issuecomment-631974747");
+        panic!(
+          "Share the same data between different buffers is not allowed, see: https://github.com/nodejs/node/issues/32463#issuecomment-631974747"
+        );
       }
     }
     let len = data.len();
@@ -1755,7 +1774,9 @@ impl<'env> Uint8ClampedSlice<'env> {
         buffer.contains(&data)
       });
       if is_existed {
-        panic!("Share the same data between different buffers is not allowed, see: https://github.com/nodejs/node/issues/32463#issuecomment-631974747");
+        panic!(
+          "Share the same data between different buffers is not allowed, see: https://github.com/nodejs/node/issues/32463#issuecomment-631974747"
+        );
       }
     }
     let hint_ptr = Box::into_raw(Box::new((finalize_hint, finalize_callback)));

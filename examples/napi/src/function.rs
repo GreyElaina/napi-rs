@@ -83,7 +83,6 @@ pub fn call_function_with_arg(
   scope.call(&cb, FnArgs::from((arg0, arg1)))
 }
 
-
 #[napi]
 pub fn call_function_with_arg_and_ctx(
   #[napi(scope)] scope: &mut Scope,
@@ -115,7 +114,6 @@ pub fn reference_with_tuple_arg(
   let callback = scope.borrow_function(&callback)?;
   scope.call(&callback, (arg0, arg1))
 }
-
 
 #[napi]
 pub fn create_function<'env>(#[napi(env)] env: &'env Env) -> Result<Function<'env, u32, u32>> {

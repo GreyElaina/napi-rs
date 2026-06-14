@@ -27,8 +27,7 @@ fn capture_creation_stack(env: sys::napi_env) -> Option<String> {
     }
 
     let mut js_error = ptr::null_mut();
-    if sys::napi_create_error(env, ptr::null_mut(), err_msg, &mut js_error)
-      != sys::Status::napi_ok
+    if sys::napi_create_error(env, ptr::null_mut(), err_msg, &mut js_error) != sys::Status::napi_ok
     {
       return None;
     }
@@ -70,8 +69,12 @@ fn capture_creation_stack(env: sys::napi_env) -> Option<String> {
 fn stitch_stack(error_value: sys::napi_value, env: sys::napi_env, frames: &str) {
   unsafe {
     let mut current_stack = ptr::null_mut();
-    if sys::napi_get_named_property(env, error_value, c"stack".as_ptr().cast(), &mut current_stack)
-      != sys::Status::napi_ok
+    if sys::napi_get_named_property(
+      env,
+      error_value,
+      c"stack".as_ptr().cast(),
+      &mut current_stack,
+    ) != sys::Status::napi_ok
     {
       return;
     }
@@ -174,8 +177,8 @@ impl DeferredCompletion {
     let env_raw = *env;
 
     let mut env_wrapper = unsafe { Env::from_raw(env_raw) };
-    let result = env_wrapper
-      .with_scope(|scope| f(scope).and_then(|value| Ok(value.into_js(scope)?.raw())));
+    let result =
+      env_wrapper.with_scope(|scope| f(scope).and_then(|value| Ok(value.into_js(scope)?.raw())));
 
     self.complete(result);
   }
@@ -234,7 +237,12 @@ impl Drop for DeferredCompletion {
   fn drop(&mut self) {
     if let Some(state) = self.state.take() {
       let error = Error::new(crate::Status::Cancelled, "AbortError".to_owned());
-      Self::reject_with(state.env, state.deferred, state.creation_frames.as_deref(), error);
+      Self::reject_with(
+        state.env,
+        state.deferred,
+        state.creation_frames.as_deref(),
+        error,
+      );
       drop(state.keep_alive);
     }
   }

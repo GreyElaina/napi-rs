@@ -110,7 +110,6 @@ impl ChildReference {
   }
 }
 
-
 #[napi]
 pub fn buffer_convert(buffer: Buffer) -> Buffer {
   Buffer::from(vec![0; buffer.len()])

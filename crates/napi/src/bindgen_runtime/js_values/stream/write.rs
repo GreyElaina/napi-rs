@@ -31,11 +31,14 @@ impl TypeName for WriteableStream<'_> {
     "WriteableStream"
   }
 
+  fn ts_type() -> String {
+    "WritableStream".to_owned()
+  }
+
   fn value_type() -> ValueType {
     ValueType::Object
   }
 }
-
 
 impl<'env, 'scope> FromJs<'env, 'scope> for WriteableStream<'scope> {
   fn from_js(

@@ -47,7 +47,9 @@ impl<'env> BufferSlice<'env> {
         buffer.contains(&inner_ptr)
       });
       if is_existed {
-        panic!("Share the same data between different buffers is not allowed, see: https://github.com/nodejs/node/issues/32463#issuecomment-631974747");
+        panic!(
+          "Share the same data between different buffers is not allowed, see: https://github.com/nodejs/node/issues/32463#issuecomment-631974747"
+        );
       }
     }
     let len = data.len();
@@ -132,7 +134,9 @@ impl<'env> BufferSlice<'env> {
         buffer.contains(&data)
       });
       if is_existed {
-        panic!("Share the same data between different buffers is not allowed, see: https://github.com/nodejs/node/issues/32463#issuecomment-631974747");
+        panic!(
+          "Share the same data between different buffers is not allowed, see: https://github.com/nodejs/node/issues/32463#issuecomment-631974747"
+        );
       }
     }
     let hint_ptr = Box::into_raw(Box::new((finalize_hint, finalize_callback)));
@@ -265,7 +269,6 @@ impl TypeName for BufferSlice<'_> {
   }
 }
 
-
 impl AsRef<[u8]> for BufferSlice<'_> {
   fn as_ref(&self) -> &[u8] {
     self.inner
@@ -370,7 +373,9 @@ impl From<Vec<u8>> for Buffer {
         buffer.contains(&inner_ptr)
       });
       if is_existed {
-        panic!("Share the same data between different buffers is not allowed, see: https://github.com/nodejs/node/issues/32463#issuecomment-631974747");
+        panic!(
+          "Share the same data between different buffers is not allowed, see: https://github.com/nodejs/node/issues/32463#issuecomment-631974747"
+        );
       }
     }
     let len = data.len();
@@ -441,6 +446,10 @@ impl DerefMut for Buffer {
 impl TypeName for Buffer {
   fn type_name() -> &'static str {
     "Vec<u8>"
+  }
+
+  fn ts_type() -> String {
+    "Buffer".to_owned()
   }
 
   fn value_type() -> ValueType {
@@ -557,4 +566,3 @@ impl<'scope> IntoJs<'scope> for Buffer {
     Ok(unsafe { Local::from_raw(ret) })
   }
 }
-

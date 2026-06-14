@@ -7,10 +7,12 @@ impl TryToTokens for NapiEnum {
   fn try_to_tokens(&self, tokens: &mut TokenStream) -> BindgenResult<()> {
     let register = self.gen_module_register();
     let napi_value_conversion = self.gen_napi_value_map_impl();
+    let type_def_register = self.gen_type_def_register();
 
     (quote! {
       #napi_value_conversion
       #register
+      #type_def_register
     })
     .to_tokens(tokens);
 
@@ -320,5 +322,55 @@ impl NapiEnum {
           callback: #callback_name,
         };
     }
+  }
+
+  #[cfg(feature = "type-def")]
+  fn gen_ts_variants(&self) -> String {
+    use crate::typegen::JSDoc;
+
+    self
+      .variants
+      .iter()
+      .map(|v| {
+        let val = match &v.val {
+          crate::NapiEnumValue::Number(num) => format!("{num}"),
+          crate::NapiEnumValue::String(string) => format!("'{string}'"),
+        };
+        format!("{}{} = {}", JSDoc::new(&v.comments), v.name, val)
+      })
+      .collect::<Vec<_>>()
+      .join(",\n ")
+  }
+
+  #[cfg(feature = "type-def")]
+  fn gen_type_def_register(&self) -> TokenStream {
+    if self.skip_typescript || cfg!(test) {
+      return quote! {};
+    }
+
+    let kind = if self.is_string_enum {
+      "string_enum"
+    } else {
+      "enum"
+    };
+    let variants_str = self.gen_ts_variants();
+
+    super::emit_type_def_descriptor(
+      kind,
+      &self.js_name,
+      Some(&self.name.to_string()),
+      quote! { #variants_str.to_owned() },
+      self.js_mod.as_ref(),
+      &crate::typegen::JSDoc::new(&self.comments),
+      None,
+      None,
+      &self.register_name,
+      self.name.span(),
+    )
+  }
+
+  #[cfg(not(feature = "type-def"))]
+  fn gen_type_def_register(&self) -> TokenStream {
+    quote! {}
   }
 }

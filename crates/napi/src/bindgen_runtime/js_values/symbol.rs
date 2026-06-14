@@ -1,9 +1,7 @@
 use std::ptr;
 
 use crate::{
-  bindgen_runtime::{
-    Env, FromJs, IntoJs, Local, Result, Scope, TypeName, Unknown,
-  },
+  bindgen_runtime::{Env, FromJs, IntoJs, Local, Result, Scope, TypeName, Unknown},
   check_status, sys, JsSymbol,
 };
 
@@ -18,11 +16,14 @@ impl TypeName for Symbol {
     "Symbol"
   }
 
+  fn ts_type() -> String {
+    "symbol".to_owned()
+  }
+
   fn value_type() -> crate::ValueType {
     crate::ValueType::Symbol
   }
 }
-
 
 impl Symbol {
   pub fn new<S: ToString>(desc: S) -> Self {

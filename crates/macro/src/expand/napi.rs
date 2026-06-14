@@ -1,4 +1,3 @@
-use super::typedef;
 use crate::parser::{
   attrs::{
     find_napi_attr_with_namespace, parse_napi_attr, ConstAttrs, EnumAttrs, FnAttrs, ImplAttrs,
@@ -9,20 +8,9 @@ use crate::parser::{
 use napi_derive_backend::{BindgenResult, Napi, TryToTokens};
 use proc_macro2::TokenStream;
 use quote::ToTokens;
-use std::sync::atomic::{AtomicBool, Ordering};
 use syn::Item;
 
-static BUILT_FLAG: AtomicBool = AtomicBool::new(false);
-
 pub fn expand(attr: TokenStream, input: TokenStream) -> BindgenResult<TokenStream> {
-  if let Ok(built) =
-    BUILT_FLAG.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-  {
-    if !built {
-      typedef::prepare_type_def_file();
-    }
-  }
-
   let mut item = syn::parse2::<Item>(input)?;
 
   // borrow checker said no
@@ -68,7 +56,6 @@ fn emit(item: &impl ToTokens, napi: Napi) -> BindgenResult<TokenStream> {
   let mut tokens = TokenStream::new();
   item.to_tokens(&mut tokens);
   napi.try_to_tokens(&mut tokens)?;
-  typedef::output_type_def(&napi);
   Ok(tokens)
 }
 
@@ -118,9 +105,7 @@ fn expand_mod(attr: TokenStream, mut js_mod: syn::ItemMod) -> BindgenResult<Toke
 
       match item {
         Item::Fn(f) => {
-          if let Some(opts) =
-            find_napi_attr_with_namespace::<FnAttrs>(&mut f.attrs, &js_name)?
-          {
+          if let Some(opts) = find_napi_attr_with_namespace::<FnAttrs>(&mut f.attrs, &js_name)? {
             validate_fn_attrs(f, &opts)?;
             let napi = convert_fn(f, &opts)?;
             emit_into(&mut tokens, f, napi)?;
@@ -129,8 +114,7 @@ fn expand_mod(attr: TokenStream, mut js_mod: syn::ItemMod) -> BindgenResult<Toke
           }
         }
         Item::Struct(s) => {
-          if let Some(opts) =
-            find_napi_attr_with_namespace::<StructAttrs>(&mut s.attrs, &js_name)?
+          if let Some(opts) = find_napi_attr_with_namespace::<StructAttrs>(&mut s.attrs, &js_name)?
           {
             let napi = convert_struct(s, &opts)?;
             emit_into(&mut tokens, s, napi)?;
@@ -139,9 +123,7 @@ fn expand_mod(attr: TokenStream, mut js_mod: syn::ItemMod) -> BindgenResult<Toke
           }
         }
         Item::Enum(e) => {
-          if let Some(opts) =
-            find_napi_attr_with_namespace::<EnumAttrs>(&mut e.attrs, &js_name)?
-          {
+          if let Some(opts) = find_napi_attr_with_namespace::<EnumAttrs>(&mut e.attrs, &js_name)? {
             let napi = convert_enum(e, &opts)?;
             emit_into(&mut tokens, e, napi)?;
           } else {
@@ -149,9 +131,7 @@ fn expand_mod(attr: TokenStream, mut js_mod: syn::ItemMod) -> BindgenResult<Toke
           }
         }
         Item::Const(c) => {
-          if let Some(opts) =
-            find_napi_attr_with_namespace::<ConstAttrs>(&mut c.attrs, &js_name)?
-          {
+          if let Some(opts) = find_napi_attr_with_namespace::<ConstAttrs>(&mut c.attrs, &js_name)? {
             let napi = convert_const(c, &opts)?;
             emit_into(&mut tokens, c, napi)?;
           } else {
@@ -159,9 +139,7 @@ fn expand_mod(attr: TokenStream, mut js_mod: syn::ItemMod) -> BindgenResult<Toke
           }
         }
         Item::Impl(i) => {
-          if let Some(opts) =
-            find_napi_attr_with_namespace::<ImplAttrs>(&mut i.attrs, &js_name)?
-          {
+          if let Some(opts) = find_napi_attr_with_namespace::<ImplAttrs>(&mut i.attrs, &js_name)? {
             let napi = convert_impl(i, &opts)?;
             emit_into(&mut tokens, i, napi)?;
           } else {
@@ -186,13 +164,8 @@ fn expand_mod(attr: TokenStream, mut js_mod: syn::ItemMod) -> BindgenResult<Toke
   Ok(mod_tokens)
 }
 
-fn emit_into(
-  tokens: &mut TokenStream,
-  item: &impl ToTokens,
-  napi: Napi,
-) -> BindgenResult<()> {
+fn emit_into(tokens: &mut TokenStream, item: &impl ToTokens, napi: Napi) -> BindgenResult<()> {
   item.to_tokens(tokens);
   napi.try_to_tokens(tokens)?;
-  typedef::output_type_def(&napi);
   Ok(())
 }

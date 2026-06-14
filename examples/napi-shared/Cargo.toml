@@ -5,6 +5,9 @@ name = "napi-shared"
 publish = false
 version = "0.1.0"
 
+[features]
+type-def = ["napi/type-def"]
+
 [lib]
 crate-type = ["cdylib", "lib"]
 

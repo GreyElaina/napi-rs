@@ -145,7 +145,10 @@ fn parse_attr_meta<T: FromMeta>(attr: &syn::Attribute) -> BindgenResult<T> {
       T::from_list(&items).map_err(darling_to_diagnostic)
     }
     syn::Meta::NameValue(_) => {
-      bail_span!(attr, "invalid #[napi] attribute; expected #[napi] or #[napi(...)]")
+      bail_span!(
+        attr,
+        "invalid #[napi] attribute; expected #[napi] or #[napi(...)]"
+      )
     }
   }
 }
@@ -200,9 +203,7 @@ pub fn find_napi_attr_with_namespace<T: FromMeta>(
   attrs: &mut Vec<syn::Attribute>,
   namespace: &str,
 ) -> BindgenResult<Option<T>> {
-  let napi_index = attrs
-    .iter()
-    .position(|a| a.path().is_ident("napi"));
+  let napi_index = attrs.iter().position(|a| a.path().is_ident("napi"));
 
   let Some(index) = napi_index else {
     return Ok(None);

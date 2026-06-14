@@ -26,11 +26,11 @@ use crate::bindgen_runtime::ErasedClassDef;
 #[cfg(not(feature = "noop"))]
 use crate::bindgen_runtime::{ClassInfo, ClassKey, ClassStorageRef, EnvRecord, ErasedClassDef};
 #[cfg(all(not(feature = "noop"), feature = "node_version_detect"))]
+use crate::check_status_or_throw;
+#[cfg(all(not(feature = "noop"), feature = "node_version_detect"))]
 use crate::NodeVersion;
 #[cfg(not(feature = "noop"))]
 use crate::{check_status, JsError};
-#[cfg(all(not(feature = "noop"), feature = "node_version_detect"))]
-use crate::check_status_or_throw;
 use crate::{sys, Property, Result};
 #[cfg(not(feature = "noop"))]
 use crate::{Error, Status};
@@ -113,6 +113,44 @@ pub static MODULE_EXPORT_HOOK_DESCRIPTORS: [ModuleExportHookDescriptor];
 
 #[distributed_slice]
 pub static MODULE_INIT_DESCRIPTORS: [ModuleInitDescriptor];
+
+#[cfg(feature = "type-def")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TypeDefKind {
+  Const,
+  Enum,
+  StringEnum,
+  Interface,
+  Type,
+  Fn,
+  Struct,
+  NonConstructibleClass,
+  IteratorExtends,
+  Impl,
+}
+
+#[cfg(feature = "type-def")]
+pub struct IteratorExtendsInfo {
+  pub yield_type: fn() -> String,
+  pub return_type: fn() -> String,
+  pub next_type: fn() -> String,
+}
+
+#[cfg(feature = "type-def")]
+pub struct TypeDefDescriptor {
+  pub kind: TypeDefKind,
+  pub name: &'static str,
+  pub original_name: Option<&'static str>,
+  pub def_fn: fn() -> String,
+  pub js_mod: Option<&'static str>,
+  pub js_doc: Option<&'static str>,
+  pub native_parent_name: Option<&'static str>,
+  pub iterator_info: Option<&'static IteratorExtendsInfo>,
+}
+
+#[cfg(feature = "type-def")]
+#[distributed_slice]
+pub static TYPE_DEF_DESCRIPTORS: [TypeDefDescriptor];
 
 #[cfg(not(feature = "noop"))]
 #[derive(Clone)]
@@ -1003,4 +1041,3 @@ unsafe fn napi_register_module_v1_inner(
   FIRST_MODULE_REGISTERED.store(true, Ordering::SeqCst);
   exports
 }
-

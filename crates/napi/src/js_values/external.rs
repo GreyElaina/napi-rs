@@ -24,7 +24,6 @@ impl<'env> TypeName for JsExternal<'env> {
   }
 }
 
-
 impl<'env, 'scope> FromJs<'env, 'scope> for JsExternal<'scope> {
   fn from_js(
     scope: &mut Scope<'env, 'scope>,

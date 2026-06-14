@@ -1,8 +1,7 @@
 use std::convert::TryFrom;
 
 use crate::{
-  bindgen_runtime::{TypeName},
-  check_status, sys, Error, JsValue, Result, Value, ValueType,
+  bindgen_runtime::TypeName, check_status, sys, Error, JsValue, Result, Value, ValueType,
 };
 
 #[derive(Clone, Copy)]
@@ -20,7 +19,6 @@ impl TypeName for JsNumber<'_> {
     ValueType::Number
   }
 }
-
 
 impl<'env> JsValue<'env> for JsNumber<'env> {
   fn value(&self) -> Value {

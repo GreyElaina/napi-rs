@@ -34,7 +34,6 @@ impl TypeName for Unknown<'_> {
   }
 }
 
-
 impl Unknown<'_> {
   pub fn get_type(&self) -> Result<ValueType> {
     type_of!(self.0.env, self.0.value)

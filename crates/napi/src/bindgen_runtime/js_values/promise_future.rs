@@ -33,7 +33,7 @@ pub struct PromiseFuture<T: 'static + for<'env, 'scope> FromJs<'env, 'scope>> {
 
 impl<T> TypeName for PromiseFuture<T>
 where
-  T: 'static + for<'env, 'scope> FromJs<'env, 'scope>,
+  T: TypeName + 'static + for<'env, 'scope> FromJs<'env, 'scope>,
 {
   fn type_name() -> &'static str {
     "Promise"
@@ -41,6 +41,10 @@ where
 
   fn value_type() -> crate::ValueType {
     crate::ValueType::Object
+  }
+
+  fn ts_type() -> String {
+    format!("Promise<{}>", T::ts_type())
   }
 }
 

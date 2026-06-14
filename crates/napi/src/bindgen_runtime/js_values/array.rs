@@ -106,6 +106,10 @@ impl TypeName for Array<'_> {
     "Array"
   }
 
+  fn ts_type() -> String {
+    "unknown[]".to_owned()
+  }
+
   fn value_type() -> ValueType {
     ValueType::Object
   }
@@ -183,13 +187,17 @@ impl Array<'_> {
   }
 }
 
-impl<T> TypeName for Vec<T> {
+impl<T: TypeName> TypeName for Vec<T> {
   fn type_name() -> &'static str {
     "Array<T>"
   }
 
   fn value_type() -> ValueType {
     ValueType::Object
+  }
+
+  fn ts_type() -> String {
+    format!("Array<{}>", T::ts_type())
   }
 }
 
@@ -344,7 +352,6 @@ where
   }
 }
 
-
 macro_rules! arr_get_js {
   ($arr:expr, $scope:expr, $n:expr, $err:expr) => {
     if let Some(e) = $scope.get_optional_element(&$arr, $n)? {
@@ -380,12 +387,16 @@ macro_rules! tuple_from_js {
 
 macro_rules! impl_tuple_validate_napi_value {
   ($($ident:ident),+) => {
-    impl<$($ident),*> TypeName for ($($ident,)*) {
+    impl<$($ident: TypeName),*> TypeName for ($($ident,)*) {
       fn type_name() -> &'static str {
         concat!("Tuple", "(", $(stringify!($ident), ","),*, ")")
       }
       fn value_type() -> ValueType {
         ValueType::Object
+      }
+      fn ts_type() -> String {
+        let types = vec![$($ident::ts_type()),*];
+        format!("[{}]", types.join(", "))
       }
     }
   };

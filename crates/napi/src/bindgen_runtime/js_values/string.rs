@@ -10,11 +10,14 @@ impl TypeName for String {
     "String"
   }
 
+  fn ts_type() -> String {
+    "string".to_owned()
+  }
+
   fn value_type() -> ValueType {
     ValueType::String
   }
 }
-
 
 impl<'scope> IntoJs<'scope> for &String {
   type Output = crate::JsString<'scope>;
@@ -90,6 +93,34 @@ impl<'env, 'scope> FromJs<'env, 'scope> for String {
   }
 }
 
+impl TypeName for str {
+  fn type_name() -> &'static str {
+    "str"
+  }
+
+  fn ts_type() -> String {
+    "string".to_owned()
+  }
+
+  fn value_type() -> ValueType {
+    ValueType::String
+  }
+}
+
+impl TypeName for &str {
+  fn type_name() -> &'static str {
+    "str"
+  }
+
+  fn ts_type() -> String {
+    "string".to_owned()
+  }
+
+  fn value_type() -> ValueType {
+    ValueType::String
+  }
+}
+
 impl<'scope> IntoJs<'scope> for &str {
   type Output = crate::JsString<'scope>;
 
@@ -110,7 +141,6 @@ impl<'scope> IntoJs<'scope> for &str {
 
 #[derive(Debug)]
 pub struct Utf16String(Vec<u16>);
-
 
 impl From<String> for Utf16String {
   fn from(s: String) -> Self {
@@ -135,6 +165,10 @@ impl Deref for Utf16String {
 impl TypeName for Utf16String {
   fn type_name() -> &'static str {
     "String(utf16)"
+  }
+
+  fn ts_type() -> String {
+    "string".to_owned()
   }
 
   fn value_type() -> ValueType {
@@ -187,7 +221,6 @@ impl<'scope> IntoJs<'scope> for Utf16String {
 #[derive(Debug)]
 pub struct Latin1String(Vec<u8>);
 
-
 impl From<String> for Latin1String {
   fn from(s: String) -> Self {
     Latin1String(s.into_bytes())
@@ -216,6 +249,10 @@ impl Deref for Latin1String {
 impl TypeName for Latin1String {
   fn type_name() -> &'static str {
     "String(latin1)"
+  }
+
+  fn ts_type() -> String {
+    "string".to_owned()
   }
 
   fn value_type() -> ValueType {
@@ -290,6 +327,20 @@ impl RawCString {
   /// If the inner string is null-terminated, you can pass `` as the length.
   pub fn new(inner: *const c_char, length: isize) -> Self {
     Self { inner, length }
+  }
+}
+
+impl TypeName for RawCString {
+  fn type_name() -> &'static str {
+    "RawCString"
+  }
+
+  fn ts_type() -> String {
+    "string".to_owned()
+  }
+
+  fn value_type() -> ValueType {
+    ValueType::String
   }
 }
 

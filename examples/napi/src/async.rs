@@ -13,10 +13,12 @@ async fn read_file_async(path: String) -> Result<Buffer> {
 
 #[napi]
 async fn async_read_file(path: String) -> Result<Buffer> {
-  tokio::fs::read(path)
-    .await
-    .map(|v| v.into())
-    .map_err(|e| Error::new(Status::GenericFailure, format!("failed to read file, {}", e)))
+  tokio::fs::read(path).await.map(|v| v.into()).map_err(|e| {
+    Error::new(
+      Status::GenericFailure,
+      format!("failed to read file, {}", e),
+    )
+  })
 }
 
 #[napi]
@@ -39,8 +41,6 @@ impl AsyncThrowClass {
     &self,
     #[napi(env)] env: &'env Env<'env>,
   ) -> Result<Promise<'env, ()>> {
-    env.spawn_promise(
-      async move { Err(Error::new(Status::GenericFailure, "Throw async error")) },
-    )
+    env.spawn_promise(async move { Err(Error::new(Status::GenericFailure, "Throw async error")) })
   }
 }

@@ -51,7 +51,6 @@ impl<'env, 'scope> FromJs<'env, 'scope> for JsSymbol<'scope> {
   }
 }
 
-
 pub type SymbolRef = Ref<Sym>;
 
 impl<'scope> JsRefTarget<'scope, Ref<Sym>> for &JsSymbol<'_> {

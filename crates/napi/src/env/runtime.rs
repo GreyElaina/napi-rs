@@ -1,9 +1,9 @@
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::future::Future;
-use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(test)]
 use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::{alloc, ffi};
 
@@ -242,9 +242,7 @@ impl AsyncDriver {
         format!("uv_async_init failed with status {status}"),
       ));
     }
-    channel
-      .handle_registered
-      .store(true, Ordering::Release);
+    channel.handle_registered.store(true, Ordering::Release);
 
     unsafe {
       uv_unref(handle);

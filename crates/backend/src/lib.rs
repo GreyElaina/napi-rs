@@ -10,18 +10,16 @@ use proc_macro2::TokenStream;
 pub mod error;
 pub mod ast;
 pub mod codegen;
-mod type_semantics;
 #[cfg(feature = "type-def")]
 pub mod typegen;
+pub mod types;
 mod util;
 
 pub use ast::*;
 pub use codegen::*;
 pub use error::{BindgenResult, Diagnostic};
 #[cfg(feature = "type-def")]
-pub use semver;
-#[cfg(feature = "type-def")]
-pub use typegen::*;
+pub use typegen::{format_js_property_name, gen_ts_func_arg_pub, tokens, JSDoc};
 pub use util::to_case;
 
 #[derive(Debug)]
@@ -44,15 +42,6 @@ macro_rules! napi_ast_impl {
         }
       }
     }
-
-		#[cfg(feature = "type-def")]
-		impl ToTypeDef for Napi {
-			fn to_type_def(&self) -> Option<TypeDef> {
-				match self.item {
-          $( NapiItem::$v(ref ast) => ast.to_type_def() ),*
-        }
-			}
-		}
 
     impl Napi {
       pub fn register_name(&self) -> String {

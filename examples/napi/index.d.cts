@@ -15,36 +15,28 @@ export declare class ExternalObject<T> {
 }
 
 export type TypedArray = Int8Array | Uint8Array | Uint8ClampedArray | Int16Array | Uint16Array | Int32Array | Uint32Array | Float32Array | Float64Array | BigInt64Array | BigUint64Array
+
 /**
  * `constructor` option for `struct` requires all fields to be public,
  * otherwise tag impl fn as constructor
  * #[napi(constructor)]
  */
 export declare class Animal {
-  /** Kind of animal */
-  readonly kind: Kind
   /** This is the constructor */
   constructor(kind: Kind, name: string)
-  /** This is a factory method */
-  static withKind(kind: Kind): Animal
+  /** Kind of animal */
+  readonly kind: Kind
   get name(): string
-  set name(name: string)
-  get type(): Kind
-  set type(kind: Kind)
   get optionalValue(): number | null
+  get type(): Kind
+  set name(name: string)
   /**
    * This is to test that setter with optional parameter generates valid TypeScript.
    * TypeScript does not allow optional parameters in setters (TS1051).
    */
   set optionalValue(value: number | undefined | null)
-  /**
-   * This is a
-   * multi-line comment
-   * with an emoji 🚀
-   */
-  whoami(): string
-  /** This is static... */
-  static getDogKind(): Kind
+  set type(kind: Kind)
+  overrideIndividualArgOnMethod(normalTy: string, overriddenTy: {n: string}): Bird
   /**
    * Here are some characters and character sequences
    * that should be escaped correctly:
@@ -54,13 +46,22 @@ export declare class Animal {
    */
   returnOtherClass(): Dog
   returnOtherClassWithCustomConstructor(): Bird
-  overrideIndividualArgOnMethod(normalTy: string, overriddenTy: {n: string}): Bird
+  /**
+   * This is a
+   * multi-line comment
+   * with an emoji 🚀
+   */
+  whoami(): string
+  /** This is static... */
+  static getDogKind(): Kind
+  /** This is a factory method */
+  static withKind(kind: Kind): Animal
 }
 
 export declare class AnimalWithDefaultConstructor {
-  name: string
-  kind: number
   constructor(name: string, kind: number)
+  kind: number
+  name: string
 }
 
 export declare class AnotherClassForEither {
@@ -68,7 +69,7 @@ export declare class AnotherClassForEither {
 }
 
 export interface AnotherCssStyleSheet {
-  get rules(): Class<CssRuleList>
+  get rules(): CssRuleList
 }
 export declare const AnotherCssStyleSheet: {
   [Symbol.hasInstance](value: unknown): boolean
@@ -83,7 +84,7 @@ export type JsAsset = Asset
 
 export declare class Assets {
   constructor()
-  get(id: number): JsAsset | null
+  get(id: number): Asset | null
 }
 export type JsAssets = Assets
 
@@ -109,22 +110,21 @@ export declare const AsyncDataSource: {
  * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Iteration_protocols#the_async_iterator_and_async_iterable_protocols
  */
 export declare class AsyncFib {
-  [Symbol.asyncIterator](): AsyncGenerator<number, void, number | undefined>
   constructor()
+  [Symbol.asyncIterator](): AsyncGenerator<number, void, number | undefined>
 }
 
 export declare class AsyncThrowClass {
-
   constructor()
   asyncThrowError(): Promise<undefined>
 }
 
 export declare class Bird {
-  name: string
   constructor(name: string)
+  name: string
+  acceptSliceMethod(slice: Uint8Array): number
   getCount(): number
   getNameAsync(): Promise<string>
-  acceptSliceMethod(slice: Uint8Array): number
 }
 
 /** Smoking test for type generation */
@@ -132,7 +132,7 @@ export interface Blake2BHasher {
   update(data: Buffer): void
 }
 export declare const Blake2BHasher: {
-  withKey(key: Blake2bKey): Blake2BHasher
+  withKey(key: Blake2BKey): Blake2BHasher
   [Symbol.hasInstance](value: unknown): boolean
 }
 export type Blake2bHasher = Blake2BHasher
@@ -169,9 +169,9 @@ export interface ClassWithFactory {
   setName(name: string): this
 }
 export declare const ClassWithFactory: {
-  withName(name: string): ClassWithFactory
   with4Name(name: string): Promise<ClassWithFactory>
   with4NameResult(name: string): Promise<ClassWithFactory>
+  withName(name: string): ClassWithFactory
   [Symbol.hasInstance](value: unknown): boolean
 }
 
@@ -180,11 +180,22 @@ export declare class ClassWithLifetime {
   getName(): string
 }
 
+export declare class ComplexClass {
+  constructor(value: string | ComplexClass, number: number)
+  number: number
+  value: string
+  methodFive(): string
+  methodFour(): boolean
+  methodOne(): string
+  methodThree(): string
+  methodTwo(): number
+}
+
 export declare class Context {
-  maybeNeed?: boolean
   constructor()
-  static withData(data: string): Context
+  maybeNeed?: boolean
   method(): string
+  static withData(data: string): Context
 }
 
 /**
@@ -208,9 +219,9 @@ export declare const CreateStringClass: {
 }
 
 export interface CssRuleList {
-  getRules(): Array<string>
   get name(): string | null
-  get parentStyleSheet(): Class<CSSStyleSheet>
+  get parentStyleSheet(): CssStyleSheet
+  getRules(): Array<string>
 }
 export declare const CssRuleList: {
   [Symbol.hasInstance](value: unknown): boolean
@@ -219,7 +230,7 @@ export type CSSRuleList = CssRuleList
 
 export declare class CssStyleSheet {
   constructor(name: string, rules: Array<string>)
-  get rules(): Class<CssRuleList>
+  get rules(): CssRuleList
   anotherCssStyleSheet(): AnotherCssStyleSheet
 }
 export type CSSStyleSheet = CssStyleSheet
@@ -229,16 +240,16 @@ export declare class CustomFinalize {
 }
 
 export declare class CustomStruct {
-  static customStatusCodeForFactory(): CustomStruct
   constructor()
+  static customStatusCodeForFactory(): CustomStruct
 }
 
 export declare class DefaultUseNullableClass {
-  requiredNumberField: number
-  requiredStringField: string
+  constructor(requiredNumberField: number, requiredStringField: string, optionalNumberField?: number | undefined | null, optionalStringField?: string | undefined | null)
   optionalNumberField?: number
   optionalStringField?: string
-  constructor(requiredNumberField: number, requiredStringField: string, optionalNumberField?: number, optionalStringField?: string)
+  requiredNumberField: number
+  requiredStringField: string
 }
 
 /**
@@ -248,14 +259,14 @@ export declare class DefaultUseNullableClass {
  * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Iteration_protocols#the_async_iterator_and_async_iterable_protocols
  */
 export declare class DelayedCounter {
-  [Symbol.asyncIterator](): AsyncGenerator<number, string, undefined>
   /** Creates a counter that yields values from 0 to max-1 with a delay between each */
   constructor(max: number, delayMs: number)
+  [Symbol.asyncIterator](): AsyncGenerator<number, string, undefined>
 }
 
 export declare class Dog {
-  name: string
   constructor(name: string)
+  name: string
 }
 
 /**
@@ -278,7 +289,7 @@ export declare class Fib extends Iterator<number, void, number> {
  * @see https://www.typescriptlang.org/docs/handbook/release-notes/typescript-5-6.html#iterator-helper-methods
  */
 export interface Fib2 extends Iterator<number, void, number> {
-
+  next(value?: number): IteratorResult<number, void>
 }
 export declare const Fib2: {
   create(seed: number): Fib2
@@ -293,9 +304,9 @@ export declare const Fib2: {
  * @see https://www.typescriptlang.org/docs/handbook/release-notes/typescript-5-6.html#iterator-helper-methods
  */
 export declare class Fib3 extends Iterator<number, void, number> {
+  constructor(current: number, nextNum: number)
   current: number
   nextNum: number
-  constructor(current: number, nextNum: number)
   next(value?: number): IteratorResult<number, void>
 }
 
@@ -307,17 +318,17 @@ export declare class Fib3 extends Iterator<number, void, number> {
  * @see https://www.typescriptlang.org/docs/handbook/release-notes/typescript-5-6.html#iterator-helper-methods
  */
 export declare class Fib4 extends Iterator<object, void, number> {
+  constructor(current: number, nextItem: number)
   current: number
   nextItem: number
-  constructor(current: number, nextItem: number)
-  toJSON(): Array<number>
   next(value?: number): IteratorResult<object, void>
+  toJSON(): Array<number>
 }
 
 export declare class FnRefHolder {
-  constructor(sumCb: (arg0: number, arg1: number) => number, fmtCb: (arg: string) => string)
-  callSum(a: number, b: number): number
+  constructor(sumCb: (...args: any[]) => any, fmtCb: (...args: any[]) => any)
   callFmt(input: string): string
+  callSum(a: number, b: number): number
 }
 
 export declare class GetterSetterWithClosures {
@@ -333,19 +344,19 @@ export declare class ImageNode {
 }
 export declare interface ImageNode extends RendererNode {}
 
-export declare class JsClassForEither {
-  constructor()
-}
-
 export interface JSOnlyMethodsClass {
   data: string
-  processData(): string
   getLength(): number
+  processData(): string
 }
 export declare const JSOnlyMethodsClass: {
   [Symbol.hasInstance](value: unknown): boolean
 }
 export type RustOnlyMethodsClass = JSOnlyMethodsClass
+
+export declare class JsClassForEither {
+  constructor()
+}
 
 export declare class JsRemote {
   constructor(repo: JsRepo)
@@ -379,10 +390,10 @@ export type OriginalRustNameForJsNamedStruct = MyJsNamedClass
 
 export interface NinjaTurtle {
   name: string
-  /** Create your ninja turtle! 🐢 */
   getMaskColor(): string
   getName(): string
   returnThis(): this
+  /** Create your ninja turtle! 🐢 */
 }
 export declare const NinjaTurtle: {
   isInstanceOf(value: unknown): boolean
@@ -391,16 +402,16 @@ export declare const NinjaTurtle: {
 }
 
 export declare class NotUseNullableClass {
-  requiredNumberField: number
-  requiredStringField: string
+  constructor(requiredNumberField: number, requiredStringField: string, optionalNumberField?: number | undefined | null, optionalStringField?: string | undefined | null)
   optionalNumberField?: number
   optionalStringField?: string
-  constructor(requiredNumberField: number, requiredStringField: string, optionalNumberField?: number, optionalStringField?: string)
+  requiredNumberField: number
+  requiredStringField: string
 }
 
 export declare class NotWritableClass {
-  name: string
   constructor(name: string)
+  name: string
   setName(name: string): void
 }
 
@@ -409,9 +420,9 @@ export interface Optional {
 }
 export declare const Optional: {
   optionEnd(required: string, optional?: string | undefined | null): string
+  optionOnly(optional?: string | undefined | null): string
   optionStart(optional: string | undefined | null, required: string): string
   optionStartEnd(optional1: string | undefined | null, required: string, optional2?: string | undefined | null): string
-  optionOnly(optional?: string | undefined | null): string
   [Symbol.hasInstance](value: unknown): boolean
 }
 
@@ -426,7 +437,6 @@ export declare class PngImageNode extends ImageNode {
 }
 
 export interface PostInitBase {
-
   baseInitialized(): boolean
 }
 export declare const PostInitBase: {
@@ -435,43 +445,41 @@ export declare const PostInitBase: {
 
 export declare class PostInitChild {
   constructor(label: string)
-
   get label(): string
   childInitialized(): boolean
 }
 export declare interface PostInitChild extends PostInitBase {}
 
 export declare class Reader {
-
   constructor()
   read(): Buffer
 }
 
 export interface RendererNode {
-  id(): number
-  nodeKind(): string
-  receiverId(): number
-  ownedReceiverId(): number
   envMutMarker(): boolean
-  setIdFromReceiver(id: number): void
   hasSameId(other: RendererNode): boolean
   hasSameIdRef(other: RendererNode): boolean
+  id(): number
+  nodeKind(): string
+  ownedReceiverId(): number
+  receiverId(): number
+  setIdFromReceiver(id: number): void
 }
 export declare const RendererNode: {
   [Symbol.hasInstance](value: unknown): boolean
 }
 
 export declare class Selector {
+  constructor(orderBy: Array<string>, select: Array<string>, struct: string, where?: string | undefined | null)
   orderBy: Array<string>
   select: Array<string>
   struct: string
   where?: string
-  constructor(orderBy: Array<string>, select: Array<string>, struct: string, where?: string)
 }
 
 export declare class SelfReferenceField {
+  constructor(next?: SelfReferenceField | undefined | null)
   next?: SelfReferenceField
-  constructor(next?: SelfReferenceField)
   current(): SelfReferenceField
   maybeNext(): SelfReferenceField | null
   static newDetached(): SelfReferenceField
@@ -479,7 +487,6 @@ export declare class SelfReferenceField {
 
 export declare class SelfReferential {
   constructor(name: string)
-
   get name(): string
   getWeakName(): string
 }
@@ -507,35 +514,21 @@ export declare class ThingList {
 }
 
 export declare class UseNullableClass {
-  requiredNumberField: number
-  requiredStringField: string
+  constructor(requiredNumberField: number, requiredStringField: string, nullableNumberField: number | undefined | null | null, nullableStringField: string | undefined | null | null)
   nullableNumberField: number | null
   nullableStringField: string | null
-  constructor(requiredNumberField: number, requiredStringField: string, nullableNumberField: number | null, nullableStringField: string | null)
+  requiredNumberField: number
+  requiredStringField: string
 }
 
 export declare class Width {
-  value: number
   constructor(value: number)
+  value: number
 }
 
 export interface A {
   foo: number
 }
-
-export declare function acceptArraybuffer(fixture: ArrayBuffer): bigint
-
-export declare function acceptSlice(fixture: Uint8Array): bigint
-
-export declare function acceptStream(stream: ReadableStream<Uint8Array>): Promise<AcceptedStream>
-
-export declare function acceptUint8ClampedSlice(input: Uint8ClampedArray): bigint
-
-export declare function acceptUint8ClampedSliceAndBufferSlice(a: Buffer, b: Uint8ClampedArray): bigint
-
-export declare function acceptUntypedTypedArray(input: TypedArray): bigint
-
-export declare function add(a: number, b: number): number
 
 export declare const enum ALIAS {
   A = 0,
@@ -543,7 +536,7 @@ export declare const enum ALIAS {
 }
 
 export interface AliasedStruct {
-  a: ALIAS
+  a: AliasedEnum
   b: number
 }
 
@@ -552,122 +545,20 @@ export interface AllOptionalObject {
   age?: number
 }
 
-export declare function appendBuffer(buf: Buffer): Buffer
-
-export declare function apply0(ctx: Class<Animal>, callback: () => void): void
-
-export declare function apply1(ctx: Class<Animal>, callback: (arg: string) => void, name: string): void
-
-export declare function arrayBufferFromData(): ArrayBuffer
-
-export declare function arrayBufferFromExternal(): ArrayBuffer
-
-export declare function arrayBufferPassThrough(buf: Uint8Array): Promise<Uint8Array>
-
-export declare function asyncBufferToArray(buf: ArrayBuffer): Array<number>
-
-export declare function asyncMultiTwo(arg: number): Promise<number>
-
-export declare function asyncPlus100(p: Promise<number>): Promise<number>
-
-export declare function asyncReadFile(path: string): Promise<Buffer>
-
-export declare function asyncReduceBuffer(buf: Buffer): Promise<number>
-
-export declare function asyncResolveArray(inner: number): Promise<Array<number>>
-
 export interface B {
   bar: number
 }
-
-export declare function bigintAdd(a: bigint, b: bigint): bigint
-
-export declare function bigintFromI128(): bigint
-
-export declare function bigintFromI64(): bigint
-
-export declare function bigintGetU64AsString(bi: bigint): string
 
 export interface BindingVitePluginMeta {
   'vite:import-glob': ViteImportGlobMeta
 }
 
-export declare function blockingArraybuffer(data: Array<number>): Promise<ArrayBuffer>
-
-export declare function blockingOptionalReturn(): Promise<number | null>
-
-export declare function blockingReadFile(path: string): Promise<Buffer>
-
-export declare function blockingVoidReturn(): Promise<void>
-
 export type Brush =
-  string | Gradient
-
-export declare function btreeSetToJs(): Set<string>
-
-export declare function btreeSetToRust(set: Set<string>): void
-
-export declare function bufferPassThrough(buf: Buffer): Promise<Buffer>
-
-export declare function bufferWithAsyncBlock(buf: Buffer): Promise<number>
+  export type Brush = string | Gradient
 
 export interface C {
   baz: number
 }
-
-export declare function call0(callback: () => number): number
-
-export declare function call1(callback: (arg: number) => number, arg: number): number
-
-export declare function call2(callback: (arg0: number, arg1: number) => number, arg1: number, arg2: number): number
-
-export declare function callbackInSpawn(callback: (arg: object) => void): void
-
-export declare function callbackReturnPromise<T>(functionInput: () => T | Promise<T>, callback: (err: Error | null, result: T) => void): T | Promise<T>
-
-export declare function callbackReturnPromiseAndSpawn(jsFunc: (arg0: string) => Promise<string>): Promise<string>
-
-export declare function callCatchOnPromise(input: Promise<number>): Promise<string>
-
-export declare function callFinallyOnPromise(input: Promise<number>, onFinally: () => void): Promise<number>
-
-export declare function callFunction(cb: () => number): number
-
-export declare function callFunctionWithArg(cb: (arg0: number, arg1: number) => number, arg0: number, arg1: number): number
-
-export declare function callFunctionWithArgAndCtx(ctx: Class<Animal>, cb: (arg: string) => void, name: string): void
-
-export declare function callRuleHandler(rule: Rule, arg: number): number
-
-export declare function callThenOnPromise(input: Promise<number>): Promise<string>
-
-export declare function callWithNestedFunctionArg(callback: (arg: (arg: number) => number) => number): number
-
-export declare function callWithTupleArg(callback: (arg: [number, number]) => number, arg1: number, arg2: number): number
-
-export declare function captureErrorInCallback(cb1: () => void, cb2: (arg0: Error) => void): void
-
-export declare function chronoDateAdd1Minute(input: Date): Date
-
-export declare function chronoDateFixtureReturn1(): Date
-
-export declare function chronoDateFixtureReturn2(): Date
-
-export declare function chronoDateWithTimezoneReturn(): Date | null
-
-export declare function chronoDateWithTimezoneToMillis(input: Date): number
-
-export declare function chronoLocalDateReturn(): Date | null
-
-export declare function chronoLocalDateToMillis(input: Date): number
-
-export declare function chronoNativeDateTime(date: Date): number
-
-export declare function chronoNativeDateTimeReturn(): Date | null
-
-export declare function chronoUtcDateReturn(): Date | null
-
-export declare function chronoUtcDateToMillis(input: Date): number
 
 export interface CompilerAssumptions {
   ignoreFunctionLength?: boolean
@@ -718,6 +609,355 @@ export interface CompilerAssumptions {
   setPublicClassFields?: boolean
 }
 
+/** You could break the step and for an new continuous value. */
+export declare const enum CustomNumEnum {
+  One = 1,
+  Two = 2,
+  Three = 3,
+  Four = 4,
+  Six = 6,
+  Eight = 8,
+  Nine = 9,
+  Ten = 10
+}
+
+export declare const enum CustomStringEnum {
+  Foo = 'my-custom-value',
+  Bar = 'Bar',
+  Baz = 'Baz'
+}
+
+export type CustomU32 =
+  export type CustomU32 = number
+
+/** This is a const */
+export const DEFAULT_COST: number
+
+export interface Data {
+  data: string | Buffer
+}
+
+export interface DatesWithTimeZone {
+  start: Date
+  end?: Date
+}
+
+export interface DefaultUseNullableStruct {
+  requiredNumberField: number
+  requiredStringField: string
+  optionalNumberField?: number
+  optionalStringField?: string
+}
+
+export declare const enum Empty {
+
+}
+
+export interface FunctionData {
+  handle: (...args: any[]) => any
+}
+
+/** default enum values are continuos i32s start from 0 */
+export declare const enum Kind {
+  /** Barks */
+  Dog = 0,
+  /** Kills birds */
+  Cat = 1,
+  /** Tasty */
+  Duck = 2
+}
+
+export interface Latin1MethodsResult {
+  length: number
+  isEmpty: boolean
+  asSlice: Array<number>
+}
+
+export type LifetimeOnlyHandler =
+  export type LifetimeOnlyHandler = (...args: any[]) => any
+
+export interface LocalDates {
+  start: Date
+  end?: Date
+}
+
+export interface Meta {
+  merge: boolean
+}
+
+export type MyPromise =
+  export type MyPromise = string | Promise<string>
+
+export type MyVec =
+  Array<number | string>
+
+export interface NestedMetadata {
+  hello: string
+}
+
+export interface NotUseNullableStruct {
+  requiredNumberField: number
+  requiredStringField: string
+  optionalNumberField?: number
+  optionalStringField?: string
+}
+
+export interface Obj {
+  v: string | number
+}
+
+export interface ObjectFieldClassReference {
+  bird: Bird
+}
+
+export interface ObjectOnlyToJs {
+  name: number
+  dependencies: any
+}
+
+/** This is an interface for package.json */
+export interface PackageJson {
+  name: string
+  /** The version of the package */
+  version: string
+  dependencies?: Record<string, any>
+  devDependencies?: Record<string, any>
+}
+
+export interface PluginLoadResult {
+  name: string
+  version: string
+}
+
+export interface PropertyNameDigitTest {
+  /** Property names starting with digits should be quoted */
+  '0invalid': string
+  '123': string
+}
+
+export interface PropertyNameSpecialCharsTest {
+  /** Special characters should be quoted */
+  'kebab-case': string
+  'with space': string
+  'dot.notation': string
+  'xml:lang': string
+  /** Dollar sign should be quoted for backward compatibility */
+  '$var': string
+}
+
+export interface PropertyNameUnicodeTest {
+  /** Unicode characters should NOT be quoted */
+  café: string
+  日本語: string
+  Ελληνικά: string
+}
+
+export interface PropertyNameValidTest {
+  /** Valid identifiers should NOT be quoted */
+  camelCase: string
+  pascalCase: string
+  private: string
+  with123Numbers: string
+}
+
+export interface RequestInit {
+  method?: string
+  headers?: Record<string, string>
+}
+
+export interface Rule {
+  name: string
+  handler: (...args: any[]) => any
+}
+
+export interface Shared {
+  value: number
+}
+
+export type SpanPos =
+export type SpanPos = { element: Element; index: number }
+
+export declare const enum Status {
+  Pristine = 'Pristine',
+  Loading = 'Loading',
+  Ready = 'Ready'
+}
+
+export interface StreamItem {
+  something: NestedMetadata
+  name: string
+  size: number
+}
+
+export interface StrictObject {
+  name: string
+}
+
+export declare const enum StringEnum {
+  VariantOne = 'variantone',
+  VariantTwo = 'varianttwo',
+  VariantThree = 'variantthree'
+}
+
+export type StructuredKind =
+  | {  }
+  | {   name: string }
+  | {   name: string;   age: number }
+  | {   field0: number;   field1: number }
+
+export type StructuredKindLowercase =
+  | {  }
+  | {   name: string }
+  | {   name: string;   age: number }
+  | {   field0: number;   field1: number }
+
+export interface TsTypeChanged {
+  typeOverride: object
+  typeOverrideOptional: object
+}
+
+export interface TupleObject {
+  customField: number
+  field1: number
+}
+
+export type TupleToArray =
+  field0: string
+  field1: number
+  field2?: Meta
+
+export interface UseNullableStruct {
+  requiredNumberField: number
+  requiredStringField: string
+  nullableNumberField: number | null
+  nullableStringField: string | null
+}
+
+export interface UtcDates {
+  start: Date
+  end?: Date
+}
+
+export interface ViteImportGlobMeta {
+  isSubImportsPattern?: boolean
+}
+
+export declare function acceptArraybuffer(fixture: ArrayBuffer): bigint
+
+export declare function acceptSlice(fixture: Uint8Array): bigint
+
+export declare function acceptStream(stream: ReadableStream): Promise<Buffer>
+
+export declare function acceptUint8ClampedSlice(input: Uint8ClampedArray): bigint
+
+export declare function acceptUint8ClampedSliceAndBufferSlice(a: Buffer, b: Uint8ClampedArray): bigint
+
+export declare function acceptUntypedTypedArray(input: TypedArray): bigint
+
+export declare function add(a: number, b: number): number
+
+export declare function appendBuffer(buf: Buffer): Buffer
+
+export declare function apply0(ctx: Animal, callback: (...args: any[]) => any): void
+
+export declare function apply1(ctx: Animal, callback: (...args: any[]) => any, name: string): void
+
+export declare function arrayBufferFromData(): ArrayBuffer
+
+export declare function arrayBufferFromExternal(): ArrayBuffer
+
+export declare function arrayBufferPassThrough(buf: Uint8Array): Promise<Uint8Array>
+
+export declare function asyncBufferToArray(buf: ArrayBuffer): Array<number>
+
+export declare function asyncMultiTwo(arg: number): Promise<number>
+
+export declare function asyncPlus100(p: Promise<number>): Promise<number>
+
+export declare function asyncReadFile(path: string): Promise<Buffer>
+
+export declare function asyncReduceBuffer(buf: Buffer): Promise<number>
+
+export declare function asyncResolveArray(inner: number): Promise<Array<number>>
+
+export declare function bigintAdd(a: bigint, b: bigint): bigint
+
+export declare function bigintFromI128(): bigint
+
+export declare function bigintFromI64(): bigint
+
+export declare function bigintGetU64AsString(bi: bigint): string
+
+export declare function blockingArraybuffer(data: Array<number>): Promise<ArrayBuffer>
+
+export declare function blockingOptionalReturn(): Promise<number | null>
+
+export declare function blockingReadFile(path: string): Promise<Buffer>
+
+export declare function blockingVoidReturn(): Promise<void>
+
+export declare function btreeSetToJs(): Array<string>
+
+export declare function btreeSetToRust(set: Array<string>): void
+
+export declare function bufferPassThrough(buf: Buffer): Promise<Buffer>
+
+export declare function bufferWithAsyncBlock(buf: Buffer): Promise<number>
+
+export declare function call0(callback: (...args: any[]) => any): number
+
+export declare function call1(callback: (...args: any[]) => any, arg: number): number
+
+export declare function call2(callback: (...args: any[]) => any, arg1: number, arg2: number): number
+
+export declare function callCatchOnPromise(input: Promise<number>): Promise<string>
+
+export declare function callFinallyOnPromise(input: Promise<number>, onFinally: (...args: any[]) => any): Promise<number>
+
+export declare function callFunction(cb: (...args: any[]) => any): number
+
+export declare function callFunctionWithArg(cb: (...args: any[]) => any, arg0: number, arg1: number): number
+
+export declare function callFunctionWithArgAndCtx(ctx: Animal, cb: (...args: any[]) => any, name: string): void
+
+export declare function callRuleHandler(rule: Rule, arg: number): number
+
+export declare function callThenOnPromise(input: Promise<number>): Promise<string>
+
+export declare function callWithNestedFunctionArg(callback: (...args: any[]) => any): number
+
+export declare function callWithTupleArg(callback: (...args: any[]) => any, arg1: number, arg2: number): number
+
+export declare function callbackInSpawn(callback: (...args: any[]) => any): void
+
+export declare function callbackReturnPromise<T>(functionInput: () => T | Promise<T>, callback: (err: Error | null, result: T) => void): T | Promise<T>
+
+export declare function callbackReturnPromiseAndSpawn(jsFunc: (arg0: string) => Promise<string>): Promise<string>
+
+export declare function captureErrorInCallback(cb1: () => void, cb2: (arg0: Error) => void): void
+
+export declare function chronoDateAdd1Minute(input: Date): Date
+
+export declare function chronoDateFixtureReturn1(): Date
+
+export declare function chronoDateFixtureReturn2(): Date
+
+export declare function chronoDateWithTimezoneReturn(): Date | null
+
+export declare function chronoDateWithTimezoneToMillis(input: Date): number
+
+export declare function chronoLocalDateReturn(): Date | null
+
+export declare function chronoLocalDateToMillis(input: Date): number
+
+export declare function chronoNativeDateTime(date: Date): number
+
+export declare function chronoNativeDateTimeReturn(): Date | null
+
+export declare function chronoUtcDateReturn(): Date | null
+
+export declare function chronoUtcDateToMillis(input: Date): number
+
 export declare function compressSync(_: string | Uint8Array): Buffer
 
 export declare function concatLatin1(s: string): string
@@ -754,7 +994,7 @@ export declare function createExternalLatin1String(): string
 
 export declare function createExternalLatin1WithLatin1Chars(): string
 
-export declare function createExternalRef(size: number): ExternalObject<number>
+export declare function createExternalRef(size: number): External
 
 export declare function createExternalString(content: string): ExternalObject<string>
 
@@ -762,25 +1002,25 @@ export declare function createExternalTypedArray(): Uint32Array
 
 export declare function createExternalUtf16String(): string
 
-export declare function createFunction(): (arg: number) => number
+export declare function createFunction(): (...args: any[]) => any
 
 export declare function createI32ArrayFromExternal(): Int32Array
 
 export declare function createObj(): object
 
+export declare function createObjWithProperty(): { value: ArrayBuffer, get getter(): number }
+
 export declare function createObjectRef(): object
 
 export declare function createObjectWithClassField(): ObjectFieldClassReference
 
-export declare function createObjWithProperty(): { value: ArrayBuffer, get getter(): number }
-
 export declare function createOptionalExternal(size?: number | undefined | null): ExternalObject<number> | null
 
-export declare function createReadableStream(): ReadableStream<Buffer>
+export declare function createReadableStream(): ReadableStream
 
-export declare function createReadableStreamFromClass(readableStreamClass: typeof ReadableStream): ReadableStream<Buffer>
+export declare function createReadableStreamFromClass(readableStreamClass: typeof ReadableStream): ReadableStream
 
-export declare function createReadableStreamWithObject(): ReadableStream<StreamItem>
+export declare function createReadableStreamWithObject(): ReadableStream
 
 export declare function createRejectedPromise(message: string): Promise<number>
 
@@ -804,53 +1044,11 @@ export declare function createZeroCopyLatin1String(): string
 
 export declare function createZeroCopyUtf16String(): string
 
-/** You could break the step and for an new continuous value. */
-export declare const enum CustomNumEnum {
-  One = 1,
-  Two = 2,
-  Three = 3,
-  Four = 4,
-  Six = 6,
-  Eight = 8,
-  Nine = 9,
-  Ten = 10
-}
-
 export declare function customStatusCode(): void
-
-export declare const enum CustomStringEnum {
-  Foo = 'my-custom-value',
-  Bar = 'Bar',
-  Baz = 'Baz'
-}
-
-export type CustomU32 =
-  number
-
-export interface Data {
-  data: string | Buffer
-}
-
-export interface DatesWithTimeZone {
-  start: Date
-  end?: Date
-}
 
 export declare function dateToNumber(input: Date): number
 
-/** This is a const */
-export const DEFAULT_COST: number
-
-export interface DefaultUseNullableStruct {
-  requiredNumberField: number
-  requiredStringField: string
-  optionalNumberField?: number
-  optionalStringField?: string
-}
-
-export declare function defineClass(): typeof DynamicRustClass
-
-class DynamicRustClass {
+export declare function defineClass(): typeof DynamicRustClass\n\nclass DynamicRustClass {
   constructor(value: number)
   rustMethod(): number
 }
@@ -861,11 +1059,11 @@ export declare function either3(input: string | number | boolean): number
 
 export declare function either4(input: string | number | boolean | Obj): number
 
-export declare function eitherBoolOrFunction(input: boolean | ((arg?: unknown) => unknown)): void
+export declare function eitherBoolOrFunction(input: boolean | (...args: any[]) => any): void
 
 export declare function eitherBoolOrTuple(input: boolean | [boolean, string]): void
 
-export declare function eitherF64OrU32(input: number): number
+export declare function eitherF64OrU32(input: number): number | number
 
 export declare function eitherFromObjects(input: A | B | C): string
 
@@ -875,17 +1073,13 @@ export declare function eitherPromiseInEitherA(input: Promise<number> | number |
 
 export declare function eitherStringOrNumber(input: string | number): number
 
-export declare const enum Empty {
-
-}
-
 export declare function enumToI32(e: CustomNumEnum): number
 
 export declare function errorMessageContainsNullByte(msg: string): void
 
-export declare function esmResolve(next: () => Promise<undefined>): Promise<undefined>
+export declare function esmResolve(next: (...args: any[]) => any): Promise<undefined>
 
-export declare function extendsJavascriptError(errorClass: any): void
+export declare function extendsJavascriptError(errorClass: (...args: any[]) => any): void
 
 export declare function f32ArrayToArray(input: Float32Array): Array<number>
 
@@ -895,11 +1089,7 @@ export declare function fetch(url: string, requestInit?: RequestInit | undefined
 
 export declare function fibonacci(n: number): number
 
-export declare function fnReceivedAliased(s: AliasedStruct, e: ALIAS): void
-
-export interface FunctionData {
-  handle: () => number
-}
+export declare function fnReceivedAliased(s: StructContainsAliasedEnum, e: AliasedEnum): void
 
 export declare function generateFunctionAndCallIt(): FunctionData
 
@@ -933,7 +1123,7 @@ export declare function getMappingWithHasher(): Record<string, number>
 
 export declare function getModuleFileName(): string
 
-export declare function getMyVec(): MyVec
+export declare function getMyVec(): Array<T>
 
 export declare function getNestedNumArr(): number[][][]
 
@@ -952,13 +1142,13 @@ export declare function getPackageJsonName(packageJson: PackageJson): string
 
 export declare function getStrFromObject(): void
 
-export declare function getterFromObj(): number
-
 export declare function getTuple(val: [number, string, number]): number
 
 export declare function getUndefined(): void
 
 export declare function getWords(): Array<string>
+
+export declare function getterFromObj(): number
 
 export declare function i16ArrayToArray(input: Int16Array): Array<number>
 
@@ -968,49 +1158,21 @@ export declare function i64ArrayToArray(input: BigInt64Array): Array<number>
 
 export declare function i8ArrayToArray(input: Int8Array): Array<number>
 
+export declare function indexSetToJs(): Array<string>
+
+export declare function indexSetToRust(set: Array<string>): void
+
 export declare function indexmapPassthrough(fixture: Record<string, number>): Record<string, number>
-
-export declare function indexSetToJs(): Set<string>
-
-export declare function indexSetToRust(set: Set<string>): void
 
 export declare function intoUtf8(s: string): string
 
 export declare function jsErrorCallback(value: unknown): Array<Error>
 
-/** default enum values are continuos i32s start from 0 */
-export declare const enum Kind {
-  /** Barks */
-  Dog = 0,
-  /** Kills birds */
-  Cat = 1,
-  /** Tasty */
-  Duck = 2
-}
-
-export interface Latin1MethodsResult {
-  length: number
-  isEmpty: boolean
-  asSlice: Array<number>
-}
-
-export type LifetimeOnlyHandler =
-  (arg: string) => string
-
 export declare function listObjKeys(obj: object): Array<string>
-
-export interface LocalDates {
-  start: Date
-  end?: Date
-}
 
 export declare function mapOption(val?: number | undefined | null): number | null
 
 export declare function mergeTupleArray(t1: TupleToArray, t2: TupleToArray): TupleToArray
-
-export interface Meta {
-  merge: boolean
-}
 
 export declare function mutateArraybuffer(buf: ArrayBuffer): void
 
@@ -1020,52 +1182,19 @@ export declare function mutateOptionalExternal(external: ExternalObject<number> 
 
 export declare function mutateTypedArray(input: Float32Array): void
 
-export type MyPromise =
-  string | Promise<string>
-
-export type MyVec =
-  Array<number | string>
-
-export interface NestedMetadata {
-  hello: string
-}
-
-export interface NotUseNullableStruct {
-  requiredNumberField: number
-  requiredStringField: string
-  optionalNumberField?: number
-  optionalStringField?: string
-}
-
-export type Nullable<T> =
-  T | undefined | null
-
-export interface Obj {
-  v: string | number
-}
-
-export interface ObjectFieldClassReference {
-  bird: Class<Bird>
-}
-
 export declare function objectGetNamedPropertyShouldPerformTypecheck(obj: { foo: number; bar: string; }): void
 
-export interface ObjectOnlyToJs {
-  name: number
-  dependencies: any
-}
-
 export declare function objectWithCApis(): object
-
-export declare function optionalCallbackTypes(callback?: ((arg: string) => void) | undefined | null): void
 
 export declare function optionEnd(callback: (arg0: string, arg1?: string | undefined | null) => void): void
 
 export declare function optionOnly(callback: (arg0?: string | undefined | null) => void): void
 
-export declare function optionStart(callback: (arg0: string | undefined | null, arg1: string) => void): void
+export declare function optionStart(callback: (arg0?: string | undefined | null, arg1: string) => void): void
 
-export declare function optionStartEnd(callback: (arg0: string | undefined | null, arg1: string, arg2?: string | undefined | null) => void): void
+export declare function optionStartEnd(callback: (arg0?: string | undefined | null, arg1: string, arg2?: string | undefined | null) => void): void
+
+export declare function optionalCallbackTypes(callback?: (...args: any[]) => any | undefined | null): void
 
 export declare function overrideIndividualArgOnFunction(notOverridden: string, f: () => string, notOverridden2: number): string
 
@@ -1073,29 +1202,15 @@ export declare function overrideIndividualArgOnFunctionWithCbArg(callback: (town
 
 export declare function overrideWholeFunctionType(operation: 'add' | 'subtract' | 'multiply', a: number, b: number): number
 
-/** This is an interface for package.json */
-export interface PackageJson {
-  name: string
-  /** The version of the package */
-  version: string
-  dependencies?: Record<string, any>
-  devDependencies?: Record<string, any>
-}
-
 export declare function panic(): void
 
 export declare function panicInAsync(): Promise<void>
 
-export declare function passSetToJs(): Set<string>
+export declare function passSetToJs(): Array<string>
 
-export declare function passSetToRust(set: Set<string>): void
+export declare function passSetToRust(set: Array<string>): void
 
-export declare function passSetWithHasherToJs(): Set<string>
-
-export interface PluginLoadResult {
-  name: string
-  version: string
-}
+export declare function passSetWithHasherToJs(): Array<string>
 
 export declare function plusOne(this: Width): number
 
@@ -1103,39 +1218,8 @@ export declare function promiseInEither(input: number | Promise<number>): Promis
 
 export declare function promiseReturnClassInstance(): Promise<ClassReturnInPromise>
 
-export interface PropertyNameDigitTest {
-  /** Property names starting with digits should be quoted */
-  '0invalid': string
-  '123': string
-}
-
-export interface PropertyNameSpecialCharsTest {
-  /** Special characters should be quoted */
-  'kebab-case': string
-  'with space': string
-  'dot.notation': string
-  'xml:lang': string
-  /** Dollar sign should be quoted for backward compatibility */
-  '$var': string
-}
-
-export interface PropertyNameUnicodeTest {
-  /** Unicode characters should NOT be quoted */
-  café: string
-  日本語: string
-  Ελληνικά: string
-}
-
-export interface PropertyNameValidTest {
-  /** Valid identifiers should NOT be quoted */
-  camelCase: string
-  pascalCase: string
-  private: string
-  with123Numbers: string
-}
-
 /** napi = { version = 2, features = ["serde-json"] } */
-export declare function readFile(callback: (arg0: Error | undefined, arg1?: string | undefined | null) => void): void
+export declare function readFile(callback: (arg0: undefined, arg1?: string | undefined | null) => void): void
 
 export declare function readFileAsync(path: string): Promise<Buffer>
 
@@ -1147,29 +1231,24 @@ export declare function receiveBindingVitePluginMeta(meta: BindingVitePluginMeta
 
 export declare function receiveBufferSliceWithLifetime(data: Data): number
 
-export declare function receiveClassOrNumber(either: number | Class<JsClassForEither>): number
+export declare function receiveClassOrNumber(either: number | JsClassForEither): number
 
-export declare function receiveDifferentClass(either: Class<JsClassForEither> | Class<AnotherClassForEither>): number
+export declare function receiveDifferentClass(either: JsClassForEither | AnotherClassForEither): number
 
-export declare function receiveMutClassOrNumber(either: number | Class<JsClassForEither>): number
+export declare function receiveMutClassOrNumber(either: number | JsClassForEither): number
 
-export declare function receiveObjectWithClassField(object: ObjectFieldClassReference): Class<Bird>
+export declare function receiveObjectWithClassField(object: ObjectFieldClassReference): Bird
 
 export declare function receiveStrictObject(strictObject: StrictObject): void
 
 export declare function receiveString(s: string): string
 
-export declare function referenceAsCallback(callback: (arg0: number, arg1: number) => number, arg0: number, arg1: number): number
+export declare function referenceAsCallback(callback: (...args: any[]) => any, arg0: number, arg1: number): number
 
-export declare function referenceWithTupleArg(callback: (arg: [number, number]) => number, arg0: number, arg1: number): number
+export declare function referenceWithTupleArg(callback: (...args: any[]) => any, arg0: number, arg1: number): number
 
 /** Returns a promise created before a forced `spawn_future` failure. */
 export declare function regressionPromiseIfSpawnFails(): Promise<undefined>
-
-export interface RequestInit {
-  method?: string
-  headers?: Record<string, string>
-}
 
 export declare function restArgCount(...args: unknown[]): number
 
@@ -1191,64 +1270,19 @@ export declare function returnUndefined(): void
 
 export declare function roundtripStr(s: string): string
 
-export interface Rule {
-  name: string
-  handler: RuleHandler<number, number>
-}
-
-export type RuleHandler<Args, Ret> =
-  (arg: Args) => Ret
-
 export declare function runScript(script: string): unknown
 
 export declare function setNullByteProperty(obj: object): void
 
 export declare function setSymbolInObj(symbol: symbol): object
 
-export declare function shorterEscapableScope(createString: () => string | null): string
+export declare function shorterEscapableScope(createString: (...args: any[]) => any): string
 
 export declare function shorterScope(arr: unknown[]): Array<number>
 
 export declare function shutdownRuntime(): void
 
-export type SpanPos =
-{ element: Element; index: number }
-
 export declare function spawnFutureLifetime(input: number): Promise<string>
-
-export declare const enum Status {
-  Pristine = 'Pristine',
-  Loading = 'Loading',
-  Ready = 'Ready'
-}
-
-export interface StreamItem {
-  something: NestedMetadata
-  name: string
-  size: number
-}
-
-export interface StrictObject {
-  name: string
-}
-
-export declare const enum StringEnum {
-  VariantOne = 'variantone',
-  VariantTwo = 'varianttwo',
-  VariantThree = 'variantthree'
-}
-
-export type StructuredKind =
-  | { type2: 'Hello' }
-  | { type2: 'Greeting', name: string }
-  | { type2: 'Birthday', name: string, age: number }
-  | { type2: 'Tuple', field0: number, field1: number }
-
-export type StructuredKindLowercase =
-  | { type: 'hello' }
-  | { type: 'greeting', name: string }
-  | { type: 'birthday', name: string, age: number }
-  | { type: 'tuple', field0: number, field1: number }
 
 export declare function sumBtreeMapping(nums: Record<string, number>): number
 
@@ -1286,19 +1320,6 @@ export declare function toJsObj(): object
 
 export declare function tsRename(a: { foo: number }): string[]
 
-export interface TsTypeChanged {
-  typeOverride: object
-  typeOverrideOptional?: object
-}
-
-export interface TupleObject {
-  customField: number
-  field1: number
-}
-
-export type TupleToArray =
-  [field0: string, field1: number, field2?: Meta]
-
 export declare function u16ArrayToArray(input: Uint16Array): Array<number>
 
 export declare function u32ArrayToArray(input: Uint32Array): Array<number>
@@ -1313,30 +1334,11 @@ export declare function uint8ArrayFromData(): Uint8Array
 
 export declare function uint8ArrayFromExternal(): Uint8Array
 
-export interface UseNullableStruct {
-  requiredNumberField: number
-  requiredStringField: string
-  nullableNumberField: number | null
-  nullableStringField: string | null
-}
-
-export interface UtcDates {
-  start: Date
-  end?: Date
-}
-
 export declare function validateStructuredEnum(kind: StructuredKind): StructuredKind
 
 export declare function validateStructuredEnumLowercase(kind: StructuredKindLowercase): StructuredKindLowercase
 
 export declare function verifyEnvRecordCurrent(): boolean
-
-export interface ViteImportGlobMeta {
-  isSubImportsPattern?: boolean
-}
-
-export type VoidNullable<T = void> =
-  T | null | undefined
 
 export declare function withAbortController(a: number, b: number, signal: AbortSignal): Promise<number>
 
@@ -1352,29 +1354,15 @@ export declare namespace xxh2 {
 }
 
 export declare namespace xxh3 {
-  /** Xxh3 class */
-  export class Xxh3 {
-    constructor()
-    /** update */
-    update(input: Buffer): void
-    digest(): bigint
-  }
-  export const ALIGNMENT: number
+  export function xxh3_64(input: Buffer): bigint
   /** xxh128 function */
   export function xxh128(input: Buffer): bigint
-  export function xxh3_64(input: Buffer): bigint
-}
-export declare class ComplexClass {
-  value: string
-  number: number
-  constructor(value: string | Class<ComplexClass>, number: number)
-  methodOne(): string
-  methodTwo(): number
-  methodThree(): string
-  methodFour(): boolean
-  methodFive(): string
-}
+  export const ALIGNMENT: number
+  /** Xxh3 class */
+  export interface Xxh3 {
 
-export interface Shared {
-  value: number
+  }
+  export const Xxh3: {
+    [Symbol.hasInstance](value: unknown): boolean
+  }
 }

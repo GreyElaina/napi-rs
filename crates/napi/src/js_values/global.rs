@@ -18,6 +18,20 @@ impl<'env> JsValue<'env> for JsGlobal<'env> {
 
 impl<'env> JsObjectValue<'env> for JsGlobal<'env> {}
 
+impl crate::bindgen_runtime::TypeName for JsGlobal<'_> {
+  fn type_name() -> &'static str {
+    "JsGlobal"
+  }
+
+  fn value_type() -> crate::ValueType {
+    crate::ValueType::Object
+  }
+
+  fn ts_type() -> String {
+    "typeof global".to_owned()
+  }
+}
+
 impl<'env, 'scope> FromJs<'env, 'scope> for JsGlobal<'scope> {
   fn from_js(
     scope: &mut Scope<'env, 'scope>,

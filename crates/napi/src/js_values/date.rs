@@ -18,7 +18,6 @@ impl TypeName for JsDate<'_> {
   }
 }
 
-
 impl<'env> JsValue<'env> for JsDate<'env> {
   fn value(&self) -> Value {
     self.0

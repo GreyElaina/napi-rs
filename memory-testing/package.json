@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "build": "napi-raw build --release --no-js"
+    "build": "cargo run -p cargo-napi -- napi build --release --no-js"
   },
   "dependencies": {
     "colorette": "^2.0.20",
@@ -12,7 +12,6 @@
     "table": "^6.9.0"
   },
   "devDependencies": {
-    "@napi-rs/cli": "workspace:*",
     "@types/dockerode": "^4.0.0"
   }
 }

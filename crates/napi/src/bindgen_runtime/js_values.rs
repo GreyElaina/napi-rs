@@ -69,6 +69,10 @@ pub trait TypeName {
   fn type_name() -> &'static str;
 
   fn value_type() -> ValueType;
+
+  fn ts_type() -> String {
+    Self::type_name().to_owned()
+  }
 }
 
 pub trait IntoJs<'scope>: Sized {
@@ -199,6 +203,10 @@ impl<T: TypeName> TypeName for Option<T> {
   fn value_type() -> ValueType {
     T::value_type()
   }
+
+  fn ts_type() -> String {
+    format!("{} | null", T::ts_type())
+  }
 }
 
 impl<'env, 'scope, T> FromJs<'env, 'scope> for Option<T>
@@ -323,6 +331,10 @@ impl<T: TypeName> TypeName for Rc<T> {
   fn value_type() -> ValueType {
     T::value_type()
   }
+
+  fn ts_type() -> String {
+    T::ts_type()
+  }
 }
 
 impl<'scope, T> IntoJs<'scope> for Rc<T>
@@ -366,6 +378,10 @@ impl<T: TypeName> TypeName for Arc<T> {
   fn value_type() -> ValueType {
     T::value_type()
   }
+
+  fn ts_type() -> String {
+    T::ts_type()
+  }
 }
 
 impl<'scope, T> IntoJs<'scope> for Arc<T>
@@ -408,6 +424,10 @@ impl<T: TypeName> TypeName for Mutex<T> {
 
   fn value_type() -> ValueType {
     T::value_type()
+  }
+
+  fn ts_type() -> String {
+    T::ts_type()
   }
 }
 

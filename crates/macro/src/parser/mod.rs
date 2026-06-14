@@ -18,10 +18,10 @@ use fn_decl::{flex_str, flex_string, napi_fn_from_decl};
 use forbidden::{forbidden_class_field_type, forbidden_js_visible_type};
 use helpers::{extract_doc_comments, extract_path_ident, get_expr, get_ty};
 use napi_derive_backend::{
-  rm_raw_prefix, to_case, BindgenResult, Diagnostic, FnKind, Napi, NapiArray, NapiClass,
-  NapiConst, NapiEnum, NapiEnumValue, NapiEnumVariant, NapiImpl, NapiItem, NapiObject,
-  NapiStruct, NapiStructField, NapiStructKind, NapiStructuredEnum, NapiStructuredEnumVariant,
-  NapiTransparent, NapiType, NativeParentSpec, PropertyDescriptor,
+  rm_raw_prefix, to_case, BindgenResult, Diagnostic, FnKind, Napi, NapiArray, NapiClass, NapiConst,
+  NapiEnum, NapiEnumValue, NapiEnumVariant, NapiImpl, NapiItem, NapiObject, NapiStruct,
+  NapiStructField, NapiStructKind, NapiStructuredEnum, NapiStructuredEnumVariant, NapiTransparent,
+  NapiType, NativeParentSpec, PropertyDescriptor,
 };
 use proc_macro2::{Ident, Span};
 use syn::{
@@ -62,16 +62,14 @@ pub fn convert_fields(
       continue;
     }
 
-    let field_opts: FieldAttrs = find_napi_attr(&mut field.attrs)?
-      .unwrap_or_else(|| FieldAttrs::from_list(&[]).unwrap());
+    let field_opts: FieldAttrs =
+      find_napi_attr(&mut field.attrs)?.unwrap_or_else(|| FieldAttrs::from_list(&[]).unwrap());
 
     let (js_name, name) = match &field.ident {
       Some(ident) => (
         flex_str(&field_opts.js_name)
           .map(|s| s.to_owned())
-          .unwrap_or_else(|| {
-            to_case(syn::ext::IdentExt::unraw(ident).to_string(), Case::Camel)
-          }),
+          .unwrap_or_else(|| to_case(syn::ext::IdentExt::unraw(ident).to_string(), Case::Camel)),
         syn::Member::Named(ident.clone()),
       ),
       None => (
@@ -147,14 +145,7 @@ pub fn convert_fields(
 // ---------------------------------------------------------------------------
 
 pub fn convert_fn(f: &mut syn::ItemFn, opts: &FnAttrs) -> BindgenResult<Napi> {
-  let func = napi_fn_from_decl(
-    &mut f.sig,
-    opts,
-    f.attrs.clone(),
-    f.vis.clone(),
-    None,
-    None,
-  )?;
+  let func = napi_fn_from_decl(&mut f.sig, opts, f.attrs.clone(), f.vis.clone(), None, None)?;
 
   Ok(Napi {
     item: NapiItem::Fn(func),
@@ -193,7 +184,8 @@ pub fn convert_struct(s: &mut syn::ItemStruct, opts: &StructAttrs) -> BindgenRes
   }
 
   if (implement_iterator || implement_async_iterator)
-    && s.fields
+    && s
+      .fields
       .iter()
       .filter(|f| matches!(f.vis, Visibility::Public(_)))
       .filter_map(|f| f.ident.clone())
@@ -289,6 +281,8 @@ pub fn convert_struct(s: &mut syn::ItemStruct, opts: &StructAttrs) -> BindgenRes
       implement_async_iterator,
       is_tuple,
       use_custom_finalize: opts.custom_finalize.is_present(),
+      is_generator: implement_iterator,
+      is_async_generator: implement_async_iterator,
     })
   };
 
@@ -354,8 +348,6 @@ pub fn convert_struct(s: &mut syn::ItemStruct, opts: &StructAttrs) -> BindgenRes
       register_name: get_register_ident(format!("{rust_struct_ident}_struct").as_str()),
       comments: extract_doc_comments(&s.attrs),
       has_lifetime: lifetime.is_some(),
-      is_generator: implement_iterator,
-      is_async_generator: implement_async_iterator,
     }),
   })
 }
@@ -373,11 +365,11 @@ pub fn convert_impl(i: &mut syn::ItemImpl, impl_opts: &ImplAttrs) -> BindgenResu
 
   let (struct_name, has_lifetime) = extract_path_ident(struct_name)?;
 
-  let (mut struct_js_name, mut is_class) =
-    match StructRegistry::check_for_impl(&struct_name, false) {
-      Ok(recorded_js_name) => (recorded_js_name, true),
-      Err(_) => (to_case(struct_name.to_string(), Case::UpperCamel), false),
-    };
+  let (mut struct_js_name, mut is_class) = match StructRegistry::check_for_impl(&struct_name, false)
+  {
+    Ok(recorded_js_name) => (recorded_js_name, true),
+    Err(_) => (to_case(struct_name.to_string(), Case::UpperCamel), false),
+  };
 
   let mut items = vec![];
   let mut iterator_yield_type = None;
@@ -429,10 +421,8 @@ pub fn convert_impl(i: &mut syn::ItemImpl, impl_opts: &ImplAttrs) -> BindgenResu
       };
 
       if opts.constructor.is_present() || opts.factory.is_present() {
-        struct_js_name = StructRegistry::check_for_impl(
-          &struct_name,
-          opts.constructor.is_present(),
-        )?;
+        struct_js_name =
+          StructRegistry::check_for_impl(&struct_name, opts.constructor.is_present())?;
         is_class = true;
       }
 
@@ -453,7 +443,7 @@ pub fn convert_impl(i: &mut syn::ItemImpl, impl_opts: &ImplAttrs) -> BindgenResu
         Some(struct_js_name.clone()),
       )?;
 
-      if func.kind == FnKind::PostInit {
+      if matches!(func.kind, FnKind::PostInit) {
         StructRegistry::record_post_init(&struct_name.to_string(), func.name.to_string());
       }
 
@@ -464,8 +454,11 @@ pub fn convert_impl(i: &mut syn::ItemImpl, impl_opts: &ImplAttrs) -> BindgenResu
   let chain = StructRegistry::collect_post_init_chain(&struct_name.to_string());
   if !chain.is_empty() {
     for item in items.iter_mut() {
-      if item.kind == FnKind::Constructor {
-        item.post_init_chain = chain
+      if let FnKind::Constructor {
+        ref mut post_init_chain,
+      } = item.kind
+      {
+        *post_init_chain = chain
           .iter()
           .map(|name| Ident::new(name, Span::call_site()))
           .collect();
@@ -507,7 +500,8 @@ pub fn convert_enum(e: &mut syn::ItemEnum, opts: &EnumAttrs) -> BindgenResult<Na
     .unwrap_or_else(|| e.ident.to_string());
   let is_string_enum = opts.string_enum.is_some();
 
-  if e.variants
+  if e
+    .variants
     .iter()
     .any(|v| !matches!(v.fields, syn::Fields::Unit))
   {
@@ -568,8 +562,6 @@ pub fn convert_enum(e: &mut syn::ItemEnum, opts: &EnumAttrs) -> BindgenResult<Na
             object_to_js: opts.object_to_js.0,
           }),
           has_lifetime: false,
-          is_generator: false,
-          is_async_generator: false,
         }),
       });
     }
@@ -625,10 +617,10 @@ pub fn convert_enum(e: &mut syn::ItemEnum, opts: &EnumAttrs) -> BindgenResult<Na
           implement_async_iterator: false,
           is_tuple: false,
           use_custom_finalize: false,
+          is_generator: false,
+          is_async_generator: false,
         }),
         has_lifetime: false,
-        is_generator: false,
-        is_async_generator: false,
       }),
     });
   }

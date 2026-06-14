@@ -11,7 +11,7 @@ use crossbeam_queue::SegQueue;
 
 use crate::{
   bindgen_runtime::{
-    ConstructorReceiver, FrameObject, FrameScope, IntoJs, Local, Object, Result, Scope,
+    ConstructorReceiver, FrameObject, FrameScope, IntoJs, Local, Object, Result, Scope, TypeName,
   },
   catch_unwind_boundary, check_status, run_unwind_boundary, sys, Error, Status,
 };
@@ -834,6 +834,20 @@ where
   }
 }
 
+impl<T: NapiClass> TypeName for ClassInitializer<T> {
+  fn type_name() -> &'static str {
+    T::CLASS.info().js_name()
+  }
+
+  fn value_type() -> crate::ValueType {
+    crate::ValueType::Function
+  }
+
+  fn ts_type() -> String {
+    Self::type_name().to_owned()
+  }
+}
+
 impl<T: NapiClass> ClassInitializer<T> {
   #[doc(hidden)]
   pub fn into_value_and_parent(self) -> (T, <T::Parent as NativeParent>::Initializer) {
@@ -960,7 +974,10 @@ thread_local! {
 }
 
 impl PendingClassStorage {
-  unsafe fn new<T>(deferred: Arc<SegQueue<sys::napi_ref>>, init: ClassInitializer<T>) -> Result<Self>
+  unsafe fn new<T>(
+    deferred: Arc<SegQueue<sys::napi_ref>>,
+    init: ClassInitializer<T>,
+  ) -> Result<Self>
   where
     T: ClassChain,
   {

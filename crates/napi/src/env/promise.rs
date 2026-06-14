@@ -85,7 +85,10 @@ impl<'env> Env<'env> {
       ) -> Result<PromiseValue>,
   {
     let (handle, _slot) = CancelHandle::new();
-    Ok((unsafe { Promise::from_raw(self.0, std::ptr::null_mut()) }, handle))
+    Ok((
+      unsafe { Promise::from_raw(self.0, std::ptr::null_mut()) },
+      handle,
+    ))
   }
 
   #[cfg(all(feature = "async", feature = "napi4", not(feature = "noop")))]

@@ -5,6 +5,18 @@ use napi::bindgen_prelude::*;
 
 pub struct AcceptedStream(BytesMut);
 
+impl TypeName for AcceptedStream {
+  fn type_name() -> &'static str {
+    "AcceptedStream"
+  }
+  fn value_type() -> ValueType {
+    ValueType::Object
+  }
+  fn ts_type() -> String {
+    "Buffer".to_owned()
+  }
+}
+
 impl<'scope> IntoJs<'scope> for AcceptedStream {
   type Output = BufferSlice<'scope>;
 

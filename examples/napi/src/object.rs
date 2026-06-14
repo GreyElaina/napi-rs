@@ -113,7 +113,6 @@ fn getter_from_obj() -> u32 {
   42
 }
 
-
 #[napi(ts_args_type = "obj: { foo: number; bar: string; }")]
 fn object_get_named_property_should_perform_typecheck(
   #[napi(scope)] scope: &mut Scope,

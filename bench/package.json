@@ -5,10 +5,9 @@
   "type": "module",
   "scripts": {
     "bench": "vitest bench ",
-    "build": "napi-raw build --js false --release"
+    "build": "cargo run -p cargo-napi -- napi build --no-js --release"
   },
   "devDependencies": {
-    "@napi-rs/cli": "workspace:*",
     "tinybench": "^6.0.0",
     "vitest": "^4.0.8"
   }

@@ -3,8 +3,8 @@ use std::sync::Mutex;
 
 use convert_case::Case;
 use napi_derive_backend::{
-  to_case, BindgenResult, CallbackArg, Diagnostic, FnKind, FnSelf, InjectKind, NapiFn, NapiFnArg,
-  NapiFnArgKind, PropertyDescriptor, TsOverrides,
+  to_case, BindgenResult, CallbackArg, ClassContext, Diagnostic, FnKind, FnSelf, InjectKind,
+  NapiFn, NapiFnArg, NapiFnArgKind, PropertyDescriptor, TsOverrides,
 };
 use proc_macro2::{Ident, Span};
 use quote::ToTokens;
@@ -12,7 +12,10 @@ use syn::{Attribute, Signature, Visibility};
 
 use super::attrs::{find_napi_attr, ArgAttrs, FlexibleString, FnAttrs};
 use super::forbidden::forbidden_js_visible_type;
-use super::helpers::{extract_callback_trait_types, extract_doc_comments, extract_fn_closure_generics, extract_result_ty};
+use super::helpers::{
+  extract_callback_trait_types, extract_doc_comments, extract_fn_closure_generics,
+  extract_result_ty,
+};
 use super::{get_register_ident, GENERATOR_STRUCT};
 
 // ---------------------------------------------------------------------------
@@ -93,7 +96,9 @@ pub(crate) fn fn_kind(opts: &FnAttrs) -> FnKind {
     return FnKind::Setter;
   }
   if opts.constructor.is_present() {
-    return FnKind::Constructor;
+    return FnKind::Constructor {
+      post_init_chain: Vec::new(),
+    };
   }
   if opts.factory.is_present() {
     return FnKind::Factory;
@@ -136,14 +141,13 @@ pub fn napi_fn_from_decl(
     .iter_mut()
     .filter_map(|arg| match arg {
       syn::FnArg::Typed(ref mut p) => {
-        let arg_attrs =
-          parse_arg_attributes(p, ts_args_type).unwrap_or_else(|e| {
-            errors.push(e);
-            ArgAttrParseResult {
-              ts_arg_type: None,
-              inject: None,
-            }
-          });
+        let arg_attrs = parse_arg_attributes(p, ts_args_type).unwrap_or_else(|e| {
+          errors.push(e);
+          ArgAttrParseResult {
+            ts_arg_type: None,
+            inject: None,
+          }
+        });
 
         let ty_str = p.ty.to_token_stream().to_string();
         if let Some(path_arguments) = callback_traits.get(&ty_str) {
@@ -239,21 +243,25 @@ pub fn napi_fn_from_decl(
 
   Diagnostic::from_vec(errors).and_then(|_| {
     let js_name = if let Some(prop_name) = &opts.getter {
-      flex_str(&opts.js_name).map(|s| s.to_owned()).unwrap_or_else(|| {
-        if let Some(ident) = &prop_name.0 {
-          ident.to_string()
-        } else {
-          to_case(ident.to_string().trim_start_matches("get_"), Case::Camel)
-        }
-      })
+      flex_str(&opts.js_name)
+        .map(|s| s.to_owned())
+        .unwrap_or_else(|| {
+          if let Some(ident) = &prop_name.0 {
+            ident.to_string()
+          } else {
+            to_case(ident.to_string().trim_start_matches("get_"), Case::Camel)
+          }
+        })
     } else if let Some(prop_name) = &opts.setter {
-      flex_str(&opts.js_name).map(|s| s.to_owned()).unwrap_or_else(|| {
-        if let Some(ident) = &prop_name.0 {
-          ident.to_string()
-        } else {
-          to_case(ident.to_string().trim_start_matches("set_"), Case::Camel)
-        }
-      })
+      flex_str(&opts.js_name)
+        .map(|s| s.to_owned())
+        .unwrap_or_else(|| {
+          if let Some(ident) = &prop_name.0 {
+            ident.to_string()
+          } else {
+            to_case(ident.to_string().trim_start_matches("set_"), Case::Camel)
+          }
+        })
     } else if opts.constructor.is_present() {
       "constructor".to_owned()
     } else if opts.module_exports.is_present() {
@@ -349,9 +357,10 @@ pub fn napi_fn_from_decl(
               );
             }
             if segment.ident == "Result" {
-              if let syn::PathArguments::AngleBracketed(
-                syn::AngleBracketedGenericArguments { args, .. },
-              ) = &segment.arguments
+              if let syn::PathArguments::AngleBracketed(syn::AngleBracketedGenericArguments {
+                args,
+                ..
+              }) = &segment.arguments
               {
                 if args.len() != 1 {
                   bail_span!(
@@ -408,16 +417,20 @@ pub fn napi_fn_from_decl(
       (false, false)
     };
 
-    let kind = fn_kind(opts);
+    let kind = if opts.module_exports.is_present() {
+      FnKind::ModuleExport
+    } else {
+      fn_kind(opts)
+    };
 
-    if !matches!(kind, FnKind::Normal) && parent.is_none() {
+    if !matches!(kind, FnKind::Normal | FnKind::ModuleExport) && parent.is_none() {
       bail_span!(
         sig.ident,
         "Only fn in impl block can be marked as factory, constructor, getter, setter or post_init"
       );
     }
 
-    if matches!(kind, FnKind::Constructor) && asyncness.is_some() {
+    if matches!(kind, FnKind::Constructor { .. }) && asyncness.is_some() {
       bail_span!(sig.ident, "Constructor don't support asynchronous function");
     }
 
@@ -425,19 +438,24 @@ pub fn napi_fn_from_decl(
       bail_span!(sig.ident, "post_init don't support asynchronous function");
     }
 
+    let class = parent.map(|p| ClassContext {
+      name: p.clone(),
+      js_name: parent_js_name.unwrap_or_default(),
+      fn_self,
+      is_generator: parent_is_generator,
+      is_async_generator: parent_is_async_generator,
+    });
+
     Ok(NapiFn {
       name: ident.clone(),
       js_name,
-      module_exports: opts.module_exports.is_present(),
       args,
       ret,
       is_ret_result,
       is_async: asyncness.is_some(),
       vis,
       kind,
-      fn_self,
-      parent: parent.cloned(),
-      parent_js_name,
+      class,
       comments: extract_doc_comments(&attrs),
       attrs,
       js_mod: namespace,
@@ -448,8 +466,6 @@ pub fn napi_fn_from_decl(
         ts_return_type: flex_string(&opts.ts_return_type),
         skip_typescript: opts.skip_typescript.is_present(),
       },
-      parent_is_generator,
-      parent_is_async_generator,
       descriptor: PropertyDescriptor {
         writable: opts.writable.0,
         enumerable: opts.enumerable.0,
@@ -459,7 +475,6 @@ pub fn napi_fn_from_decl(
       unsafe_: sig.unsafety.is_some(),
       register_name: get_register_ident(ident.to_string().as_str()),
       no_export: opts.no_export.is_present(),
-      post_init_chain: Vec::new(),
     })
   })
 }

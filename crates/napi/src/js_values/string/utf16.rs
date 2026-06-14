@@ -306,6 +306,20 @@ impl From<JsStringUtf16<'_>> for Vec<u16> {
   }
 }
 
+impl crate::bindgen_runtime::TypeName for JsStringUtf16<'_> {
+  fn type_name() -> &'static str {
+    "JsStringUtf16"
+  }
+
+  fn value_type() -> crate::ValueType {
+    crate::ValueType::String
+  }
+
+  fn ts_type() -> String {
+    "string".to_owned()
+  }
+}
+
 impl<'scope> IntoJs<'scope> for JsStringUtf16<'_> {
   type Output = JsString<'scope>;
 

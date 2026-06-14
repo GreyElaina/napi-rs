@@ -7,7 +7,7 @@ use indexmap::IndexSet;
 
 use crate::bindgen_prelude::*;
 
-impl<V, S> TypeName for HashSet<V, S> {
+impl<V: TypeName, S> TypeName for HashSet<V, S> {
   fn type_name() -> &'static str {
     "HashSet"
   }
@@ -15,8 +15,11 @@ impl<V, S> TypeName for HashSet<V, S> {
   fn value_type() -> ValueType {
     ValueType::Object
   }
-}
 
+  fn ts_type() -> String {
+    format!("Array<{}>", V::ts_type())
+  }
+}
 
 impl<'scope, V, S> IntoJs<'scope> for HashSet<V, S>
 where
@@ -42,7 +45,7 @@ where
   }
 }
 
-impl<V> TypeName for BTreeSet<V> {
+impl<V: TypeName> TypeName for BTreeSet<V> {
   fn type_name() -> &'static str {
     "BTreeSet"
   }
@@ -50,8 +53,11 @@ impl<V> TypeName for BTreeSet<V> {
   fn value_type() -> ValueType {
     ValueType::Object
   }
-}
 
+  fn ts_type() -> String {
+    format!("Array<{}>", V::ts_type())
+  }
+}
 
 impl<'scope, V> IntoJs<'scope> for BTreeSet<V>
 where
@@ -77,13 +83,17 @@ where
 }
 
 #[cfg(feature = "object_indexmap")]
-impl<V, S> TypeName for IndexSet<V, S> {
+impl<V: TypeName, S> TypeName for IndexSet<V, S> {
   fn type_name() -> &'static str {
     "IndexSet"
   }
 
   fn value_type() -> ValueType {
     ValueType::Object
+  }
+
+  fn ts_type() -> String {
+    format!("Array<{}>", V::ts_type())
   }
 }
 #[cfg(feature = "object_indexmap")]

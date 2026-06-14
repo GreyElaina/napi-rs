@@ -6,9 +6,14 @@ publish = false
 version = "0.1.0"
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "napi-typegen"
+required-features = ["type-def"]
 
 [features]
+type-def = ["napi/type-def", "napi-shared/type-def"]
 snmalloc = ["snmalloc-rs"]
 mimalloc = ["mimalloc-safe"]
 dyn-symbols = ["napi/dyn-symbols"]

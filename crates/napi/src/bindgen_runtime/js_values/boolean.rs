@@ -10,11 +10,14 @@ impl TypeName for bool {
     "bool"
   }
 
+  fn ts_type() -> String {
+    "boolean".to_owned()
+  }
+
   fn value_type() -> ValueType {
     ValueType::Boolean
   }
 }
-
 
 impl<'scope> IntoJs<'scope> for bool {
   type Output = Boolean<'scope>;

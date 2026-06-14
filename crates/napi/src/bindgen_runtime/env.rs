@@ -466,7 +466,8 @@ impl EnvData {
 impl EnvRecord {
   #[cfg(feature = "async")]
   pub(crate) fn gc_channel(&self) -> Option<std::sync::Arc<crate::env::AsyncChannel>> {
-    self.with_data(|data| data.async_driver().map(|d| d.channel().clone()))
+    self
+      .with_data(|data| data.async_driver().map(|d| d.channel().clone()))
       .ok()
       .flatten()
   }
@@ -527,7 +528,6 @@ fn drop_user_instance_data(value: Box<dyn Any>) -> Result<()> {
     )),
   }
 }
-
 
 impl<'env, 'scope> Scope<'env, 'scope> {
   pub fn env(&self) -> &Env<'env> {

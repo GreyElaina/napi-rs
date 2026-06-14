@@ -11,7 +11,35 @@ use crate::{
 
 #[cfg(feature = "napi6")]
 use super::BigInt;
-use super::{FromJs, IntoJs, Local, Scope, Unknown};
+use super::{FromJs, IntoJs, Local, Scope, TypeName, Unknown};
+
+impl TypeName for Value {
+  fn type_name() -> &'static str {
+    "Value"
+  }
+
+  fn value_type() -> ValueType {
+    ValueType::Unknown
+  }
+
+  fn ts_type() -> String {
+    "any".to_owned()
+  }
+}
+
+impl TypeName for Map<String, Value> {
+  fn type_name() -> &'static str {
+    "Map"
+  }
+
+  fn value_type() -> ValueType {
+    ValueType::Object
+  }
+
+  fn ts_type() -> String {
+    "Record<string, any>".to_owned()
+  }
+}
 
 fn serialize_to_unknown<'scope, T>(
   scope: &mut Scope<'_, 'scope>,
@@ -72,31 +100,31 @@ impl<'env, 'scope> FromJs<'env, 'scope> for Value {
         return Err(Error::new(
           Status::InvalidArg,
           "JS functions cannot be represented as a serde_json::Value".to_owned(),
-        ))
+        ));
       }
       ValueType::Undefined => {
         return Err(Error::new(
           Status::InvalidArg,
           "undefined cannot be represented as a serde_json::Value".to_owned(),
-        ))
+        ));
       }
       ValueType::Symbol => {
         return Err(Error::new(
           Status::InvalidArg,
           "JS symbols cannot be represented as a serde_json::Value".to_owned(),
-        ))
+        ));
       }
       ValueType::External => {
         return Err(Error::new(
           Status::InvalidArg,
           "External JS objects cannot be represented as a serde_json::Value".to_owned(),
-        ))
+        ));
       }
       _ => {
         return Err(Error::new(
           Status::InvalidArg,
           "Unknown JS variables cannot be represented as a serde_json::Value".to_owned(),
-        ))
+        ));
       }
     };
 

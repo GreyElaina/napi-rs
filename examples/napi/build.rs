@@ -1,5 +1,6 @@
 fn main() {
-  use napi_build::setup;
+  napi_build::setup();
 
-  setup();
+  #[cfg(not(feature = "noop"))]
+  napi_build::setup_typegen("napi-typegen");
 }

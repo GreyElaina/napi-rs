@@ -39,6 +39,11 @@ macro_rules! either_n {
       fn value_type() -> ValueType {
         ValueType::Unknown
       }
+
+      fn ts_type() -> String {
+        let types = vec![$($parameter::ts_type()),+];
+        types.join(" | ")
+      }
     }
 
     impl<'env, 'scope, $( $parameter ),+ > FromJs<'env, 'scope> for $either_name < $( $parameter ),+ >

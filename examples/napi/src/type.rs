@@ -44,7 +44,6 @@ pub struct PluginLoadResult {
   pub version: String,
 }
 
-
 // Test fixtures for format_js_property_name function
 // These test that property names are correctly quoted/unquoted in TypeScript definitions
 

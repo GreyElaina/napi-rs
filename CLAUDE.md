@@ -17,8 +17,10 @@
 **Key Files:**
 
 - Root `Cargo.toml` - Workspace configuration
-- `/crates/backend/src/typegen.rs` - TypeScript generation logic
-- `/cli/src/utils/typegen.ts` - CLI TypeScript processing
+- `/crates/napi/src/typegen.rs` - TypeScript generation (linkme descriptors)
+- `/crates/backend/src/typegen/tokens.rs` - Rust type → TS token mapping
+- `/examples/napi/src/bin/napi-typegen.rs` - Reference typegen binary
+- `/cli/src/api/build.ts` - CLI build + typegen binary integration
 
 ## Testing, Building, and Running Tests
 

@@ -32,6 +32,20 @@ impl AbortSignal {
   }
 }
 
+impl super::TypeName for AbortSignal {
+  fn type_name() -> &'static str {
+    "AbortSignal"
+  }
+
+  fn value_type() -> crate::ValueType {
+    crate::ValueType::Object
+  }
+
+  fn ts_type() -> String {
+    "AbortSignal".to_owned()
+  }
+}
+
 impl UnwindSafe for AbortSignal {}
 impl std::panic::RefUnwindSafe for AbortSignal {}
 

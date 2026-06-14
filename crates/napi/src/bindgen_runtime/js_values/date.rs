@@ -12,6 +12,10 @@ impl<Tz: TimeZone> TypeName for DateTime<Tz> {
   fn value_type() -> ValueType {
     ValueType::Object
   }
+
+  fn ts_type() -> String {
+    "Date".to_owned()
+  }
 }
 
 fn ensure_is_date(env: sys::napi_env, raw: sys::napi_value) -> Result<()> {
@@ -24,6 +28,20 @@ fn ensure_is_date(env: sys::napi_env, raw: sys::napi_value) -> Result<()> {
       Status::InvalidArg,
       "Expected a Date object".to_owned(),
     ))
+  }
+}
+
+impl TypeName for NaiveDateTime {
+  fn type_name() -> &'static str {
+    "NaiveDateTime"
+  }
+
+  fn value_type() -> ValueType {
+    ValueType::Object
+  }
+
+  fn ts_type() -> String {
+    "Date".to_owned()
   }
 }
 

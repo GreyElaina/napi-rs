@@ -1,5 +1,3 @@
-mod typedef;
-
 #[cfg(feature = "noop")]
 mod noop;
 #[cfg(feature = "noop")]

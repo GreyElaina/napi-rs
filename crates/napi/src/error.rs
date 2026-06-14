@@ -34,7 +34,6 @@ impl<S: AsRef<str>> Error<S> {
   pub fn set_cause(&mut self, cause: Error) {
     self.cause = Some(Box::new(cause));
   }
-
 }
 
 impl<S: AsRef<str>> std::fmt::Debug for Error<S> {
@@ -246,7 +245,35 @@ impl TryFrom<sys::napi_extended_error_info> for ExtendedErrorInfo {
   }
 }
 
+impl<S: AsRef<str>> crate::bindgen_runtime::TypeName for Error<S> {
+  fn type_name() -> &'static str {
+    "Error"
+  }
+
+  fn value_type() -> ValueType {
+    ValueType::Object
+  }
+
+  fn ts_type() -> String {
+    "Error".to_owned()
+  }
+}
+
 pub struct JsError<S: AsRef<str> = Status>(Error<S>);
+
+impl<S: AsRef<str>> crate::bindgen_runtime::TypeName for JsError<S> {
+  fn type_name() -> &'static str {
+    "JsError"
+  }
+
+  fn value_type() -> ValueType {
+    ValueType::Object
+  }
+
+  fn ts_type() -> String {
+    "Error".to_owned()
+  }
+}
 
 #[cfg(feature = "anyhow")]
 impl From<anyhow::Error> for JsError {

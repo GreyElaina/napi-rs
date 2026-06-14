@@ -6,7 +6,7 @@ use indexmap::IndexMap;
 
 use crate::bindgen_prelude::*;
 
-impl<K, V, S> TypeName for HashMap<K, V, S> {
+impl<K, V: TypeName, S> TypeName for HashMap<K, V, S> {
   fn type_name() -> &'static str {
     "HashMap"
   }
@@ -14,8 +14,11 @@ impl<K, V, S> TypeName for HashMap<K, V, S> {
   fn value_type() -> ValueType {
     ValueType::Object
   }
-}
 
+  fn ts_type() -> String {
+    format!("Record<string, {}>", V::ts_type())
+  }
+}
 
 #[cfg(not(feature = "noop"))]
 impl<'scope, K, V, S> IntoJs<'scope> for HashMap<K, V, S>
@@ -94,7 +97,7 @@ where
   }
 }
 
-impl<K, V> TypeName for BTreeMap<K, V> {
+impl<K, V: TypeName> TypeName for BTreeMap<K, V> {
   fn type_name() -> &'static str {
     "BTreeMap"
   }
@@ -102,8 +105,11 @@ impl<K, V> TypeName for BTreeMap<K, V> {
   fn value_type() -> ValueType {
     ValueType::Object
   }
-}
 
+  fn ts_type() -> String {
+    format!("Record<string, {}>", V::ts_type())
+  }
+}
 
 #[cfg(not(feature = "noop"))]
 impl<'scope, K, V> IntoJs<'scope> for BTreeMap<K, V>
@@ -182,7 +188,7 @@ where
 }
 
 #[cfg(feature = "object_indexmap")]
-impl<K, V, S> TypeName for IndexMap<K, V, S> {
+impl<K, V: TypeName, S> TypeName for IndexMap<K, V, S> {
   fn type_name() -> &'static str {
     "IndexMap"
   }
@@ -190,10 +196,13 @@ impl<K, V, S> TypeName for IndexMap<K, V, S> {
   fn value_type() -> ValueType {
     ValueType::Object
   }
+
+  fn ts_type() -> String {
+    format!("Record<string, {}>", V::ts_type())
+  }
 }
 
 #[cfg(feature = "object_indexmap")]
-
 #[cfg(all(feature = "object_indexmap", not(feature = "noop")))]
 impl<'scope, K, V, S> IntoJs<'scope> for IndexMap<K, V, S>
 where

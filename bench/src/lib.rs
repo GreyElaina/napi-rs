@@ -78,7 +78,6 @@ pub async fn bench_blocking(buffer: Buffer) -> Result<u32> {
   Ok(buffer.len() as u32 + 1)
 }
 
-
 #[napi]
 pub fn bench_tokio_future<'env>(
   #[napi(env)] env: &'env Env<'env>,

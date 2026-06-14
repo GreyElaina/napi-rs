@@ -19,31 +19,67 @@ pub struct TsOverrides {
 }
 
 #[derive(Debug, Clone)]
+pub struct ClassContext {
+  pub name: Ident,
+  pub js_name: String,
+  pub fn_self: Option<FnSelf>,
+  pub is_generator: bool,
+  pub is_async_generator: bool,
+}
+
+#[derive(Debug, Clone)]
 pub struct NapiFn {
   pub name: Ident,
   pub js_name: String,
-  pub module_exports: bool,
   pub attrs: Vec<Attribute>,
   pub args: Vec<NapiFnArg>,
   pub ret: Option<syn::Type>,
   pub is_ret_result: bool,
   pub is_async: bool,
-  pub fn_self: Option<FnSelf>,
   pub kind: FnKind,
   pub vis: syn::Visibility,
-  pub parent: Option<Ident>,
-  pub parent_js_name: Option<String>,
+  pub class: Option<ClassContext>,
   pub js_mod: Option<String>,
   pub ts: TsOverrides,
   pub comments: Vec<String>,
-  pub parent_is_generator: bool,
-  pub parent_is_async_generator: bool,
   pub descriptor: PropertyDescriptor,
   pub catch_unwind: bool,
   pub unsafe_: bool,
   pub register_name: Ident,
   pub no_export: bool,
-  pub post_init_chain: Vec<Ident>,
+}
+
+impl NapiFn {
+  pub fn parent(&self) -> Option<&Ident> {
+    self.class.as_ref().map(|c| &c.name)
+  }
+
+  pub fn parent_js_name(&self) -> Option<&str> {
+    self.class.as_ref().map(|c| c.js_name.as_str())
+  }
+
+  pub fn fn_self(&self) -> Option<&FnSelf> {
+    self.class.as_ref().and_then(|c| c.fn_self.as_ref())
+  }
+
+  pub fn parent_is_generator(&self) -> bool {
+    self.class.as_ref().is_some_and(|c| c.is_generator)
+  }
+
+  pub fn parent_is_async_generator(&self) -> bool {
+    self.class.as_ref().is_some_and(|c| c.is_async_generator)
+  }
+
+  pub fn is_module_exports(&self) -> bool {
+    matches!(self.kind, FnKind::ModuleExport)
+  }
+
+  pub fn post_init_chain(&self) -> &[Ident] {
+    match &self.kind {
+      FnKind::Constructor { post_init_chain } => post_init_chain,
+      _ => &[],
+    }
+  }
 }
 
 #[derive(Debug, Clone)]
@@ -81,10 +117,11 @@ pub enum NapiFnArgKind {
   Callback(Box<CallbackArg>),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum FnKind {
   Normal,
-  Constructor,
+  ModuleExport,
+  Constructor { post_init_chain: Vec<Ident> },
   Factory,
   Getter,
   Setter,
@@ -108,8 +145,16 @@ pub struct NapiStruct {
   pub register_name: Ident,
   pub kind: NapiStructKind,
   pub has_lifetime: bool,
-  pub is_generator: bool,
-  pub is_async_generator: bool,
+}
+
+impl NapiStruct {
+  pub fn is_generator(&self) -> bool {
+    matches!(&self.kind, NapiStructKind::Class(c) if c.is_generator)
+  }
+
+  pub fn is_async_generator(&self) -> bool {
+    matches!(&self.kind, NapiStructKind::Class(c) if c.is_async_generator)
+  }
 }
 
 #[derive(Debug, Clone)]
@@ -138,6 +183,8 @@ pub struct NapiClass {
   pub implement_async_iterator: bool,
   pub is_tuple: bool,
   pub use_custom_finalize: bool,
+  pub is_generator: bool,
+  pub is_async_generator: bool,
 }
 
 #[derive(Debug, Clone)]

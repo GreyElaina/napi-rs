@@ -284,6 +284,20 @@ impl From<JsStringLatin1<'_>> for Vec<u8> {
   }
 }
 
+impl crate::bindgen_runtime::TypeName for JsStringLatin1<'_> {
+  fn type_name() -> &'static str {
+    "JsStringLatin1"
+  }
+
+  fn value_type() -> crate::ValueType {
+    crate::ValueType::String
+  }
+
+  fn ts_type() -> String {
+    "string".to_owned()
+  }
+}
+
 impl<'scope> IntoJs<'scope> for JsStringLatin1<'_> {
   type Output = JsString<'scope>;
 

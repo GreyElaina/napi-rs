@@ -17,8 +17,8 @@ use futures_core::Stream;
 
 use crate::{
   bindgen_prelude::{
-    BufferSlice, FnArgs, FromJs, Func, Function, IntoJsArgs, JsObjectValue, Local, Object,
-    Promise, PromiseFuture, Ref, Scope, TypeName, Unknown, NAPI_AUTO_LENGTH,
+    BufferSlice, FnArgs, FromJs, Func, Function, IntoJsArgs, JsObjectValue, Local, Object, Promise,
+    PromiseFuture, Ref, Scope, TypeName, Unknown, NAPI_AUTO_LENGTH,
   },
   bindgen_runtime::{CallbackDecoder, EnvRecord, IntoJs},
   check_status,
@@ -53,7 +53,6 @@ impl<T> TypeName for ReadableStream<'_, T> {
     ValueType::Object
   }
 }
-
 
 impl<'env, 'scope, T> FromJs<'env, 'scope> for ReadableStream<'scope, T> {
   fn from_js(
@@ -515,9 +514,7 @@ impl<T: Send + Sync + 'static + for<'env, 'scope> FromJs<'env, 'scope>> futures_
                 .map(|mut chunk| {
                   *chunk = Err(error);
                 })
-                .map_err(|_| {
-                  Error::new(Status::InvalidArg, "Poisoned lock in Reader::poll_next")
-                }),
+                .map_err(|_| Error::new(Status::InvalidArg, "Poisoned lock in Reader::poll_next")),
             };
             if let Err(error) = update_result {
               if let Ok(mut chunk) = state_in_catch.0.write() {

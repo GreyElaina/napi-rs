@@ -4,21 +4,16 @@ use syn::{spanned::Spanned, Type, TypePath, TypeReference};
 
 use crate::{
   codegen::{get_intermediate_ident, js_mod_to_token_stream},
-  type_semantics::{resolve_class_type, ClassInput, ClassInputKind, NapiTypeExt},
+  types::{
+    classify::{ClassInput, ClassInputKind, ResolvedTag, SpecialKind},
+    inspect::{
+      extract_vec_element_type, is_abort_signal, is_external, is_js_arg_slice, resolve_class_type,
+      NapiTypeExt,
+    },
+    resolve::resolve_return_type,
+  },
   BindgenResult, CallbackArg, Diagnostic, FnKind, FnSelf, NapiFn, NapiFnArgKind, TryToTokens,
-  TYPEDARRAY_SLICE_TYPES,
 };
-
-fn is_abort_signal_type(ty: &Type) -> bool {
-  match ty {
-    Type::Path(TypePath { path, .. }) => path
-      .segments
-      .last()
-      .map_or(false, |seg| seg.ident == "AbortSignal"),
-    Type::Reference(r) => is_abort_signal_type(&r.elem),
-    _ => false,
-  }
-}
 
 fn callback_this_expr() -> TokenStream {
   quote! { napi::__private::callback_frame_this(&frame) }
@@ -55,30 +50,6 @@ fn into_js_reuse_scope(value: TokenStream) -> TokenStream {
     napi::bindgen_prelude::IntoJs::into_js(#value, frame.scope_mut()).map(|local| local.raw())
   }
 }
-fn is_js_arg_slice_type(ty: &syn::Type) -> bool {
-  if let syn::Type::Path(syn::TypePath { path, .. }) = ty {
-    if let Some(seg) = path.segments.last() {
-      return seg.ident == "JsArgSlice";
-    }
-  }
-  false
-}
-
-fn extract_vec_element_type(ty: &syn::Type) -> Option<&syn::Type> {
-  if let syn::Type::Path(syn::TypePath { path, .. }) = ty {
-    if let Some(seg) = path.segments.last() {
-      if seg.ident == "Vec" {
-        if let syn::PathArguments::AngleBracketed(args) = &seg.arguments {
-          if let Some(syn::GenericArgument::Type(elem)) = args.args.first() {
-            return Some(elem);
-          }
-        }
-      }
-    }
-  }
-  None
-}
-
 fn arg_needs_class_context(arg: &crate::NapiFnArg) -> bool {
   match &arg.kind {
     crate::NapiFnArgKind::PatType(path) => path.ty.needs_class_context(),
@@ -93,55 +64,6 @@ fn class_receiver_expr(input: &ClassInput<'_>, class: &TokenStream) -> TokenStre
     ClassInputKind::Borrow => quote! { frame.this_class::<#class>()? },
     ClassInputKind::BorrowMut => quote! { frame.this_class_mut::<#class>()? },
   }
-}
-
-fn class_arg_expr(input: &ClassInput<'_>, class: &TokenStream, index: usize) -> TokenStream {
-  match input.kind() {
-    ClassInputKind::Ref => quote! { frame.arg_reference::<#class>(#index)? },
-    ClassInputKind::ClassRef => quote! { frame.arg_class_ref::<#class>(#index)? },
-    ClassInputKind::Borrow => quote! { frame.arg_class::<#class>(#index)? },
-    ClassInputKind::BorrowMut => quote! { frame.arg_class_mut::<#class>(#index)? },
-  }
-}
-
-fn optional_class_arg_expr(
-  input: &ClassInput<'_>,
-  class: &TokenStream,
-  index: usize,
-) -> TokenStream {
-  match input.kind() {
-    ClassInputKind::Ref => quote! { frame.arg_opt_reference::<#class>(#index)? },
-    ClassInputKind::ClassRef => quote! { frame.arg_opt_class_ref::<#class>(#index)? },
-    ClassInputKind::Borrow => quote! { frame.arg_opt_class::<#class>(#index)? },
-    ClassInputKind::BorrowMut => quote! { frame.arg_opt_class_mut::<#class>(#index)? },
-  }
-}
-
-fn is_external_type(ty: &Type) -> bool {
-  matches!(
-    ty,
-    Type::Path(path)
-      if path
-        .path
-        .segments
-        .last()
-        .is_some_and(|segment| segment.ident == "External")
-  )
-}
-
-fn is_return_this_type(ty: &Type, parent: Option<&Ident>) -> bool {
-  let Type::Reference(reference) = ty else {
-    return false;
-  };
-  let Type::Path(path) = reference.elem.as_ref() else {
-    return false;
-  };
-  if path.qself.is_some() || path.path.segments.len() != 1 {
-    return false;
-  }
-
-  let ident = &path.path.segments[0].ident;
-  ident == "Self" || parent.is_some_and(|parent| ident == parent)
 }
 
 #[cfg(feature = "tracing")]
@@ -172,7 +94,7 @@ impl TryToTokens for NapiFn {
       .any(|arg| arg.inject == Some(crate::InjectKind::Rest));
     let needs_class_context = self.needs_class_context();
 
-    if self.is_async && self.parent.is_some() && self.fn_self.is_some() {
+    if self.is_async && self.parent().is_some() && self.fn_self().is_some() {
       return Err(Diagnostic::span_error(
         self.name.span(),
         "async napi class methods cannot borrow self across an await point; use an owned class reference or make the method synchronous",
@@ -192,9 +114,9 @@ impl TryToTokens for NapiFn {
     let receiver_ret_name = Ident::new("_ret", Span::call_site());
     let ret = self.gen_fn_return(&receiver_ret_name, quote! { env })?;
     let register = self.gen_fn_register();
-    let tracing_debug = gen_tracing_debug(&self.js_name, self.parent_js_name.as_ref());
+    let tracing_debug = gen_tracing_debug(&self.js_name, self.class.as_ref().map(|c| &c.js_name));
 
-    if self.module_exports {
+    if self.is_module_exports() {
       (quote! {
         #(#attrs)*
         #[doc(hidden)]
@@ -234,7 +156,7 @@ impl TryToTokens for NapiFn {
           .collect(),
       );
     }
-    if Some(FnSelf::MutRef) == self.fn_self && self.is_async && !self.unsafe_ {
+    if self.fn_self() == Some(&FnSelf::MutRef) && self.is_async && !self.unsafe_ {
       return Err(Diagnostic::span_error(
         self.name.span(),
         "&mut self in async napi methods should be marked as unsafe",
@@ -261,8 +183,8 @@ impl TryToTokens for NapiFn {
       } else {
         quote! { Ok::<_, napi::Error>(#receiver(#(#arg_names),*).await) }
       };
-      let async_completion = if self.kind == FnKind::Factory {
-        let parent = self.parent.as_ref().ok_or_else(|| {
+      let async_completion = if matches!(self.kind, FnKind::Factory) {
+        let parent = self.parent().ok_or_else(|| {
           Diagnostic::span_error(
             self.name.span(),
             "class factory return codegen requires a parent class",
@@ -278,14 +200,16 @@ impl TryToTokens for NapiFn {
       } else {
         quote! { Ok(#receiver_ret_name) }
       };
-      let abort_signal_arg = self.args.iter().enumerate().find_map(|(i, arg)| {
-        match &arg.kind {
+      let abort_signal_arg = self
+        .args
+        .iter()
+        .enumerate()
+        .find_map(|(i, arg)| match &arg.kind {
           NapiFnArgKind::PatType(p) if arg.inject.is_none() => {
-            is_abort_signal_type(&p.ty).then(|| Ident::new(&format!("arg{i}"), Span::call_site()))
+            is_abort_signal(&p.ty).then(|| Ident::new(&format!("arg{i}"), Span::call_site()))
           }
           _ => None,
-        }
-      });
+        });
       if let Some(signal_ident) = abort_signal_arg {
         quote! {
           unsafe {
@@ -319,8 +243,8 @@ impl TryToTokens for NapiFn {
       }
     };
 
-    let internal_construction = if self.kind == FnKind::Constructor {
-      let parent = self.parent.as_ref().ok_or_else(|| {
+    let internal_construction = if matches!(self.kind, FnKind::Constructor { .. }) {
+      let parent = self.parent().ok_or_else(|| {
         Diagnostic::span_error(
           self.name.span(),
           "class constructor codegen requires a parent class",
@@ -348,9 +272,9 @@ impl TryToTokens for NapiFn {
     };
 
     let function_call = if args_len == 0
-      && self.fn_self.is_none()
-      && self.kind != FnKind::Constructor
-      && self.kind != FnKind::Factory
+      && self.fn_self().is_none()
+      && !matches!(self.kind, FnKind::Constructor { .. })
+      && !matches!(self.kind, FnKind::Factory)
       && !self.is_async
       && !needs_class_context
     {
@@ -402,6 +326,8 @@ impl TryToTokens for NapiFn {
       }
     };
 
+    let type_def_register = self.gen_type_def_register();
+
     (quote! {
       #(#attrs)*
       #[doc(hidden)]
@@ -417,6 +343,7 @@ impl TryToTokens for NapiFn {
       }
 
       #register
+      #type_def_register
     })
     .to_tokens(tokens);
 
@@ -426,14 +353,14 @@ impl TryToTokens for NapiFn {
 
 impl NapiFn {
   fn needs_class_context(&self) -> bool {
-    (self.parent.is_some()
-      && (self.fn_self.is_some()
-        || self.kind == FnKind::Constructor
-        || self.kind == FnKind::Factory))
+    (self.parent().is_some()
+      && (self.fn_self().is_some()
+        || matches!(self.kind, FnKind::Constructor { .. })
+        || matches!(self.kind, FnKind::Factory)))
       || self
         .ret
         .as_ref()
-        .is_some_and(|ty| ty.as_class_initializer(self.parent.as_ref()).is_some())
+        .is_some_and(|ty| ty.as_class_initializer(self.parent()).is_some())
       || self.args.iter().any(arg_needs_class_context)
   }
 
@@ -460,16 +387,12 @@ impl NapiFn {
             self.resolve_env_arg(&ident, path, needs_class_context, scope_arg.as_ref())
           }
           crate::InjectKind::This => self.resolve_this_arg(&ident, path, &cb_this)?,
-          crate::InjectKind::Rest => self.resolve_rest_arg(&ident, path, js_arg_index, scope_arg.as_ref())?
+          crate::InjectKind::Rest => {
+            self.resolve_rest_arg(&ident, path, js_arg_index, scope_arg.as_ref())?
+          }
         }
       } else {
-        self.resolve_regular_arg(
-          &ident,
-          js_arg_index,
-          arg,
-          needs_class_context,
-          scope_arg.as_ref(),
-        )?
+        self.resolve_regular_arg(&ident, js_arg_index, arg, scope_arg.as_ref())?
       };
       if !r.is_injected {
         js_arg_index += 1;
@@ -481,12 +404,12 @@ impl NapiFn {
     let mut arg_conversions = vec![];
     let mut deferred_conversions = vec![];
 
-    if let Some(parent) = &self.parent {
-      match self.fn_self {
-        Some(FnSelf::Ref) => arg_conversions.push(quote! {
+    if let Some(parent) = self.parent() {
+      match self.fn_self() {
+        Some(&FnSelf::Ref) => arg_conversions.push(quote! {
           let this = frame.this_class::<#parent>()?;
         }),
-        Some(FnSelf::MutRef) => arg_conversions.push(quote! {
+        Some(&FnSelf::MutRef) => arg_conversions.push(quote! {
           let mut this = frame.this_class_mut::<#parent>()?;
         }),
         _ => {}
@@ -545,7 +468,10 @@ impl NapiFn {
 
     let mutability = matches!(
       &*path.ty,
-      syn::Type::Reference(syn::TypeReference { mutability: Some(_), .. })
+      syn::Type::Reference(syn::TypeReference {
+        mutability: Some(_),
+        ..
+      })
     );
     let env_holder = Ident::new(&format!("{ident}_env"), Span::call_site());
     let conversion = if let Some(scope_arg) = scope_arg {
@@ -593,7 +519,7 @@ impl NapiFn {
     cb_this: &TokenStream,
   ) -> BindgenResult<ResolvedArg> {
     if let Some(input) = path.ty.as_class_input() {
-      let class = input.class_type(self.parent.as_ref()).ok_or_else(|| {
+      let class = input.class_type(self.parent()).ok_or_else(|| {
         Diagnostic::span_error(
           path.ty.span(),
           "receiver-position class argument requires a concrete class type",
@@ -651,7 +577,7 @@ impl NapiFn {
       elem, mutability, ..
     }) = this_ty
     {
-      if is_external_type(elem) {
+      if is_external(elem) {
         let mut r = ResolvedArg::injected(if mutability.is_some() {
           quote! { frame.this::<napi::bindgen_prelude::This<&mut #elem>>()? }
         } else {
@@ -664,7 +590,7 @@ impl NapiFn {
         return Ok(r);
       }
 
-      let class = resolve_class_type(elem, self.parent.as_ref()).ok_or_else(|| {
+      let class = resolve_class_type(elem, self.parent()).ok_or_else(|| {
         Diagnostic::span_error(
           elem.span(),
           "napi class receiver requires a concrete class type",
@@ -700,11 +626,14 @@ impl NapiFn {
     scope_arg: Option<&Ident>,
   ) -> BindgenResult<ResolvedArg> {
     let rest_from = js_arg_index;
-    let conversion = if is_js_arg_slice_type(&path.ty) {
+    let conversion = if is_js_arg_slice(&path.ty) {
       quote! { let #ident = frame.rest_args(#rest_from); }
     } else {
       let elem = extract_vec_element_type(&path.ty).ok_or_else(|| {
-        Diagnostic::spanned_error(&path.ty, "#[napi(rest)] parameter must be Vec<T> or JsArgSlice")
+        Diagnostic::spanned_error(
+          &path.ty,
+          "#[napi(rest)] parameter must be Vec<T> or JsArgSlice",
+        )
       })?;
       if let Some(scope_arg) = scope_arg {
         quote! { let #ident = frame.rest_args(#rest_from).collect::<#elem>(#scope_arg)?; }
@@ -730,7 +659,6 @@ impl NapiFn {
     ident: &Ident,
     js_arg_index: usize,
     arg: &crate::NapiFnArg,
-    needs_class_context: bool,
     scope_arg: Option<&Ident>,
   ) -> BindgenResult<ResolvedArg> {
     match &arg.kind {
@@ -741,7 +669,6 @@ impl NapiFn {
           ident,
           js_arg_index,
           path,
-          needs_class_context,
           scope_arg,
           &mut refs,
           &mut mut_ref_spans,
@@ -771,12 +698,10 @@ impl NapiFn {
     arg_name: &Ident,
     index: usize,
     path: &syn::PatType,
-    needs_class_context: bool,
     scope_arg: Option<&Ident>,
     refs: &mut Vec<TokenStream>,
     mut_ref_spans: &mut Vec<Span>,
   ) -> BindgenResult<(TokenStream, bool)> {
-    let mut ty = *path.ty.clone();
     let cb_arg = callback_arg_expr(index);
     let raw_arg_ident = Ident::new(&format!("js_arg{index}_raw"), Span::call_site());
     let scoped_cb_arg = if scope_arg.is_some() {
@@ -785,175 +710,110 @@ impl NapiFn {
       cb_arg.clone()
     };
 
-    let arg_conversion = if self.module_exports {
+    let resolved = crate::types::resolve::resolve_arg_type(&path.ty, self.parent());
+
+    // Class input types: ClassRef, ClassBorrow, &Class, Option<ClassRef> etc.
+    if resolved.kind.needs_class_context() {
+      let conversion = resolved.kind.emit_from_js(quote! { #index });
+      let is_bare_ref = matches!(&*path.ty, Type::Reference(_));
+      let q = if is_bare_ref {
+        if let Some((kind, _)) = resolved.kind.as_class_input_info() {
+          match kind {
+            crate::types::classify::ClassInputKind::Borrow => {
+              let borrow_ident = Ident::new(&format!("{arg_name}_borrow"), Span::call_site());
+              quote! {
+                let #borrow_ident = #conversion;
+                let #arg_name = &*#borrow_ident;
+              }
+            }
+            crate::types::classify::ClassInputKind::BorrowMut => {
+              let borrow_ident = Ident::new(&format!("{arg_name}_borrow"), Span::call_site());
+              quote! {
+                let mut #borrow_ident = #conversion;
+                let #arg_name = &mut *#borrow_ident;
+              }
+            }
+            _ => quote! { let #arg_name = #conversion; },
+          }
+        } else {
+          quote! { let #arg_name = #conversion; }
+        }
+      } else {
+        quote! { let #arg_name = #conversion; }
+      };
+      if resolved.kind.needs_async_ref() {
+        refs.push(make_ref(quote! { #cb_arg }));
+      }
+      if resolved.kind.needs_mut_ref() {
+        mut_ref_spans.push(path.ty.span());
+      }
+      return Ok((q, false));
+    }
+
+    // Borrowed ref types (typed arrays, &External) — need ref tracking
+    if matches!(resolved.tag(), ResolvedTag::BorrowedRef) {
+      let conversion = resolved.kind.emit_from_js(quote! { #index });
+      let q = quote! { let #arg_name = #conversion; };
+      refs.push(make_ref(quote! { #cb_arg }));
+      if resolved.kind.needs_mut_ref() {
+        mut_ref_spans.push(path.ty.span());
+      }
+      return Ok((q, false));
+    }
+
+    // Special: External (non-ref, through FromJs)
+    if matches!(resolved.tag(), ResolvedTag::Special(SpecialKind::External)) {
+      let ty = &resolved.tokens;
+      let q = quote! { let #arg_name = frame.arg::<#ty>(#index)?; };
+      return Ok((q, false));
+    }
+
+    // Generic path: FromJs trait dispatch
+    let mut ty = *path.ty.clone();
+    hidden_ty_lifetime(&mut ty)?;
+
+    // Vec<&T> needs async ref tracking
+    if let syn::Type::Path(path) = &ty {
+      if let Some(syn::PathSegment { ident, arguments }) = path.path.segments.first() {
+        if ident == "Vec" {
+          if let syn::PathArguments::AngleBracketed(args) = &arguments {
+            if let Some(syn::GenericArgument::Type(syn::Type::Reference(_))) = args.args.first() {
+              refs.push(make_ref(quote! { #scoped_cb_arg }));
+            }
+          }
+        }
+      }
+    }
+
+    let arg_conversion = if self.is_module_exports() {
       quote! { _napi_module_exports_ }
     } else {
       cb_arg.clone()
     };
-    let class_ref_holder = Ident::new(&format!("{arg_name}_class_ref"), Span::call_site());
-
-    match ty {
-      syn::Type::Reference(syn::TypeReference {
-        mutability, elem, ..
-      }) => {
-        if let syn::Type::Slice(slice) = &*elem {
-          if let syn::Type::Path(ele) = &*slice.elem {
-            if let Some(syn::PathSegment { ident, .. }) = ele.path.segments.first() {
-              if TYPEDARRAY_SLICE_TYPES.contains_key(&&*ident.to_string()) {
-                let q = quote! {
-                  let #arg_name = frame.arg::<&mut #elem>(#index)?;
-                };
-                refs.push(make_ref(quote! { #cb_arg }));
-                return Ok((q, false));
-              }
-            }
-          }
-        }
-        if let syn::Type::Path(ele) = &*elem {
-          if let Some(syn::PathSegment { ident, .. }) = ele.path.segments.last() {
-            if ident == "str" {
-              bail_span!(
-                elem,
-                "JavaScript String is primitive and cannot be passed by reference"
-              );
-            }
-          }
-        }
-        let q = if needs_class_context
-          && matches!(&*elem, syn::Type::Path(_))
-          && !is_external_type(&elem)
+    let from_js = if self.is_module_exports() {
+      quote! {
         {
-          let class = resolve_class_type(&elem, self.parent.as_ref()).ok_or_else(|| {
-            Diagnostic::span_error(
-              elem.span(),
-              "borrowed class argument requires a concrete class type",
-            )
-          })?;
-          if mutability.is_some() {
-            quote! {
-              let mut #class_ref_holder = {
-                frame.arg_class_mut::<#class>(#index)?
-              };
-              let #arg_name = &mut *#class_ref_holder;
-            }
-          } else {
-            quote! {
-              let #class_ref_holder = {
-                frame.arg_class::<#class>(#index)?
-              };
-              let #arg_name = &*#class_ref_holder;
-            }
-          }
-        } else if is_external_type(&elem) {
-          if mutability.is_some() {
-            quote! {
-              let #arg_name = frame.arg::<&mut #elem>(#index)?;
-            }
-          } else {
-            quote! {
-              let #arg_name = frame.arg::<&#elem>(#index)?;
-            }
-          }
-        } else {
-          return Err(Diagnostic::span_error(
-            path.ty.span(),
-            "borrowed napi class argument requires class binding context",
-          ));
-        };
-        if mutability.is_some() {
-          mut_ref_spans.push(path.ty.span());
+          let value = unsafe {
+            napi::bindgen_prelude::Local::from_raw(#arg_conversion)
+          };
+          <#ty as napi::bindgen_prelude::FromJs>::from_js(scope, value)?
         }
-        refs.push(make_ref(quote! { #cb_arg }));
-        Ok((q, false))
       }
-      _ => {
-        hidden_ty_lifetime(&mut ty)?;
-        if needs_class_context {
-          if let Some(input) = ty.as_optional_class_input() {
-            let class = input.class_type(self.parent.as_ref()).ok_or_else(|| {
-              Diagnostic::span_error(
-                path.ty.span(),
-                "optional class argument requires a concrete class type",
-              )
-            })?;
-            let conversion = optional_class_arg_expr(&input, &class, index);
-            let q = quote! {
-              let #arg_name = #conversion;
-            };
-            if input.is_mut() {
-              mut_ref_spans.push(path.ty.span());
-            }
-            return Ok((q, false));
-          }
-          if let Some(input) = ty.as_class_input() {
-            let class = input.class_type_or_error(
-              self.parent.as_ref(),
-              input.inner().span(),
-              "class argument requires a concrete class type",
-            )?;
-            let conversion = class_arg_expr(&input, &class, index);
-            let q = quote! {
-              let #arg_name = #conversion;
-            };
-            if input.is_mut() {
-              mut_ref_spans.push(path.ty.span());
-            }
-            return Ok((q, false));
-          }
-          if ty.needs_class_context() {
-            let q = quote! {
-              let #arg_name = frame.arg::<#ty>(#index)?;
-            };
-            return Ok((q, false));
-          }
+    } else if let Some(scope_arg) = scope_arg {
+      quote! {
+        {
+          let value = unsafe {
+            napi::bindgen_prelude::Local::from_raw(#raw_arg_ident)
+          };
+          <#ty as napi::bindgen_prelude::FromJs>::from_js(#scope_arg, value)?
         }
-        if let syn::Type::Path(path) = &ty {
-          if let Some(syn::PathSegment { ident, arguments }) = path.path.segments.first() {
-            if ident == "Vec" {
-              if let syn::PathArguments::AngleBracketed(syn::AngleBracketedGenericArguments {
-                args: angle_bracketed_args,
-                ..
-              }) = &arguments
-              {
-                if let Some(syn::GenericArgument::Type(syn::Type::Reference(
-                  syn::TypeReference { .. },
-                ))) = angle_bracketed_args.first()
-                {
-                  refs.push(make_ref(quote! { #scoped_cb_arg }));
-                }
-              }
-            }
-          }
-        }
-        let from_js = if self.module_exports {
-          quote! {
-            {
-              let value = unsafe {
-                napi::bindgen_prelude::Local::from_raw(#arg_conversion)
-              };
-              <#ty as napi::bindgen_prelude::FromJs>::from_js(scope, value)?
-            }
-          }
-        } else if let Some(scope_arg) = scope_arg {
-          quote! {
-            {
-              let value = unsafe {
-                napi::bindgen_prelude::Local::from_raw(#raw_arg_ident)
-              };
-              <#ty as napi::bindgen_prelude::FromJs>::from_js(#scope_arg, value)?
-            }
-          }
-        } else {
-          quote! {
-            frame.arg::<#ty>(#index)?
-          }
-        };
-        let q = quote! {
-          let #arg_name = #from_js;
-        };
-        Ok((q, scope_arg.is_some()))
       }
-    }
+    } else {
+      quote! { frame.arg::<#ty>(#index)? }
+    };
+
+    let q = quote! { let #arg_name = #from_js; };
+    Ok((q, scope_arg.is_some()))
   }
 
   fn gen_cb_arg_conversion(
@@ -1025,13 +885,13 @@ impl NapiFn {
   pub(crate) fn gen_fn_receiver(&self) -> BindgenResult<TokenStream> {
     let name = &self.name;
 
-    match self.fn_self {
-      Some(FnSelf::Value) => Err(Diagnostic::span_error(
+    match self.fn_self() {
+      Some(&FnSelf::Value) => Err(Diagnostic::span_error(
         self.name.span(),
         "napi class methods cannot move self; use &self or &mut self",
       )),
-      Some(FnSelf::Ref) | Some(FnSelf::MutRef) => Ok(quote! { this.#name }),
-      None => match &self.parent {
+      Some(&FnSelf::Ref) | Some(&FnSelf::MutRef) => Ok(quote! { this.#name }),
+      None => match self.parent() {
         Some(class) => Ok(quote! { #class::#name }),
         None => Ok(quote! { #name }),
       },
@@ -1056,19 +916,28 @@ impl NapiFn {
     };
 
     if let Some(ty) = &self.ret {
-      let is_return_self = is_return_this_type(ty, self.parent.as_ref());
-      let class_initializer_return = ty.as_class_initializer(self.parent.as_ref());
-      if self.kind == FnKind::Constructor {
-        let parent = self.parent.as_ref().ok_or_else(|| {
+      let resolved_ret = resolve_return_type(ty, self.parent());
+      let is_return_self = matches!(
+        resolved_ret.tag(),
+        ResolvedTag::Special(SpecialKind::ReturnThis)
+      );
+      let class_initializer_return = match resolved_ret.tag() {
+        ResolvedTag::Special(SpecialKind::ClassInitializer) => {
+          resolved_ret.kind.special_tokens().cloned()
+        }
+        _ => None,
+      };
+      if matches!(self.kind, FnKind::Constructor { .. }) {
+        let parent = self.parent().ok_or_else(|| {
           Diagnostic::span_error(
             self.name.span(),
             "class constructor return codegen requires a parent class",
           )
         })?;
         if self.is_ret_result {
-          if self.parent_is_generator {
+          if self.parent_is_generator() {
             Ok(quote! { #cb_access.construct_generator::<false, _>(#js_name, #ret?) })
-          } else if self.parent_is_async_generator {
+          } else if self.parent_is_async_generator() {
             Ok(quote! { #cb_access.construct_async_generator::<false, _>(#js_name, #ret?) })
           } else {
             let post_init_call = self.gen_post_init_call()?;
@@ -1092,9 +961,9 @@ impl NapiFn {
               }
             })
           }
-        } else if self.parent_is_generator {
+        } else if self.parent_is_generator() {
           Ok(quote! { #cb_access.construct_generator::<false, #parent>(#js_name, #ret) })
-        } else if self.parent_is_async_generator {
+        } else if self.parent_is_async_generator() {
           Ok(quote! { #cb_access.construct_async_generator::<false, #parent>(#js_name, #ret) })
         } else {
           let post_init_call = self.gen_post_init_call()?;
@@ -1112,17 +981,17 @@ impl NapiFn {
             }
           })
         }
-      } else if self.kind == FnKind::Factory {
-        let parent = self.parent.as_ref().ok_or_else(|| {
+      } else if matches!(self.kind, FnKind::Factory) {
+        let parent = self.parent().ok_or_else(|| {
           Diagnostic::span_error(
             self.name.span(),
             "class factory return codegen requires a parent class",
           )
         })?;
         if self.is_ret_result {
-          if self.parent_is_generator {
+          if self.parent_is_generator() {
             Ok(quote! { #cb_access.generator_factory(#js_name, #ret?) })
-          } else if self.parent_is_async_generator {
+          } else if self.parent_is_async_generator() {
             Ok(quote! { #cb_access.async_generator_factory(#js_name, #ret?) })
           } else if self.is_async {
             Ok(quote! {
@@ -1153,9 +1022,9 @@ impl NapiFn {
               }
             })
           }
-        } else if self.parent_is_generator {
+        } else if self.parent_is_generator() {
           Ok(quote! { #cb_access.generator_factory(#js_name, #ret) })
-        } else if self.parent_is_async_generator {
+        } else if self.parent_is_async_generator() {
           Ok(quote! { #cb_access.async_generator_factory(#js_name, #ret) })
         } else if self.is_async {
           Ok(quote! {
@@ -1300,12 +1169,12 @@ impl NapiFn {
   }
 
   fn gen_post_init_call(&self) -> BindgenResult<TokenStream> {
-    if self.post_init_chain.is_empty() {
+    if self.post_init_chain().is_empty() {
       return Ok(quote! {});
     }
 
     let calls: Vec<_> = self
-      .post_init_chain
+      .post_init_chain()
       .iter()
       .map(|cls| quote! { #cls::__napi_post_init(&mut frame)?; })
       .collect();
@@ -1314,7 +1183,7 @@ impl NapiFn {
   }
 
   fn gen_fn_register(&self) -> TokenStream {
-    if self.parent.is_some() || cfg!(test) {
+    if self.parent().is_some() || cfg!(test) {
       quote! {}
     } else {
       let name_str = self.name.to_string();
@@ -1328,7 +1197,7 @@ impl NapiFn {
         Span::call_site(),
       );
 
-      if self.module_exports {
+      if self.is_module_exports() {
         return quote! {
           #[doc(hidden)]
           #[allow(non_snake_case)]
@@ -1393,6 +1262,328 @@ impl NapiFn {
         }
 
         #register_module_export_tokens
+      }
+    }
+  }
+
+  #[cfg(feature = "type-def")]
+  fn gen_type_def_register(&self) -> TokenStream {
+    if self.ts.skip_typescript
+      || self.is_module_exports()
+      || self.no_export
+      || matches!(self.kind, FnKind::PostInit)
+      || cfg!(test)
+    {
+      return quote! {};
+    }
+
+    let js_name = &self.js_name;
+    let is_impl_method = self.parent().is_some();
+
+    let kind = if is_impl_method { "impl" } else { "fn" };
+
+    let name = if is_impl_method {
+      let parent_str = self.parent().map(|p| p.to_string()).unwrap_or_default();
+      self
+        .parent_js_name()
+        .map(|s| s.to_owned())
+        .unwrap_or(parent_str)
+    } else {
+      js_name.clone()
+    };
+
+    let prefix = self.gen_ts_func_prefix_str();
+
+    let def_body = if let Some(ts_type) = self.ts.ts_type.as_ref() {
+      let ts_type_str = ts_type.clone();
+      quote! { format!("{} {}{}", #prefix, #js_name, #ts_type_str) }
+    } else {
+      let generic = self
+        .ts
+        .ts_generic_types
+        .as_ref()
+        .map(|g| format!("<{g}>"))
+        .unwrap_or_default();
+
+      let args_body = if let Some(ts_args) = self.ts.ts_args_type.as_ref() {
+        let ts_args_str = ts_args.clone();
+        quote! { #ts_args_str.to_owned() }
+      } else {
+        self.gen_ts_func_args_tokens()
+      };
+
+      let ret_body = if let Some(ts_ret) = self.ts.ts_return_type.as_ref() {
+        let ts_ret_str = format!(": {ts_ret}");
+        quote! { #ts_ret_str.to_owned() }
+      } else {
+        self.gen_ts_func_ret_tokens()
+      };
+
+      quote! {
+        {
+          let args = #args_body;
+          let ret = #ret_body;
+          format!("{} {}{generic}({args}){ret}", #prefix, #js_name, generic = #generic, args = args, ret = ret)
+        }
+      }
+    };
+
+    let js_doc = crate::typegen::JSDoc::new(&self.comments);
+    let js_doc_str = js_doc.to_string();
+
+    let (final_def_body, final_js_doc) = if is_impl_method {
+      let body = if !js_doc_str.is_empty() {
+        quote! { format!("{}{}", #js_doc_str, #def_body) }
+      } else {
+        def_body
+      };
+      (body, crate::typegen::JSDoc::default())
+    } else {
+      (def_body, js_doc)
+    };
+
+    super::emit_type_def_descriptor(
+      kind,
+      &name,
+      None,
+      final_def_body,
+      self.js_mod.as_ref(),
+      &final_js_doc,
+      None,
+      None,
+      &self.register_name,
+      self.name.span(),
+    )
+  }
+
+  #[cfg(not(feature = "type-def"))]
+  fn gen_type_def_register(&self) -> TokenStream {
+    quote! {}
+  }
+
+  fn gen_ts_func_prefix_str(&self) -> &'static str {
+    if self.parent().is_some() {
+      match &self.kind {
+        FnKind::Normal => match self.fn_self() {
+          Some(_) => "",
+          None
+            if self
+              .args
+              .iter()
+              .any(|arg| arg.inject == Some(crate::InjectKind::This)) =>
+          {
+            ""
+          }
+          None => "static",
+        },
+        FnKind::Factory => "static",
+        FnKind::Constructor { .. } => "",
+        FnKind::Getter => "get",
+        FnKind::Setter => "set",
+        FnKind::PostInit => "",
+        FnKind::ModuleExport => "",
+      }
+    } else {
+      "function"
+    }
+  }
+
+  #[cfg(feature = "type-def")]
+  fn gen_ts_func_args_tokens(&self) -> TokenStream {
+    use crate::typegen::tokens::{callback_to_ts_type_tokens, ty_to_ts_type_tokens};
+    use crate::util::to_case;
+    use convert_case::Case;
+
+    let parent = self.parent();
+    let is_setter = matches!(self.kind, FnKind::Setter);
+
+    let mut arg_entries = Vec::new();
+
+    for arg in &self.args {
+      if let Some(inject) = arg.inject {
+        match inject {
+          crate::InjectKind::Env | crate::InjectKind::Scope => continue,
+          crate::InjectKind::Rest => {
+            let crate::NapiFnArgKind::PatType(path) = &arg.kind else {
+              continue;
+            };
+            let mut path = path.clone();
+            if let syn::Pat::Ident(i) = path.pat.as_mut() {
+              i.mutability = None;
+            }
+            let arg_name = crate::typegen::gen_ts_func_arg_pub(&path.pat);
+
+            let ts_override = arg.ts_arg_type.as_ref();
+            let type_tokens = if let Some(ovr) = ts_override {
+              let s = ovr.clone();
+              quote! { #s.to_owned() }
+            } else if is_js_arg_slice(&path.ty) {
+              quote! { "unknown".to_owned() }
+            } else if let Some(elem) = extract_vec_element_type(&path.ty) {
+              ty_to_ts_type_tokens(elem, false, false, parent).0
+            } else {
+              quote! { "unknown".to_owned() }
+            };
+
+            arg_entries.push(quote! {
+              parts.push(format!("...{}: {}[]", #arg_name, #type_tokens));
+            });
+            continue;
+          }
+          crate::InjectKind::This => {
+            let crate::NapiFnArgKind::PatType(path) = &arg.kind else {
+              continue;
+            };
+            if parent.is_some() || !matches!(self.kind, FnKind::Normal) {
+              continue;
+            }
+            let ts_override = arg.ts_arg_type.as_ref();
+            if let Some(ovr) = ts_override {
+              let s = ovr.clone();
+              arg_entries.push(quote! { this_arg = Some(format!("this: {}", #s)); });
+              continue;
+            }
+            if let Some(input) = path.ty.as_class_input() {
+              let type_tokens = ty_to_ts_type_tokens(input.inner(), false, false, parent).0;
+              arg_entries.push(quote! { this_arg = Some(format!("this: {}", #type_tokens)); });
+              continue;
+            }
+            if let Some(this_ty) = path.ty.this_inner() {
+              let type_tokens = ty_to_ts_type_tokens(this_ty, false, false, parent).0;
+              arg_entries.push(quote! { this_arg = Some(format!("this: {}", #type_tokens)); });
+              continue;
+            }
+            if path.ty.is_bare_this() {
+              arg_entries.push(quote! { this_arg = Some("this: this".to_owned()); });
+              continue;
+            }
+            continue;
+          }
+        }
+      }
+
+      match &arg.kind {
+        crate::NapiFnArgKind::PatType(path) => {
+          let mut path = path.clone();
+          if let syn::Pat::Ident(i) = path.pat.as_mut() {
+            i.mutability = None;
+          }
+          let arg_name = crate::typegen::gen_ts_func_arg_pub(&path.pat);
+
+          let ts_override = arg.ts_arg_type.as_ref();
+          let (type_tokens, is_optional) = if let Some(ovr) = ts_override {
+            let s = ovr.clone();
+            (quote! { #s.to_owned() }, false)
+          } else {
+            ty_to_ts_type_tokens(&path.ty, false, false, parent)
+          };
+
+          arg_entries.push(quote! {
+            args.push((#arg_name.to_owned(), #type_tokens, #is_optional));
+          });
+        }
+        crate::NapiFnArgKind::Callback(cb) => {
+          let ts_override = arg.ts_arg_type.as_ref();
+          let type_tokens = if let Some(ovr) = ts_override {
+            let s = ovr.clone();
+            quote! { #s.to_owned() }
+          } else {
+            callback_to_ts_type_tokens(cb, parent)
+          };
+          let cb_name = to_case(cb.pat.to_token_stream().to_string(), Case::Camel);
+          arg_entries.push(quote! {
+            args.push((#cb_name.to_owned(), #type_tokens, false));
+          });
+        }
+      }
+    }
+
+    let is_setter_lit = is_setter;
+
+    quote! {
+      {
+        let mut this_arg: Option<String> = None;
+        let mut args: Vec<(String, String, bool)> = Vec::new();
+        let mut parts: Vec<String> = Vec::new();
+        #( #arg_entries )*
+
+        let last_required = args.iter().enumerate().rfind(|(_, (_, _, opt))| !opt).map(|(i, _)| i);
+
+        let mut result = String::new();
+        if let Some(this) = &this_arg {
+          result.push_str(this);
+        }
+        for (i, (name, ty, optional)) in args.iter().enumerate() {
+          if i != 0 || this_arg.is_some() {
+            result.push_str(", ");
+          }
+          let show_optional = !#is_setter_lit && *optional && last_required.is_none_or(|lr| i > lr);
+          if show_optional {
+            result.push_str(&format!("{}?: {}", name, ty));
+          } else {
+            result.push_str(&format!("{}: {}", name, ty));
+          }
+        }
+        for p in &parts {
+          if !result.is_empty() { result.push_str(", "); }
+          result.push_str(p);
+        }
+        result
+      }
+    }
+  }
+
+  #[cfg(feature = "type-def")]
+  fn gen_ts_func_ret_tokens(&self) -> TokenStream {
+    use crate::typegen::tokens::ty_to_ts_type_tokens;
+
+    let parent = self.parent();
+
+    match &self.kind {
+      FnKind::Constructor { .. } | FnKind::Setter => {
+        return quote! { String::new() };
+      }
+      FnKind::Factory => {
+        if let Some(parent) = parent {
+          let is_async = self.is_async;
+          return quote! {
+            {
+              let parent_name = <#parent as napi::bindgen_prelude::TypeName>::ts_type();
+              if #is_async {
+                format!(": Promise<{}>", parent_name)
+              } else {
+                format!(": {}", parent_name)
+              }
+            }
+          };
+        }
+        return quote! { String::new() };
+      }
+      _ => {}
+    }
+
+    let is_async = self.is_async;
+
+    if let Some(ret) = &self.ret {
+      let (type_tokens, _) = ty_to_ts_type_tokens(ret, true, false, parent);
+      quote! {
+        {
+          let ts_type = #type_tokens;
+          let ret = if ts_type == "undefined" { "void".to_owned() } else { ts_type };
+          if #is_async {
+            format!(": Promise<{}>", ret)
+          } else {
+            format!(": {}", ret)
+          }
+        }
+      }
+    } else {
+      quote! {
+        if #is_async {
+          ": Promise<void>".to_owned()
+        } else {
+          ": void".to_owned()
+        }
       }
     }
   }

@@ -8,7 +8,7 @@ use crate::util::to_case;
 
 use crate::{
   codegen::{get_intermediate_ident, js_mod_to_token_stream},
-  type_semantics::{resolve_class_type, ClassInputKind, NapiTypeExt},
+  types::{classify::ClassInputKind, inspect::NapiTypeExt, resolve::resolve_field_type},
   BindgenResult, FnKind, NapiImpl, NapiStruct, NapiStructKind, TryToTokens,
 };
 use crate::{NapiArray, NapiClass, NapiObject, NapiStructuredEnum, NapiTransparent};
@@ -31,36 +31,16 @@ fn has_receiver_frame_input_arg(item: &crate::NapiFn) -> bool {
 }
 
 fn is_reference_class_type(ty: &syn::Type) -> bool {
-  ty.as_class_input()
-    .is_some_and(|input| input.kind().is_reference())
+  let resolved = resolve_field_type(ty, None);
+  resolved.kind.unwrap_optional().is_none() && resolved.kind.needs_async_ref()
 }
 
 fn class_field_from_frame(ty: &syn::Type, index: TokenStream, owner: &Ident) -> TokenStream {
-  if let Some(input) = ty.as_class_input() {
-    if let Some(class) = input.class_type(Some(owner)) {
-      return match input.kind() {
-        ClassInputKind::Ref => quote! { frame.arg_reference::<#class>(#index)? },
-        ClassInputKind::ClassRef => quote! { frame.arg_class_ref::<#class>(#index)? },
-        ClassInputKind::Borrow => quote! { frame.arg_class::<#class>(#index)? },
-        ClassInputKind::BorrowMut => quote! { frame.arg_class_mut::<#class>(#index)? },
-      };
-    }
+  let resolved = resolve_field_type(ty, Some(owner));
+  if resolved.kind.needs_class_context() {
+    return resolved.kind.emit_from_js(index);
   }
-
-  if let Some(input) = ty.as_optional_class_input() {
-    if let Some(class) = resolve_class_type(input.inner(), Some(owner)) {
-      return match input.kind() {
-        ClassInputKind::Ref => quote! { frame.arg_opt_reference::<#class>(#index)? },
-        ClassInputKind::ClassRef => quote! { frame.arg_opt_class_ref::<#class>(#index)? },
-        ClassInputKind::Borrow => quote! { frame.arg_opt_class::<#class>(#index)? },
-        ClassInputKind::BorrowMut => quote! { frame.arg_opt_class_mut::<#class>(#index)? },
-      };
-    }
-  }
-
-  quote! {{
-    frame.arg::<#ty>(#index)?
-  }}
+  quote! {{ frame.arg::<#ty>(#index)? }}
 }
 
 fn object_field_getter_from_scope(
@@ -69,29 +49,19 @@ fn object_field_getter_from_scope(
   field_js_name: &str,
   missing_is_none: bool,
 ) -> TokenStream {
-  let decode_ty = if missing_is_none {
-    ty.option_inner().unwrap_or(ty).clone()
+  let resolved = resolve_field_type(ty, None);
+  let decode_tokens = if missing_is_none {
+    resolved
+      .kind
+      .unwrap_optional()
+      .map(|inner| &inner.tokens)
+      .unwrap_or(&resolved.tokens)
   } else {
-    ty.clone()
+    &resolved.tokens
   };
   quote! {
-    scope.get_optional_named_property::<#decode_ty, _>(&#target, #field_js_name)
+    scope.get_optional_named_property::<#decode_tokens, _>(&#target, #field_js_name)
   }
-}
-
-fn optional_reference_field_inner(ty: &syn::Type, owner: &Ident) -> Option<TokenStream> {
-  let input = ty.as_optional_class_input()?;
-  if !input.kind().is_reference() {
-    return None;
-  }
-  let class = input.class_type(Some(owner))?;
-  Some(match input.kind() {
-    ClassInputKind::Ref => {
-      quote! { napi::bindgen_prelude::Ref<napi::bindgen_prelude::Class<#class>> }
-    }
-    ClassInputKind::ClassRef => quote! { napi::bindgen_prelude::ClassRef<#class> },
-    _ => unreachable!(),
-  })
 }
 
 fn class_field_from_object_scope(
@@ -101,12 +71,27 @@ fn class_field_from_object_scope(
   missing_is_none: bool,
   missing_context: TokenStream,
 ) -> Option<TokenStream> {
-  let decode_ty = if is_reference_class_type(ty) {
+  let resolved = resolve_field_type(ty, Some(owner));
+
+  let decode_ty = if resolved.kind.unwrap_optional().is_none() && resolved.kind.needs_async_ref() {
+    // Non-optional reference class type: decode as the full type, require presence.
     quote! { #ty }
-  } else if let Some(inner) = optional_reference_field_inner(ty, owner) {
+  } else if let Some(inner) = resolved.kind.unwrap_optional() {
+    if !inner.kind.needs_async_ref() {
+      return None;
+    }
+    // Optional reference class type.
     if missing_is_none {
+      let (kind, class) = inner.kind.as_class_input_info()?;
+      let inner_wrapper = match kind {
+        ClassInputKind::Ref => {
+          quote! { napi::bindgen_prelude::Ref<napi::bindgen_prelude::Class<#class>> }
+        }
+        ClassInputKind::ClassRef => quote! { napi::bindgen_prelude::ClassRef<#class> },
+        _ => unreachable!(),
+      };
       return Some(quote! {
-        scope.get_optional_named_property::<#inner, _>(&obj, #field_js_name)
+        scope.get_optional_named_property::<#inner_wrapper, _>(&obj, #field_js_name)
       });
     }
     quote! { #ty }
@@ -178,10 +163,12 @@ fn gen_tracing_debug(_class_name: &str, _method_name: &str) -> TokenStream {
 // Generate trait implementations for given Struct.
 fn gen_napi_value_map_impl(
   name: &Ident,
+  js_name: &str,
   to_napi_val_impl: TokenStream,
   has_lifetime: bool,
 ) -> TokenStream {
   let name_str = name.to_string();
+  let js_name_owned = js_name.to_owned();
   let name = if has_lifetime {
     quote! { #name<'_> }
   } else {
@@ -197,6 +184,10 @@ fn gen_napi_value_map_impl(
       fn value_type() -> napi::ValueType {
         napi::ValueType::Function
       }
+
+      fn ts_type() -> String {
+        #js_name_owned.to_owned()
+      }
     }
 
     #[automatically_derived]
@@ -208,6 +199,10 @@ fn gen_napi_value_map_impl(
       fn value_type() -> napi::ValueType {
         napi::ValueType::Object
       }
+
+      fn ts_type() -> String {
+        #js_name_owned.to_owned()
+      }
     }
 
     #[automatically_derived]
@@ -218,6 +213,10 @@ fn gen_napi_value_map_impl(
 
       fn value_type() -> napi::ValueType {
         napi::ValueType::Object
+      }
+
+      fn ts_type() -> String {
+        #js_name_owned.to_owned()
       }
     }
 
@@ -234,9 +233,12 @@ impl TryToTokens for NapiStruct {
       _ => quote! {},
     };
 
+    let type_def_register = self.gen_type_def_register();
+
     (quote! {
       #napi_value_map_impl
       #class_helper_mod
+      #type_def_register
     })
     .to_tokens(tokens);
 
@@ -597,7 +599,9 @@ impl NapiStruct {
     match &self.kind {
       NapiStructKind::Array(array) => self.gen_napi_value_array_impl(array),
       NapiStructKind::Transparent(transparent) => self.gen_napi_value_transparent_impl(transparent),
-      NapiStructKind::Class(_) => gen_napi_value_map_impl(&self.name, quote! {}, self.has_lifetime),
+      NapiStructKind::Class(_) => {
+        gen_napi_value_map_impl(&self.name, &self.js_name, quote! {}, self.has_lifetime)
+      }
       NapiStructKind::Object(obj) => self.gen_into_js_obj_impl(obj),
       NapiStructKind::StructuredEnum(structured_enum) => {
         self.gen_into_js_structured_enum_impl(structured_enum)
@@ -1691,12 +1695,257 @@ impl NapiStruct {
       #from_js
     }
   }
+
+  #[cfg(feature = "type-def")]
+  fn gen_type_def_register(&self) -> TokenStream {
+    if cfg!(test) {
+      return quote! {};
+    }
+
+    let kind = match &self.kind {
+      NapiStructKind::Transparent(_) => "type",
+      NapiStructKind::Class(class) if !class.ctor => "non_constructible_class",
+      NapiStructKind::Class(_) => "struct",
+      NapiStructKind::Object(_) => "interface",
+      NapiStructKind::StructuredEnum(_) => "type",
+      NapiStructKind::Array(_) => "type",
+    };
+
+    let native_parent_token = match &self.kind {
+      NapiStructKind::Class(class) => {
+        if let Some(parent) = &class.parent {
+          parent
+            .js_name
+            .as_ref()
+            .cloned()
+            .or_else(|| {
+              if let syn::Type::Path(path) = &parent.rust_path {
+                path.path.segments.last().map(|s| s.ident.to_string())
+              } else {
+                None
+              }
+            })
+            .map(|name| quote! { Some(#name) })
+        } else {
+          None
+        }
+      }
+      _ => None,
+    };
+
+    let mut js_doc = crate::typegen::JSDoc::new(&self.comments);
+    if self.is_generator() {
+      js_doc.add_block([
+        "This type extends JavaScript's `Iterator`, and so has the iterator helper",
+        "methods. It may extend the upcoming TypeScript `Iterator` class in the future.",
+        "",
+        "@see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Iterator#iterator_helper_methods",
+        "@see https://www.typescriptlang.org/docs/handbook/release-notes/typescript-5-6.html#iterator-helper-methods",
+      ]);
+    }
+    if self.is_async_generator() {
+      js_doc.add_block([
+        "This type implements JavaScript's async iterable protocol.",
+        "It can be used with `for await...of` loops.",
+        "",
+        "@see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Iteration_protocols#the_async_iterator_and_async_iterable_protocols",
+      ]);
+    }
+
+    super::emit_type_def_descriptor(
+      kind,
+      &self.js_name,
+      Some(&self.name.to_string()),
+      self.gen_ts_class_tokens(),
+      self.js_mod.as_ref(),
+      &js_doc,
+      native_parent_token,
+      None,
+      &self.register_name,
+      self.name.span(),
+    )
+  }
+
+  #[cfg(not(feature = "type-def"))]
+  fn gen_type_def_register(&self) -> TokenStream {
+    quote! {}
+  }
+
+  #[cfg(feature = "type-def")]
+  fn gen_ts_class_tokens(&self) -> TokenStream {
+    use crate::typegen::tokens::ty_to_ts_type_tokens;
+
+    match &self.kind {
+      NapiStructKind::Transparent(transparent) => {
+        let (ty_tokens, _) = ty_to_ts_type_tokens(&transparent.ty, false, false, None);
+        ty_tokens
+      }
+      NapiStructKind::Class(class) => {
+        let field_tokens = self.gen_field_tokens();
+        let has_default_ctor = class.ctor;
+        let ctor_arg_tokens = if has_default_ctor {
+          self.gen_ctor_arg_tokens()
+        } else {
+          vec![]
+        };
+        quote! {
+          {
+            let mut parts: Vec<String> = vec![#( #field_tokens ),*];
+            if #has_default_ctor {
+              let ctor_args: Vec<String> = vec![#( #ctor_arg_tokens ),*];
+              parts.push(format!("constructor({})", ctor_args.join(", ")));
+            }
+            parts.join("\n")
+          }
+        }
+      }
+      NapiStructKind::Object(_) | NapiStructKind::Array(_) => {
+        let field_tokens = self.gen_field_tokens();
+        quote! {
+          {
+            let fields: Vec<String> = vec![#( #field_tokens ),*];
+            fields.join("\n")
+          }
+        }
+      }
+      NapiStructKind::StructuredEnum(se) => {
+        let variant_tokens: Vec<_> = se
+          .variants
+          .iter()
+          .map(|v| {
+            let field_tokens = v
+              .fields
+              .iter()
+              .filter(|f| !f.skip_typescript)
+              .map(|f| {
+                let (ty_tokens, is_optional) = ty_to_ts_type_tokens(&f.ty, false, true, None);
+                let field_js_name = &f.js_name;
+                let readonly = if !f.setter { "readonly " } else { "" };
+                if is_optional {
+                  quote! { format!("  {}{field_js_name}?: {}", #readonly, #ty_tokens, field_js_name = #field_js_name) }
+                } else {
+                  quote! { format!("  {}{field_js_name}: {}", #readonly, #ty_tokens, field_js_name = #field_js_name) }
+                }
+              })
+              .collect::<Vec<_>>();
+            quote! {
+              {
+                let fields: Vec<String> = vec![#( #field_tokens ),*];
+                format!("| {{ {} }}", fields.join("; "))
+              }
+            }
+          })
+          .collect();
+        quote! {
+          {
+            let variants: Vec<String> = vec![#( #variant_tokens ),*];
+            variants.join("\n")
+          }
+        }
+      }
+    }
+  }
+
+  #[cfg(feature = "type-def")]
+  fn gen_ctor_arg_tokens(&self) -> Vec<TokenStream> {
+    use crate::typegen::tokens::ty_to_ts_type_tokens;
+
+    let fields = match &self.kind {
+      NapiStructKind::Class(class) => &class.fields,
+      _ => return vec![],
+    };
+
+    fields
+      .iter()
+      .filter(|f| !f.skip_typescript && f.getter)
+      .map(|f| {
+        let field_js_name = crate::typegen::format_js_property_name(&f.js_name);
+        let (ty_tokens, is_optional) = if let Some(ts_override) = &f.ts_type {
+          let s = ts_override.clone();
+          (quote! { #s.to_owned() }, false)
+        } else {
+          ty_to_ts_type_tokens(&f.ty, false, false, Some(&self.name))
+        };
+        let use_nullable = self.use_nullable;
+        quote! {
+          {
+            let ty = #ty_tokens;
+            if #is_optional {
+              if #use_nullable {
+                format!("{}: {} | null", #field_js_name, ty)
+              } else {
+                format!("{}?: {}", #field_js_name, ty)
+              }
+            } else {
+              format!("{}: {}", #field_js_name, ty)
+            }
+          }
+        }
+      })
+      .collect()
+  }
+
+  #[cfg(feature = "type-def")]
+  fn gen_field_tokens(&self) -> Vec<TokenStream> {
+    use crate::typegen::tokens::ty_to_ts_type_tokens;
+
+    let fields = match &self.kind {
+      NapiStructKind::Class(class) => &class.fields,
+      NapiStructKind::Object(obj) => &obj.fields,
+      NapiStructKind::Array(arr) => &arr.fields,
+      _ => return vec![],
+    };
+
+    fields
+      .iter()
+      .filter(|f| !f.skip_typescript)
+      .filter_map(|f| {
+        let field_js_name = crate::typegen::format_js_property_name(&f.js_name);
+        let readonly = if !f.setter { "readonly " } else { "" };
+
+        let (ty_tokens, is_optional) = if let Some(ts_override) = &f.ts_type {
+          let s = ts_override.clone();
+          (quote! { #s.to_owned() }, false)
+        } else {
+          ty_to_ts_type_tokens(&f.ty, false, true, Some(&self.name))
+        };
+
+        let js_doc = crate::typegen::JSDoc::new(&f.comments);
+        let js_doc_str = js_doc.to_string();
+        let js_doc_prefix = if js_doc_str.is_empty() {
+          quote! { String::new() }
+        } else {
+          quote! { #js_doc_str.to_owned() }
+        };
+
+        let use_nullable = self.use_nullable;
+
+        Some(quote! {
+          {
+            let js_doc = #js_doc_prefix;
+            let ty = #ty_tokens;
+            let field = if #is_optional {
+              if #use_nullable {
+                format!("{}{}: {} | null", #readonly, #field_js_name, ty)
+              } else {
+                format!("{}{}?: {}", #readonly, #field_js_name, ty)
+              }
+            } else {
+              format!("{}{}: {}", #readonly, #field_js_name, ty)
+            };
+            format!("{}{}", js_doc, field)
+          }
+        })
+      })
+      .collect()
+  }
 }
 
 impl TryToTokens for NapiImpl {
   fn try_to_tokens(&self, tokens: &mut TokenStream) -> BindgenResult<()> {
     self.gen_helper_mod()?.to_tokens(tokens);
     self.gen_post_init_shim()?.to_tokens(tokens);
+    self.gen_type_def_register_inner().to_tokens(tokens);
 
     Ok(())
   }
@@ -1726,7 +1975,7 @@ impl NapiImpl {
     let mut props: HashMap<String, TokenStream> = HashMap::new();
 
     for item in self.items.iter() {
-      if item.kind == FnKind::PostInit {
+      if matches!(item.kind, FnKind::PostInit) {
         continue;
       }
 
@@ -1753,12 +2002,12 @@ impl NapiImpl {
       });
 
       let appendix = match item.kind {
-        FnKind::Constructor => quote! { .with_ctor(#intermediate_name) },
+        FnKind::Constructor { .. } => quote! { .with_ctor(#intermediate_name) },
         FnKind::Getter => quote! { .with_getter(#intermediate_name) },
         FnKind::Setter => quote! { .with_setter(#intermediate_name) },
         FnKind::PostInit => unreachable!(),
         _ => {
-          if item.fn_self.is_some() || has_receiver_frame_input_arg(&item) {
+          if item.fn_self().is_some() || has_receiver_frame_input_arg(&item) {
             quote! { .with_method(#intermediate_name) }
           } else {
             quote! { .with_method(#intermediate_name).with_property_attributes(napi::bindgen_prelude::PropertyAttributes::Static) }
@@ -1808,7 +2057,11 @@ impl NapiImpl {
   }
 
   fn gen_post_init_shim(&self) -> BindgenResult<TokenStream> {
-    let Some(post_init_fn) = self.items.iter().find(|item| item.kind == FnKind::PostInit) else {
+    let Some(post_init_fn) = self
+      .items
+      .iter()
+      .find(|item| matches!(item.kind, FnKind::PostInit))
+    else {
       return Ok(quote! {});
     };
 
@@ -1840,6 +2093,133 @@ impl NapiImpl {
         }
       }
     })
+  }
+
+  #[cfg(feature = "type-def")]
+  fn gen_type_def_register_inner(&self) -> TokenStream {
+    if cfg!(test) {
+      return quote! {};
+    }
+
+    let js_name = &self.js_name;
+    let parent = &self.name;
+    let empty_doc = crate::typegen::JSDoc::default();
+
+    if let Some(output_type) = &self.iterator_yield_type {
+      use crate::typegen::tokens::ty_to_ts_type_tokens;
+
+      let yield_tokens = ty_to_ts_type_tokens(output_type, false, true, Some(parent)).0;
+      let next_tokens = self
+        .iterator_next_type
+        .as_ref()
+        .map(|ty| ty_to_ts_type_tokens(ty, false, false, Some(parent)).0)
+        .unwrap_or_else(|| quote! { "void".to_owned() });
+      let return_tokens = self
+        .iterator_return_type
+        .as_ref()
+        .map(|ty| ty_to_ts_type_tokens(ty, false, false, Some(parent)).0)
+        .unwrap_or_else(|| quote! { "void".to_owned() });
+
+      let reg_name = format!("impl_iter_{}", self.register_name);
+      let yield_fn = Ident::new(
+        &format!("__napi_iter_yield_{}_fn__", self.register_name),
+        parent.span(),
+      );
+      let return_fn = Ident::new(
+        &format!("__napi_iter_return_{}_fn__", self.register_name),
+        parent.span(),
+      );
+      let next_fn = Ident::new(
+        &format!("__napi_iter_next_{}_fn__", self.register_name),
+        parent.span(),
+      );
+
+      let iter_info = quote! {
+        #[cfg(all(not(test), feature = "type-def"))]
+        #[allow(non_snake_case, clippy::all)]
+        fn #yield_fn() -> String { #yield_tokens }
+        #[cfg(all(not(test), feature = "type-def"))]
+        #[allow(non_snake_case, clippy::all)]
+        fn #return_fn() -> String { #return_tokens }
+        #[cfg(all(not(test), feature = "type-def"))]
+        #[allow(non_snake_case, clippy::all)]
+        fn #next_fn() -> String { #next_tokens }
+      };
+      let iter_info_expr = quote! {
+        Some(&napi::__private::IteratorExtendsInfo {
+          yield_type: #yield_fn,
+          return_type: #return_fn,
+          next_type: #next_fn,
+        })
+      };
+
+      let descriptor = super::emit_type_def_descriptor(
+        "iterator_extends",
+        js_name,
+        None,
+        quote! { String::new() },
+        self.js_mod.as_ref(),
+        &empty_doc,
+        None,
+        Some(iter_info_expr),
+        &reg_name,
+        parent.span(),
+      );
+
+      return quote! {
+        #iter_info
+        #descriptor
+      };
+    }
+
+    if let Some(output_type) = &self.async_iterator_yield_type {
+      use crate::typegen::tokens::ty_to_ts_type_tokens;
+
+      let yield_tokens = ty_to_ts_type_tokens(output_type, false, true, Some(parent)).0;
+      let next_tokens = self
+        .async_iterator_next_type
+        .as_ref()
+        .map(|ty| {
+          let (tokens, _) = ty_to_ts_type_tokens(ty, false, false, Some(parent));
+          quote! {
+            {
+              let t = #tokens;
+              if t == "void" || t == "undefined" {
+                "undefined".to_owned()
+              } else {
+                format!("{} | undefined", t)
+              }
+            }
+          }
+        })
+        .unwrap_or_else(|| quote! { "undefined".to_owned() });
+      let return_tokens = self
+        .async_iterator_return_type
+        .as_ref()
+        .map(|ty| ty_to_ts_type_tokens(ty, false, false, Some(parent)).0)
+        .unwrap_or_else(|| quote! { "void".to_owned() });
+
+      let reg_name = format!("impl_aiter_{}", self.register_name);
+      return super::emit_type_def_descriptor(
+        "impl",
+        js_name,
+        None,
+        quote! { format!("[Symbol.asyncIterator](): AsyncGenerator<{}, {}, {}>", #yield_tokens, #return_tokens, #next_tokens) },
+        self.js_mod.as_ref(),
+        &empty_doc,
+        None,
+        None,
+        &reg_name,
+        parent.span(),
+      );
+    }
+
+    quote! {}
+  }
+
+  #[cfg(not(feature = "type-def"))]
+  fn gen_type_def_register_inner(&self) -> TokenStream {
+    quote! {}
   }
 }
 

@@ -64,7 +64,6 @@ impl<'scope> JsArgs<'scope> {
   pub(crate) fn len(&self) -> usize {
     self.values.len()
   }
-
 }
 
 impl<'scope, T> IntoJsArgs<'scope> for T
@@ -256,6 +255,10 @@ impl<Args, Return> TypeName for Function<'_, Args, Return> {
   fn value_type() -> crate::ValueType {
     ValueType::Function
   }
+
+  fn ts_type() -> String {
+    "(...args: any[]) => any".to_owned()
+  }
 }
 
 impl<'env, Args, Return> JsValue<'env> for Function<'env, Args, Return> {
@@ -297,7 +300,6 @@ impl<'env, 'scope, Args, Return> FromJs<'env, 'scope> for Function<'scope, Args,
   }
 }
 
-
 impl<Args, Return> Function<'_, Args, Return> {
   /// Get the name of the JavaScript function.
   pub fn name(&self) -> Result<String> {
@@ -338,7 +340,6 @@ impl<Args, Return> Function<'_, Args, Return> {
     let value = unsafe { Local::from_raw(raw_instance) };
     Unknown::from_js(scope, value)
   }
-
 }
 
 pub type FunctionRef<Args, Return> = Ref<Func<Args, Return>>;
@@ -549,6 +550,10 @@ impl<Args, Return> TypeName for Ref<Func<Args, Return>> {
   fn value_type() -> crate::ValueType {
     ValueType::Function
   }
+
+  fn ts_type() -> String {
+    "(...args: any[]) => any".to_owned()
+  }
 }
 
 impl<'env, 'scope, Args, Return> FromJs<'env, 'scope> for Ref<Func<Args, Return>> {
@@ -560,7 +565,6 @@ impl<'env, 'scope, Args, Return> FromJs<'env, 'scope> for Ref<Func<Args, Return>
     scope.create_ref(&function)
   }
 }
-
 
 pub struct FunctionCallContext<'env, 'scope, 'context> {
   pub(crate) args: JsArgSlice<'scope>,

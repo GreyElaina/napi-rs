@@ -10,9 +10,7 @@ use super::value_ref::{
   create_reference, ensure_deferred_match_env, ensure_same_deferred, reference_value, RefState,
 };
 use crate::{
-  bindgen_runtime::{
-    Env, Ext, FromJs, IntoJs, Local, Ref, Result, Scope, TypeName, Unknown,
-  },
+  bindgen_runtime::{Env, Ext, FromJs, IntoJs, Local, Ref, Result, Scope, TypeName, Unknown},
   check_status, sys, Error, JsExternal, Status,
 };
 
@@ -22,6 +20,20 @@ pub struct External<T: 'static> {
   obj: T,
   size_hint: usize,
   pub adjusted_size: i64,
+}
+
+impl<T: 'static + TypeName> TypeName for External<T> {
+  fn type_name() -> &'static str {
+    "External"
+  }
+
+  fn value_type() -> crate::ValueType {
+    crate::ValueType::External
+  }
+
+  fn ts_type() -> String {
+    format!("ExternalObject<{}>", T::ts_type())
+  }
 }
 
 impl<T: 'static> TypeName for &External<T> {
@@ -49,8 +61,6 @@ impl<T: 'static> From<T> for External<T> {
     External::new(t)
   }
 }
-
-
 
 impl<T: 'static> External<T> {
   pub fn new(value: T) -> Self {
@@ -289,7 +299,6 @@ impl<T: 'static> TypeName for Ref<Ext<T>> {
     crate::ValueType::External
   }
 }
-
 
 impl<'env, 'scope, T: 'static> FromJs<'env, 'scope> for Ref<Ext<T>> {
   fn from_js(

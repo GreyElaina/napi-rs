@@ -6,8 +6,10 @@ use crate::{codegen::js_mod_to_token_stream, BindgenResult, NapiConst, TryToToke
 impl TryToTokens for NapiConst {
   fn try_to_tokens(&self, tokens: &mut TokenStream) -> BindgenResult<()> {
     let register = self.gen_module_register();
+    let type_def_register = self.gen_type_def_register();
     (quote! {
       #register
+      #type_def_register
     })
     .to_tokens(tokens);
 
@@ -50,5 +52,34 @@ impl NapiConst {
           callback: #cb_name,
         };
     }
+  }
+
+  #[cfg(feature = "type-def")]
+  fn gen_type_def_register(&self) -> TokenStream {
+    if self.skip_typescript || cfg!(test) {
+      return quote! {};
+    }
+
+    let js_name = &self.js_name;
+    let ty_tokens =
+      crate::typegen::tokens::ty_to_ts_type_tokens(&self.type_name, false, false, None).0;
+
+    super::emit_type_def_descriptor(
+      "const",
+      js_name,
+      Some(&self.name.to_string()),
+      quote! { format!("export const {}: {}", #js_name, #ty_tokens) },
+      self.js_mod.as_ref(),
+      &crate::typegen::JSDoc::new(&self.comments),
+      None,
+      None,
+      &self.register_name,
+      self.name.span(),
+    )
+  }
+
+  #[cfg(not(feature = "type-def"))]
+  fn gen_type_def_register(&self) -> TokenStream {
+    quote! {}
   }
 }

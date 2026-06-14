@@ -518,11 +518,14 @@ impl TypeName for Object<'_> {
     "Object"
   }
 
+  fn ts_type() -> String {
+    "object".to_owned()
+  }
+
   fn value_type() -> ValueType {
     ValueType::Object
   }
 }
-
 
 impl<'env, 'scope> FromJs<'env, 'scope> for Object<'scope> {
   fn from_js(

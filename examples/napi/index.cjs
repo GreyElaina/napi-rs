@@ -107,36 +107,36 @@ function requireNative() {
     if (process.arch === 'x64') {
       if (process.config?.variables?.shlib_suffix === 'dll.a' || process.config?.variables?.node_target_type === 'shared_library') {
         try {
-        return require('./example.win32-x64-gnu.node')
-      } catch (e) {
-        loadErrors.push(e)
-      }
-      try {
-        const binding = require('@examples/napi-win32-x64-gnu')
-        const bindingPackageVersion = require('@examples/napi-win32-x64-gnu/package.json').version
-        if (bindingPackageVersion !== '0.0.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
-          throw new Error(`Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
+          return require('./example.win32-x64-gnu.node')
+        } catch (e) {
+          loadErrors.push(e)
         }
-        return binding
-      } catch (e) {
-        loadErrors.push(e)
-      }
+        try {
+          const binding = require('@examples/napi-win32-x64-gnu')
+          const bindingPackageVersion = require('@examples/napi-win32-x64-gnu/package.json').version
+          if (bindingPackageVersion !== '0.0.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+            throw new Error(`Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
+          }
+          return binding
+        } catch (e) {
+          loadErrors.push(e)
+        }
       } else {
         try {
-        return require('./example.win32-x64-msvc.node')
-      } catch (e) {
-        loadErrors.push(e)
-      }
-      try {
-        const binding = require('@examples/napi-win32-x64-msvc')
-        const bindingPackageVersion = require('@examples/napi-win32-x64-msvc/package.json').version
-        if (bindingPackageVersion !== '0.0.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
-          throw new Error(`Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
+          return require('./example.win32-x64-msvc.node')
+        } catch (e) {
+          loadErrors.push(e)
         }
-        return binding
-      } catch (e) {
-        loadErrors.push(e)
-      }
+        try {
+          const binding = require('@examples/napi-win32-x64-msvc')
+          const bindingPackageVersion = require('@examples/napi-win32-x64-msvc/package.json').version
+          if (bindingPackageVersion !== '0.0.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
+            throw new Error(`Native binding package version mismatch, expected 0.0.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
+          }
+          return binding
+        } catch (e) {
+          loadErrors.push(e)
+        }
       }
     } else if (process.arch === 'ia32') {
       try {
@@ -616,7 +616,6 @@ if (!nativeBinding) {
 
 wireNativeClassPrototypes(nativeBinding)
 hideNativeClassMetadata(nativeBinding)
-
 module.exports = nativeBinding
 module.exports.Animal = nativeBinding.Animal
 module.exports.AnimalWithDefaultConstructor = nativeBinding.AnimalWithDefaultConstructor
@@ -636,6 +635,7 @@ module.exports.ClassInArray = nativeBinding.ClassInArray
 module.exports.ClassReturnInPromise = nativeBinding.ClassReturnInPromise
 module.exports.ClassWithFactory = nativeBinding.ClassWithFactory
 module.exports.ClassWithLifetime = nativeBinding.ClassWithLifetime
+module.exports.ComplexClass = nativeBinding.ComplexClass
 module.exports.Context = nativeBinding.Context
 module.exports.CounterRepro = nativeBinding.CounterRepro
 module.exports.CreateStringClass = nativeBinding.CreateStringClass
@@ -653,8 +653,8 @@ module.exports.Fib4 = nativeBinding.Fib4
 module.exports.FnRefHolder = nativeBinding.FnRefHolder
 module.exports.GetterSetterWithClosures = nativeBinding.GetterSetterWithClosures
 module.exports.ImageNode = nativeBinding.ImageNode
-module.exports.JsClassForEither = nativeBinding.JsClassForEither
 module.exports.JSOnlyMethodsClass = nativeBinding.JSOnlyMethodsClass
+module.exports.JsClassForEither = nativeBinding.JsClassForEither
 module.exports.JsRemote = nativeBinding.JsRemote
 module.exports.JsRepo = nativeBinding.JsRepo
 module.exports.LateRegisteredBase = nativeBinding.LateRegisteredBase
@@ -678,6 +678,14 @@ module.exports.Thing = nativeBinding.Thing
 module.exports.ThingList = nativeBinding.ThingList
 module.exports.UseNullableClass = nativeBinding.UseNullableClass
 module.exports.Width = nativeBinding.Width
+module.exports.ALIAS = nativeBinding.ALIAS
+module.exports.CustomNumEnum = nativeBinding.CustomNumEnum
+module.exports.CustomStringEnum = nativeBinding.CustomStringEnum
+module.exports.DEFAULT_COST = nativeBinding.DEFAULT_COST
+module.exports.Empty = nativeBinding.Empty
+module.exports.Kind = nativeBinding.Kind
+module.exports.Status = nativeBinding.Status
+module.exports.StringEnum = nativeBinding.StringEnum
 module.exports.acceptArraybuffer = nativeBinding.acceptArraybuffer
 module.exports.acceptSlice = nativeBinding.acceptSlice
 module.exports.acceptStream = nativeBinding.acceptStream
@@ -685,7 +693,6 @@ module.exports.acceptUint8ClampedSlice = nativeBinding.acceptUint8ClampedSlice
 module.exports.acceptUint8ClampedSliceAndBufferSlice = nativeBinding.acceptUint8ClampedSliceAndBufferSlice
 module.exports.acceptUntypedTypedArray = nativeBinding.acceptUntypedTypedArray
 module.exports.add = nativeBinding.add
-module.exports.ALIAS = nativeBinding.ALIAS
 module.exports.appendBuffer = nativeBinding.appendBuffer
 module.exports.apply0 = nativeBinding.apply0
 module.exports.apply1 = nativeBinding.apply1
@@ -713,9 +720,6 @@ module.exports.bufferWithAsyncBlock = nativeBinding.bufferWithAsyncBlock
 module.exports.call0 = nativeBinding.call0
 module.exports.call1 = nativeBinding.call1
 module.exports.call2 = nativeBinding.call2
-module.exports.callbackInSpawn = nativeBinding.callbackInSpawn
-module.exports.callbackReturnPromise = nativeBinding.callbackReturnPromise
-module.exports.callbackReturnPromiseAndSpawn = nativeBinding.callbackReturnPromiseAndSpawn
 module.exports.callCatchOnPromise = nativeBinding.callCatchOnPromise
 module.exports.callFinallyOnPromise = nativeBinding.callFinallyOnPromise
 module.exports.callFunction = nativeBinding.callFunction
@@ -725,6 +729,9 @@ module.exports.callRuleHandler = nativeBinding.callRuleHandler
 module.exports.callThenOnPromise = nativeBinding.callThenOnPromise
 module.exports.callWithNestedFunctionArg = nativeBinding.callWithNestedFunctionArg
 module.exports.callWithTupleArg = nativeBinding.callWithTupleArg
+module.exports.callbackInSpawn = nativeBinding.callbackInSpawn
+module.exports.callbackReturnPromise = nativeBinding.callbackReturnPromise
+module.exports.callbackReturnPromiseAndSpawn = nativeBinding.callbackReturnPromiseAndSpawn
 module.exports.captureErrorInCallback = nativeBinding.captureErrorInCallback
 module.exports.chronoDateAdd1Minute = nativeBinding.chronoDateAdd1Minute
 module.exports.chronoDateFixtureReturn1 = nativeBinding.chronoDateFixtureReturn1
@@ -762,9 +769,9 @@ module.exports.createExternalUtf16String = nativeBinding.createExternalUtf16Stri
 module.exports.createFunction = nativeBinding.createFunction
 module.exports.createI32ArrayFromExternal = nativeBinding.createI32ArrayFromExternal
 module.exports.createObj = nativeBinding.createObj
+module.exports.createObjWithProperty = nativeBinding.createObjWithProperty
 module.exports.createObjectRef = nativeBinding.createObjectRef
 module.exports.createObjectWithClassField = nativeBinding.createObjectWithClassField
-module.exports.createObjWithProperty = nativeBinding.createObjWithProperty
 module.exports.createOptionalExternal = nativeBinding.createOptionalExternal
 module.exports.createReadableStream = nativeBinding.createReadableStream
 module.exports.createReadableStreamFromClass = nativeBinding.createReadableStreamFromClass
@@ -780,11 +787,8 @@ module.exports.createUint8ClampedArrayFromData = nativeBinding.createUint8Clampe
 module.exports.createUint8ClampedArrayFromExternal = nativeBinding.createUint8ClampedArrayFromExternal
 module.exports.createZeroCopyLatin1String = nativeBinding.createZeroCopyLatin1String
 module.exports.createZeroCopyUtf16String = nativeBinding.createZeroCopyUtf16String
-module.exports.CustomNumEnum = nativeBinding.CustomNumEnum
 module.exports.customStatusCode = nativeBinding.customStatusCode
-module.exports.CustomStringEnum = nativeBinding.CustomStringEnum
 module.exports.dateToNumber = nativeBinding.dateToNumber
-module.exports.DEFAULT_COST = nativeBinding.DEFAULT_COST
 module.exports.defineClass = nativeBinding.defineClass
 module.exports.derefUint8Array = nativeBinding.derefUint8Array
 module.exports.either3 = nativeBinding.either3
@@ -796,7 +800,6 @@ module.exports.eitherFromObjects = nativeBinding.eitherFromObjects
 module.exports.eitherFromOption = nativeBinding.eitherFromOption
 module.exports.eitherPromiseInEitherA = nativeBinding.eitherPromiseInEitherA
 module.exports.eitherStringOrNumber = nativeBinding.eitherStringOrNumber
-module.exports.Empty = nativeBinding.Empty
 module.exports.enumToI32 = nativeBinding.enumToI32
 module.exports.errorMessageContainsNullByte = nativeBinding.errorMessageContainsNullByte
 module.exports.esmResolve = nativeBinding.esmResolve
@@ -831,20 +834,19 @@ module.exports.getNums = nativeBinding.getNums
 module.exports.getOptionalExternal = nativeBinding.getOptionalExternal
 module.exports.getPackageJsonName = nativeBinding.getPackageJsonName
 module.exports.getStrFromObject = nativeBinding.getStrFromObject
-module.exports.getterFromObj = nativeBinding.getterFromObj
 module.exports.getTuple = nativeBinding.getTuple
 module.exports.getUndefined = nativeBinding.getUndefined
 module.exports.getWords = nativeBinding.getWords
+module.exports.getterFromObj = nativeBinding.getterFromObj
 module.exports.i16ArrayToArray = nativeBinding.i16ArrayToArray
 module.exports.i32ArrayToArray = nativeBinding.i32ArrayToArray
 module.exports.i64ArrayToArray = nativeBinding.i64ArrayToArray
 module.exports.i8ArrayToArray = nativeBinding.i8ArrayToArray
-module.exports.indexmapPassthrough = nativeBinding.indexmapPassthrough
 module.exports.indexSetToJs = nativeBinding.indexSetToJs
 module.exports.indexSetToRust = nativeBinding.indexSetToRust
+module.exports.indexmapPassthrough = nativeBinding.indexmapPassthrough
 module.exports.intoUtf8 = nativeBinding.intoUtf8
 module.exports.jsErrorCallback = nativeBinding.jsErrorCallback
-module.exports.Kind = nativeBinding.Kind
 module.exports.listObjKeys = nativeBinding.listObjKeys
 module.exports.mapOption = nativeBinding.mapOption
 module.exports.mergeTupleArray = nativeBinding.mergeTupleArray
@@ -854,11 +856,11 @@ module.exports.mutateOptionalExternal = nativeBinding.mutateOptionalExternal
 module.exports.mutateTypedArray = nativeBinding.mutateTypedArray
 module.exports.objectGetNamedPropertyShouldPerformTypecheck = nativeBinding.objectGetNamedPropertyShouldPerformTypecheck
 module.exports.objectWithCApis = nativeBinding.objectWithCApis
-module.exports.optionalCallbackTypes = nativeBinding.optionalCallbackTypes
 module.exports.optionEnd = nativeBinding.optionEnd
 module.exports.optionOnly = nativeBinding.optionOnly
 module.exports.optionStart = nativeBinding.optionStart
 module.exports.optionStartEnd = nativeBinding.optionStartEnd
+module.exports.optionalCallbackTypes = nativeBinding.optionalCallbackTypes
 module.exports.overrideIndividualArgOnFunction = nativeBinding.overrideIndividualArgOnFunction
 module.exports.overrideIndividualArgOnFunctionWithCbArg = nativeBinding.overrideIndividualArgOnFunctionWithCbArg
 module.exports.overrideWholeFunctionType = nativeBinding.overrideWholeFunctionType
@@ -902,8 +904,6 @@ module.exports.shorterEscapableScope = nativeBinding.shorterEscapableScope
 module.exports.shorterScope = nativeBinding.shorterScope
 module.exports.shutdownRuntime = nativeBinding.shutdownRuntime
 module.exports.spawnFutureLifetime = nativeBinding.spawnFutureLifetime
-module.exports.Status = nativeBinding.Status
-module.exports.StringEnum = nativeBinding.StringEnum
 module.exports.sumBtreeMapping = nativeBinding.sumBtreeMapping
 module.exports.sumIndexMapping = nativeBinding.sumIndexMapping
 module.exports.sumMapping = nativeBinding.sumMapping
@@ -935,4 +935,3 @@ module.exports.withoutAbortController = nativeBinding.withoutAbortController
 module.exports.xxh64Alias = nativeBinding.xxh64Alias
 module.exports.xxh2 = nativeBinding.xxh2
 module.exports.xxh3 = nativeBinding.xxh3
-module.exports.ComplexClass = nativeBinding.ComplexClass

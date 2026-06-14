@@ -25,11 +25,14 @@ impl TypeName for JsString<'_> {
     "String"
   }
 
+  fn ts_type() -> String {
+    "string".to_owned()
+  }
+
   fn value_type() -> crate::ValueType {
     ValueType::String
   }
 }
-
 
 impl<'env> JsValue<'env> for JsString<'env> {
   fn value(&self) -> Value {

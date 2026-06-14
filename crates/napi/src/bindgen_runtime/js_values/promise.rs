@@ -31,13 +31,17 @@ impl<'env, T> JsValue<'env> for Promise<'env, T> {
 
 impl<'env, T> JsObjectValue<'env> for Promise<'env, T> {}
 
-impl<T> TypeName for Promise<'_, T> {
+impl<T: TypeName> TypeName for Promise<'_, T> {
   fn type_name() -> &'static str {
     "Promise"
   }
 
   fn value_type() -> crate::ValueType {
     crate::ValueType::Object
+  }
+
+  fn ts_type() -> String {
+    format!("Promise<{}>", T::ts_type())
   }
 }
 

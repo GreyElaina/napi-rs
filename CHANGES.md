@@ -57,6 +57,7 @@ struct Scope<'env, 'scope> {
 ## 2. Value Conversion: `IntoJs` / `FromJs`
 
 Upstream:
+
 ```rust
 // No lifetime — raw pointer in, raw pointer out
 trait ToNapiValue {
@@ -68,6 +69,7 @@ trait FromNapiValue {
 ```
 
 This fork:
+
 ```rust
 trait IntoJs<'scope>: Sized {
     type Output;
@@ -80,6 +82,7 @@ trait FromJs<'env, 'scope>: Sized {
 ```
 
 Key differences:
+
 - **Scoped**: conversion takes `&mut Scope`, returned `Local` is bound to `'scope`
 - **Typed output**: `IntoJs::Output` carries the JS type tag (`Number`, `Object`, etc.)
 - **Two lifetimes on `FromJs`**: `'env` for env-lifetime-dependent results, `'scope` for the input value
@@ -103,14 +106,14 @@ Layer 2       ClassBorrow<'a, T>         ClassBorrow<'a, T>
 
 Generic over `K: JsRefKind` — a marker trait selecting the access pattern:
 
-| Kind         | Type            | Access   |
-|--------------|-----------------|----------|
-| `Class<T>`   | class instance  | `ClassAccess` (ptr + offset) |
-| `Obj`        | plain object    | `()`     |
-| `Func<A, R>` | function        | `()`     |
-| `Sym`        | symbol          | `()`     |
-| `Ext<T>`     | external        | `()`     |
-| `Unk`        | unknown         | `()`     |
+| Kind         | Type           | Access                       |
+| ------------ | -------------- | ---------------------------- |
+| `Class<T>`   | class instance | `ClassAccess` (ptr + offset) |
+| `Obj`        | plain object   | `()`                         |
+| `Func<A, R>` | function       | `()`                         |
+| `Sym`        | symbol         | `()`                         |
+| `Ext<T>`     | external       | `()`                         |
+| `Unk`        | unknown        | `()`                         |
 
 All refs share `RefState` (raw `napi_ref` + `Weak<EnvRecord>`). Drop is uniform: deferred cleanup via `EnvRecord`. No more "warn then leak".
 
@@ -141,18 +144,18 @@ Guard types backed by `RefCell` — same type regardless of whether the source i
 
 ### Type rename table
 
-| Upstream                      | This fork                   |
-|-------------------------------|-----------------------------|
-| `Reference<T>`                | `Ref<Class<T>>`             |
-| `WeakReference<T>`            | `WeakRef<Class<T>>`         |
-| `ClassRef<'scope, T>`         | `ClassBorrow<'a, T>`        |
-| `ClassRefMut<'scope, T>`      | `ClassBorrowMut<'a, T>`     |
-| `SuperRef<'a, P>`             | removed — `as_super() -> &P` |
-| `SuperRefMut<'a, P>`          | removed — `as_super_mut() -> &mut P` |
-| `ObjectRef`                   | `Ref<Obj>`                  |
-| `FunctionRef<A, R>`           | `Ref<Func<A, R>>`           |
-| `SymbolRef`                   | `Ref<Sym>`                  |
-| `ExternalRef<T>`              | `Ref<Ext<T>>`               |
+| Upstream                 | This fork                            |
+| ------------------------ | ------------------------------------ |
+| `Reference<T>`           | `Ref<Class<T>>`                      |
+| `WeakReference<T>`       | `WeakRef<Class<T>>`                  |
+| `ClassRef<'scope, T>`    | `ClassBorrow<'a, T>`                 |
+| `ClassRefMut<'scope, T>` | `ClassBorrowMut<'a, T>`              |
+| `SuperRef<'a, P>`        | removed — `as_super() -> &P`         |
+| `SuperRefMut<'a, P>`     | removed — `as_super_mut() -> &mut P` |
+| `ObjectRef`              | `Ref<Obj>`                           |
+| `FunctionRef<A, R>`      | `Ref<Func<A, R>>`                    |
+| `SymbolRef`              | `Ref<Sym>`                           |
+| `ExternalRef<T>`         | `Ref<Ext<T>>`                        |
 
 ## 4. Class Inheritance
 
@@ -279,11 +282,11 @@ self.handler.with_scope(|scope| {
 
 Three-layer entry:
 
-| API | Role |
-|-----|------|
-| `EnvRecord::current()` | Recover `(napi_env, Rc<EnvRecord>)` from TLS |
+| API                                 | Role                                                           |
+| ----------------------------------- | -------------------------------------------------------------- |
+| `EnvRecord::current()`              | Recover `(napi_env, Rc<EnvRecord>)` from TLS                   |
 | `EnvRecord::enter_external_scope()` | `unsafe` — handle scope + callback scope (napi3) + enter_scope |
-| `Ref<K>::with_scope()` | Safe wrapper — current() → record match → enter_external_scope |
+| `Ref<K>::with_scope()`              | Safe wrapper — current() → record match → enter_external_scope |
 
 `enter_external_scope` opens `napi_open_handle_scope` for V8 handle management, plus (with napi3) `napi_async_init` + `napi_open_callback_scope` for async hooks and microtask checkpoint. Without napi3 it degrades to handle scope only.
 
@@ -339,34 +342,34 @@ This is a **breaking change**: bare `#[napi]` on data-carrying enums now produce
 
 ## 7. Removed Modules
 
-| Module | Replacement |
-|--------|-------------|
-| `async_work` | `blocking_work` |
-| `task` (Task trait) | `blocking_work` closures |
-| `tokio_runtime` (embedded) | libuv `async` driver in `napi`; optional `napi-runtime-tokio` adapter |
-| `call_context` | `CallbackFrame` / `FrameScope` |
-| `cleanup_env` | `EnvRecord` lifecycle |
-| `sendable_resolver` | removed |
-| `async_cleanup_hook` | `EnvRecord` drop |
-| `compat_macro` | removed |
-| `js_values/*` (old pre-bindgen) | `bindgen_runtime` types with lifetimes |
-| `promise_raw` | `PromiseFuture` + `blocking_work` |
+| Module                          | Replacement                                                           |
+| ------------------------------- | --------------------------------------------------------------------- |
+| `async_work`                    | `blocking_work`                                                       |
+| `task` (Task trait)             | `blocking_work` closures                                              |
+| `tokio_runtime` (embedded)      | libuv `async` driver in `napi`; optional `napi-runtime-tokio` adapter |
+| `call_context`                  | `CallbackFrame` / `FrameScope`                                        |
+| `cleanup_env`                   | `EnvRecord` lifecycle                                                 |
+| `sendable_resolver`             | removed                                                               |
+| `async_cleanup_hook`            | `EnvRecord` drop                                                      |
+| `compat_macro`                  | removed                                                               |
+| `js_values/*` (old pre-bindgen) | `bindgen_runtime` types with lifetimes                                |
+| `promise_raw`                   | `PromiseFuture` + `blocking_work`                                     |
 
 ## 8. Scope Method Migration
 
 Methods previously on `Scope` are now on the types themselves:
 
-| Removed                            | Replacement                      |
-|------------------------------------|----------------------------------|
-| `scope.bind_reference(&ref)`       | `ref.as_class_local(scope)`      |
-| `scope.borrow_class(&local)`       | `local.borrow()`                 |
-| `scope.borrow_class_mut(&local)`   | `local.borrow_mut()`             |
-| `scope.clone_reference(&ref)`      | `ref.clone(scope)`               |
-| `scope.downgrade_reference(&ref)`  | `ref.downgrade(scope)`           |
-| `scope.upgrade_reference(&weak)`   | `weak.upgrade(scope)`            |
-| `scope.close_reference(ref)`       | `ref.close(scope)`               |
-| `scope.create_reference(&local)`   | `local.to_ref(scope)`            |
-| `scope.create_weak_reference(&local)` | `local.to_weak_ref(scope)`    |
+| Removed                               | Replacement                 |
+| ------------------------------------- | --------------------------- |
+| `scope.bind_reference(&ref)`          | `ref.as_class_local(scope)` |
+| `scope.borrow_class(&local)`          | `local.borrow()`            |
+| `scope.borrow_class_mut(&local)`      | `local.borrow_mut()`        |
+| `scope.clone_reference(&ref)`         | `ref.clone(scope)`          |
+| `scope.downgrade_reference(&ref)`     | `ref.downgrade(scope)`      |
+| `scope.upgrade_reference(&weak)`      | `weak.upgrade(scope)`       |
+| `scope.close_reference(ref)`          | `ref.close(scope)`          |
+| `scope.create_reference(&local)`      | `local.to_ref(scope)`       |
+| `scope.create_weak_reference(&local)` | `local.to_weak_ref(scope)`  |
 
 ## 9. Async Runtime (libuv + LocalExecutor)
 
@@ -388,25 +391,25 @@ JS thread                         other threads
 
 ### Feature flags
 
-| Before | After |
-|--------|-------|
-| `async = ["tokio_rt"]` | `async = ["async-task", "napi4"]` |
+| Before                              | After                                             |
+| ----------------------------------- | ------------------------------------------------- |
+| `async = ["tokio_rt"]`              | `async = ["async-task", "napi4"]`                 |
 | `web_stream` depended on `tokio_rt` | `web_stream = ["futures-core", "napi5", "async"]` |
 
 `tokio` remains an **optional dependency** for `tokio_*` feature flags (`tokio_fs`, `tokio_net`, …). It is no longer required to run `#[napi] async fn` exports.
 
 ### Breaking API renames
 
-| Removed / old | Replacement |
-|---------------|-------------|
-| `Env::spawn_future` | `Env::spawn_promise` |
-| `Env::spawn_future_with_callback` | `Env::spawn_promise_with` |
-| `Env::spawn_future_with_callback_and_finalize` | `spawn_promise_with` (completion always runs; see below) |
-| `Env::create_deferred` | `Env::deferred` |
-| `#[napi(async_runtime)]` | removed — use `napi-runtime-tokio` if Tokio context is needed |
-| `create_custom_tokio_runtime` / `start_async_runtime` / `shutdown_async_runtime` | removed from `napi` |
-| `within_runtime_if_available` | removed |
-| `napi::tokio::*` re-exports | use `tokio` directly, or `napi-runtime-tokio` for poll integration |
+| Removed / old                                                                    | Replacement                                                        |
+| -------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `Env::spawn_future`                                                              | `Env::spawn_promise`                                               |
+| `Env::spawn_future_with_callback`                                                | `Env::spawn_promise_with`                                          |
+| `Env::spawn_future_with_callback_and_finalize`                                   | `spawn_promise_with` (completion always runs; see below)           |
+| `Env::create_deferred`                                                           | `Env::deferred`                                                    |
+| `#[napi(async_runtime)]`                                                         | removed — use `napi-runtime-tokio` if Tokio context is needed      |
+| `create_custom_tokio_runtime` / `start_async_runtime` / `shutdown_async_runtime` | removed from `napi`                                                |
+| `within_runtime_if_available`                                                    | removed                                                            |
+| `napi::tokio::*` re-exports                                                      | use `tokio` directly, or `napi-runtime-tokio` for poll integration |
 
 ### `spawn_promise_with` completion contract
 
@@ -443,11 +446,11 @@ pub fn exports(#[napi(env)] env: Env, export: Object) -> Result<()> {
 }
 ```
 
-| API | Purpose |
-|-----|---------|
-| `install` | Own a `Runtime` for the env's poll context |
-| `install_factory` | Lazy-create `Runtime` on first async poll |
-| `install_handle` / `install_current` | Use an existing Tokio handle |
+| API                                  | Purpose                                    |
+| ------------------------------------ | ------------------------------------------ |
+| `install`                            | Own a `Runtime` for the env's poll context |
+| `install_factory`                    | Lazy-create `Runtime` on first async poll  |
+| `install_handle` / `install_current` | Use an existing Tokio handle               |
 
 The driver calls the installed context's `enter()` around each `Runnable` poll so `tokio::fs`, timers, etc. work inside `#[napi] async fn` without embedding Tokio inside `napi` itself.
 
@@ -456,3 +459,89 @@ The driver calls the installed context's `enter()` around each `Runnable` poll s
 - `#[napi] async fn` futures no longer require `Send` — they are polled on the main thread.
 - `web_stream` pull paths use `futures::lock::Mutex` and `spawn_promise_with` instead of `tokio::sync::Mutex` + `spawn_future_with_callback`.
 - Module registration no longer calls `start_async_runtime` / `shutdown_async_runtime` on load/unload.
+
+## 10. Runtime Type Generation
+
+Upstream generates TypeScript `.d.ts` at **proc-macro expansion time** — each `#[napi]` invocation writes an intermediate file via `NAPI_TYPE_DEF_TMP_FOLDER`, and the CLI reads + merges those files into the final `.d.ts`. Type mapping is a compile-time string lookup table (`KNOWN_TYPES`).
+
+This fork moves typegen to a **runtime linkme-based architecture**:
+
+### Descriptor registration
+
+Each `#[napi]` item emits a `TypeDefDescriptor` static registered into a `linkme::distributed_slice`:
+
+```rust
+#[linkme::distributed_slice(napi::__private::TYPE_DEF_DESCRIPTORS)]
+static __TYPEDEF_: TypeDefDescriptor = TypeDefDescriptor {
+    kind: "fn",
+    name: "myFunction",
+    def_fn: || { /* returns TS signature string */ },
+    js_mod: None,
+    js_doc: None,
+    extends: None,
+    native_parent_name: None,
+    ..
+};
+```
+
+The `def_fn` closure calls `TypeName::ts_type()` at runtime to resolve Rust types to their TS representations. This replaces the `KNOWN_TYPES` lookup table entirely — each type declares its own TS name via `TypeName::ts_type()`.
+
+### Host-native typegen binary
+
+A separate `[[bin]]` target (e.g. `napi-typegen`) links the user's crate as rlib, collecting all linkme descriptors at link time. It runs on the host (not the cross-compile target) and writes `.d.cts` directly.
+
+The binary must use `extern crate <lib_crate>;` to force linker inclusion of linkme sections. `napi_build::setup_typegen("bin-name")` in `build.rs` emits platform-specific linker flags (`-undefined,dynamic_lookup` on macOS, `--allow-shlib-undefined` on Linux) to allow unresolved Node-API/libuv symbols.
+
+### Module organization (`crates/backend/src/`)
+
+| Module              | Role                                                                         |
+| ------------------- | ---------------------------------------------------------------------------- |
+| `types/classify.rs` | Enum definitions (`ClassInputType`, `SpecialType`, etc.)                     |
+| `types/inspect.rs`  | `NapiTypeExt` trait — queries on `syn::Type`                                 |
+| `types/codegen.rs`  | `TypeCodegen` trait — emit tokens for type conversion                        |
+| `types/resolve.rs`  | Bridge from `syn::Type` → `ResolvedType`                                     |
+| `typegen/tokens.rs` | `ty_to_ts_type_tokens()` — emit `TokenStream` calling `ts_type()` at runtime |
+| `typegen/mod.rs`    | JSDoc, `format_js_property_name`, `gen_ts_func_arg`                          |
+
+### Removed
+
+- `KNOWN_TYPES` static lookup table
+- `ty_to_ts_type()` (compile-time string computation)
+- `ToTypeDef` trait and all per-item implementations (`fn.rs`, `struct.rs`, `enum.rs`, `const.rs`, `type.rs`)
+- `NAPI_TYPE_DEF_TMP_FOLDER` intermediate file mechanism
+- `crates/macro/src/expand/typedef/` — intermediate file writing from proc macro
+
+### `napi::typegen` module (runtime)
+
+`generate_dts_with_options()` collects all registered descriptors, merges impl blocks, resolves extends chains, and writes the final `.d.cts`. Preamble includes helper types (`ExternalObject<T>`, typed array imports, `ReadableStream`). Options: `const_enum`, `runtime_string_enum`, `header`.
+
+## 11. CLI: `cargo napi` replaces `@napi-rs/cli`
+
+The TypeScript CLI (`@napi-rs/cli`, formerly under `cli/`) is removed. The Rust CLI (`cargo-napi`, under `crates/cli/`) is now the sole build tool. Only the `build` subcommand is implemented — other upstream commands (`new`, `artifacts`, `pre-publish`, `rename`, `universalize`, `version`) are not needed for this fork.
+
+### Build flow
+
+```
+cargo napi build [options]
+  1. cargo build --target <triple>          (cdylib)
+  2. cargo build --bin <typegen> --features type-def  (host binary)
+  3. run typegen binary → .d.cts + exports list
+  4. copy .node artifact
+  5. generate JS binding (CJS/ESM)
+```
+
+### Changes from upstream TS CLI
+
+- Default `.d.cts` extension (was `.d.ts`)
+- User `--features` / `--all-features` / `--no-default-features` forwarded to typegen binary build
+- `--target-dir` forwarded to typegen binary build
+- `typegen_binary_path()` uses `std::env::consts::EXE_SUFFIX` (host platform, not cross-compile target)
+- 0-export warning with `extern crate` hint
+- `--pipe`, `--dts-cache`, `--watch`, `--use-napi-cross` removed
+
+### Removed packages
+
+| Package                         | Reason                                      |
+| ------------------------------- | ------------------------------------------- |
+| `@napi-rs/cli` (`cli/`)         | Replaced by `cargo-napi`                    |
+| `@napi-rs/triples` (`triples/`) | Only consumer was `unload.spec.js`, inlined |

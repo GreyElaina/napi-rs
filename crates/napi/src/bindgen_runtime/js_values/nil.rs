@@ -159,6 +159,10 @@ impl<T: TypeName> TypeName for Nullable<T> {
   fn value_type() -> ValueType {
     ValueType::Unknown
   }
+
+  fn ts_type() -> String {
+    format!("{} | null | undefined", T::ts_type())
+  }
 }
 
 impl<'env, 'scope, T> FromJs<'env, 'scope> for Nullable<T>

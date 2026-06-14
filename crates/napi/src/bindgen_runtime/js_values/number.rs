@@ -1,7 +1,7 @@
 use crate::{bindgen_prelude::*, check_status, sys, type_of, Error, Result};
 
 macro_rules! impl_number_conversions {
-  ( $( ($name:literal, $t:ty as $st:ty, $get:ident, $create:ident) ,)* ) => {
+  ( $( ($name:literal, $ts_type:literal, $t:ty as $st:ty, $get:ident, $create:ident) ,)* ) => {
     $(
       impl $crate::bindgen_prelude::TypeName for $t {
         fn type_name() -> &'static str {
@@ -10,6 +10,10 @@ macro_rules! impl_number_conversions {
 
         fn value_type() -> crate::ValueType {
           crate::ValueType::Number
+        }
+
+        fn ts_type() -> String {
+          $ts_type.to_owned()
         }
       }
 
@@ -72,15 +76,77 @@ macro_rules! impl_number_conversions {
 }
 
 impl_number_conversions!(
-  ("u8", u8 as u32, napi_get_value_uint32, napi_create_uint32),
-  ("i8", i8 as i32, napi_get_value_int32, napi_create_int32),
-  ("u16", u16 as u32, napi_get_value_uint32, napi_create_uint32),
-  ("i16", i16 as i32, napi_get_value_int32, napi_create_int32),
-  ("u32", u32 as u32, napi_get_value_uint32, napi_create_uint32),
-  ("i32", i32 as i32, napi_get_value_int32, napi_create_int32),
-  ("i64", i64 as i64, napi_get_value_int64, napi_create_int64),
-  ("f64", f64 as f64, napi_get_value_double, napi_create_double),
+  (
+    "u8",
+    "number",
+    u8 as u32,
+    napi_get_value_uint32,
+    napi_create_uint32
+  ),
+  (
+    "i8",
+    "number",
+    i8 as i32,
+    napi_get_value_int32,
+    napi_create_int32
+  ),
+  (
+    "u16",
+    "number",
+    u16 as u32,
+    napi_get_value_uint32,
+    napi_create_uint32
+  ),
+  (
+    "i16",
+    "number",
+    i16 as i32,
+    napi_get_value_int32,
+    napi_create_int32
+  ),
+  (
+    "u32",
+    "number",
+    u32 as u32,
+    napi_get_value_uint32,
+    napi_create_uint32
+  ),
+  (
+    "i32",
+    "number",
+    i32 as i32,
+    napi_get_value_int32,
+    napi_create_int32
+  ),
+  (
+    "i64",
+    "number",
+    i64 as i64,
+    napi_get_value_int64,
+    napi_create_int64
+  ),
+  (
+    "f64",
+    "number",
+    f64 as f64,
+    napi_get_value_double,
+    napi_create_double
+  ),
 );
+
+impl TypeName for f32 {
+  fn type_name() -> &'static str {
+    "f32"
+  }
+
+  fn value_type() -> crate::ValueType {
+    crate::ValueType::Number
+  }
+
+  fn ts_type() -> String {
+    "number".to_owned()
+  }
+}
 
 impl<'env, 'scope> FromJs<'env, 'scope> for crate::JsNumber<'scope> {
   fn from_js(
