@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::fmt::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::{env, fs, process};
 
 use crate::bindgen_prelude::{TypeDefKind, TYPE_DEF_DESCRIPTORS};
 
@@ -73,6 +74,101 @@ impl Default for GenerateDtsOptions<'_> {
       header: None,
     }
   }
+}
+
+/// Entry point for typegen binaries. Parses the CLI arguments that
+/// `cargo napi build` passes and calls [`generate_dts_with_options`].
+///
+/// A typegen binary only needs:
+/// ```ignore
+/// extern crate my_lib;
+/// fn main() { napi::typegen::main() }
+/// ```
+pub fn main() -> ! {
+  let mut args = env::args().skip(1).collect::<Vec<_>>();
+  let mut output = PathBuf::from("index.d.cts");
+  let mut header: Option<String> = None;
+  let mut exports_out: Option<PathBuf> = None;
+  let mut const_enum = false;
+  let mut runtime_string_enum = false;
+  let mut quiet = false;
+
+  let mut i = 0;
+  while i < args.len() {
+    match args[i].as_str() {
+      "--header-file" => {
+        let path = args.get(i + 1).expect("missing value for --header-file");
+        header = Some(fs::read_to_string(path).unwrap_or_else(|e| {
+          eprintln!("Failed to read header file {path}: {e}");
+          process::exit(1);
+        }));
+        args.drain(i..=i + 1);
+      }
+      "--exports-out" => {
+        exports_out = Some(PathBuf::from(
+          args.get(i + 1).expect("missing value for --exports-out"),
+        ));
+        args.drain(i..=i + 1);
+      }
+      "--const-enum" => {
+        const_enum = true;
+        args.remove(i);
+      }
+      "--runtime-string-enum" => {
+        runtime_string_enum = true;
+        args.remove(i);
+      }
+      "--quiet" | "-q" => {
+        quiet = true;
+        args.remove(i);
+      }
+      arg if !arg.starts_with('-') && output == PathBuf::from("index.d.cts") => {
+        output = PathBuf::from(arg);
+        args.remove(i);
+      }
+      _ => {
+        i += 1;
+      }
+    }
+  }
+
+  if let Some(path) = args.first() {
+    output = PathBuf::from(path);
+  }
+
+  match generate_dts_with_options(
+    &output,
+    GenerateDtsOptions {
+      const_enum,
+      runtime_string_enum,
+      header: header.as_deref(),
+    },
+  ) {
+    Ok(result) => {
+      if !quiet {
+        eprintln!(
+          "Generated {} with {} exports",
+          output.display(),
+          result.exports.len()
+        );
+      }
+      if let Some(exports_path) = exports_out {
+        let content = result.exports.join("\n");
+        if let Err(e) = fs::write(&exports_path, content) {
+          eprintln!(
+            "Failed to write exports file {}: {e}",
+            exports_path.display()
+          );
+          process::exit(1);
+        }
+      }
+    }
+    Err(e) => {
+      eprintln!("Failed to generate type definitions: {e}");
+      process::exit(1);
+    }
+  }
+  process::exit(0);
 }
 
 pub fn generate_dts(
