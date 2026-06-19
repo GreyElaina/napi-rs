@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::future::Future;
+use std::marker::PhantomData;
 #[cfg(test)]
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -264,6 +265,13 @@ impl AsyncDriver {
     AsyncKeepAlive::new(self.channel.clone())
   }
 
+  pub(crate) fn tick_handle(&self) -> AsyncTickHandle {
+    AsyncTickHandle {
+      channel: self.channel.clone(),
+      _not_send: PhantomData,
+    }
+  }
+
   pub(crate) fn set_poll_context(&self, enter: impl Fn(&mut dyn FnMut()) + 'static) {
     *self.poll_context.borrow_mut() = Some(PollContext {
       enter: Box::new(enter),
@@ -314,24 +322,35 @@ impl AsyncDriver {
 }
 
 // ---------------------------------------------------------------------------
-// uv_async callback — the main driver entry point
+// AsyncTickHandle — allows ticking the async driver from outside on_uv_async
 // ---------------------------------------------------------------------------
 
-unsafe extern "C" fn on_uv_async(handle: *mut UvAsyncT) {
-  let data = unsafe { uv_handle_get_data(handle) };
-  if data.is_null() {
-    return;
+/// A handle that allows ticking the async driver from external call sites
+/// (e.g. a libuv prepare callback) without going through `uv_async_t`.
+///
+/// This is `!Send` because it uses `napi_env` internally, which is only valid
+/// on the main thread.
+pub struct AsyncTickHandle {
+  channel: Arc<AsyncChannel>,
+  _not_send: PhantomData<*mut ()>,
+}
+
+impl AsyncTickHandle {
+  /// Perform a full async tick: opens a NAPI handle scope, drains deferred
+  /// refs, drains the cross-thread closure queue, ticks the executor, and
+  /// drains the queue again.
+  ///
+  /// Safe to call multiple times per libuv iteration — if the executor queue
+  /// is empty, this is a cheap no-op (one mutex lock + handle scope open/close).
+  pub fn tick(&self) {
+    if self.channel.is_shutdown() {
+      return;
+    }
+    perform_async_tick(&self.channel);
   }
+}
 
-  let channel = unsafe {
-    Arc::increment_strong_count(data as *const AsyncChannel);
-    Arc::from_raw(data as *const AsyncChannel)
-  };
-
-  if channel.is_shutdown() {
-    return;
-  }
-
+fn perform_async_tick(channel: &AsyncChannel) {
   let env_raw = channel.env;
 
   crate::run_unwind_boundary("async driver tick", || {
@@ -377,10 +396,42 @@ unsafe extern "C" fn on_uv_async(handle: *mut UvAsyncT) {
 }
 
 // ---------------------------------------------------------------------------
+// uv_async callback — the main driver entry point
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" fn on_uv_async(handle: *mut UvAsyncT) {
+  let data = unsafe { uv_handle_get_data(handle) };
+  if data.is_null() {
+    return;
+  }
+
+  let channel = unsafe {
+    Arc::increment_strong_count(data as *const AsyncChannel);
+    Arc::from_raw(data as *const AsyncChannel)
+  };
+
+  if channel.is_shutdown() {
+    return;
+  }
+
+  perform_async_tick(&channel);
+}
+
+// ---------------------------------------------------------------------------
 // Public API on Env
 // ---------------------------------------------------------------------------
 
 impl<'env> Env<'env> {
+  pub fn async_tick_handle(&self) -> Result<AsyncTickHandle> {
+    let record = self.record();
+    record.with_data(|data| {
+      let driver = data
+        .async_driver()
+        .ok_or_else(|| Error::new(Status::GenericFailure, "Async driver is not available"))?;
+      Ok(driver.tick_handle())
+    })?
+  }
+
   pub fn set_async_poll_context(&self, enter: impl Fn(&mut dyn FnMut()) + 'static) -> Result<()> {
     let record = self.record();
     record.with_data_mut(|data| {

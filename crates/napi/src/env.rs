@@ -43,6 +43,8 @@ pub use finalizer::noop_finalize;
 pub(crate) use finalizer::{raw_finalize, raw_finalize_with_custom_callback};
 #[cfg(feature = "async")]
 pub(crate) use runtime::{AsyncChannel, AsyncDriver, AsyncKeepAlive};
+#[cfg(feature = "async")]
+pub use runtime::AsyncTickHandle;
 
 #[derive(Clone, Copy)]
 /// `Env` is used to represent a context that the underlying N-API implementation can use to persist VM-specific state.
